@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#173f32">
+  <meta name="application-name" content="Family Vacation Portal">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Family Vacation">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+  <title>Family Vacation Portal</title>
+
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./app-icon-192.png">
+  <link rel="apple-touch-icon" href="./app-icon-192.png">
+
+  <style>
+    :root{
+      color-scheme:light;
+      --pine:#173f32;
+      --paper:#fffdf8;
+      --bg:#f4f6f2;
+      --muted:#68776f;
+      --line:#dfe5df;
+      --gold:#d69a20;
+    }
+    *{box-sizing:border-box}
+    html,body{
+      width:100%;
+      height:100%;
+      margin:0;
+      background:var(--bg);
+      font-family:Arial,sans-serif;
+      color:#13231d;
+    }
+    body{
+      padding:
+        env(safe-area-inset-top)
+        env(safe-area-inset-right)
+        env(safe-area-inset-bottom)
+        env(safe-area-inset-left);
+    }
+    #portalFrame{
+      display:block;
+      width:100%;
+      height:100%;
+      border:0;
+      background:var(--bg);
+    }
+    .shell{
+      display:grid;
+      place-items:center;
+      min-height:100%;
+      padding:24px;
+    }
+    .setup-card{
+      width:min(560px,100%);
+      padding:24px;
+      border:1px solid var(--line);
+      border-radius:20px;
+      background:var(--paper);
+      box-shadow:0 18px 55px rgba(23,63,50,.12);
+    }
+    .app-mark{
+      display:grid;
+      place-items:center;
+      width:64px;
+      height:64px;
+      margin-bottom:16px;
+      border-radius:18px;
+      color:white;
+      background:linear-gradient(145deg,#173f32,#2d6a50);
+      font-size:30px;
+    }
+    h1{margin:0 0 8px;font-family:Georgia,serif}
+    p{line-height:1.55}
+    code{
+      display:block;
+      overflow-wrap:anywhere;
+      padding:10px;
+      border-radius:9px;
+      background:#edf2ee;
+      font-size:12px;
+    }
+    .offline{
+      display:none;
+      position:fixed;
+      left:12px;
+      right:12px;
+      bottom:calc(12px + env(safe-area-inset-bottom));
+      z-index:20;
+      padding:11px 13px;
+      border-radius:12px;
+      color:#73520c;
+      background:#fff3d5;
+      box-shadow:0 10px 25px rgba(0,0,0,.12);
+      font-size:13px;
+      font-weight:700;
+      text-align:center;
+    }
+    body.offline-mode .offline{display:block}
+  </style>
+</head>
+<body>
+  <main id="root" class="shell">
+    <section class="setup-card">
+      <div class="app-mark" aria-hidden="true">▲</div>
+      <h1>Family Vacation Portal</h1>
+      <p>Loading the trip portal…</p>
+    </section>
+  </main>
+
+  <div class="offline" id="offlineNotice">
+    You are offline. The app shell is available, but live trip data requires an internet connection.
+  </div>
+
+  <script src="./config.js"></script>
+  <script>
+    (function(){
+      const config=window.VACATION_PORTAL_CONFIG||{};
+      const url=String(config.portalUrl||'').trim();
+      const root=document.getElementById('root');
+
+      const configured=
+        url &&
+        !url.includes('PASTE_CURRENT_APPS_SCRIPT_EXEC_URL_HERE') &&
+        /^https:\/\//i.test(url);
+
+      if(!configured){
+        root.innerHTML=`
+          <section class="setup-card">
+            <div class="app-mark" aria-hidden="true">▲</div>
+            <h1>PWA shell is ready</h1>
+            <p>
+              Open <strong>config.js</strong> and replace the placeholder with the
+              deployed Apps Script <strong>/exec</strong> URL.
+            </p>
+            <code>portalUrl: 'https://script.google.com/macros/s/.../exec'</code>
+            <p>
+              Then publish this folder on an HTTPS static host. The existing
+              Apps Script portal remains the backend and application content.
+            </p>
+          </section>`;
+        return;
+      }
+
+      document.title=config.appName||'Family Vacation Portal';
+
+      root.className='';
+      root.innerHTML=`
+        <iframe
+          id="portalFrame"
+          title="Family Vacation Portal"
+          allow="clipboard-read; clipboard-write"
+          src="${url.replace(/"/g,'&quot;')}"
+        ></iframe>`;
+
+      if('serviceWorker' in navigator){
+        navigator.serviceWorker.register('./service-worker.js')
+          .catch(error=>{
+            console.warn('Service worker registration failed.',error);
+          });
+      }
+
+      function updateOnlineState(){
+        document.body.classList.toggle(
+          'offline-mode',
+          !navigator.onLine
+        );
+      }
+
+      window.addEventListener('online',updateOnlineState);
+      window.addEventListener('offline',updateOnlineState);
+      updateOnlineState();
+    })();
+  </script>
+</body>
+</html>
