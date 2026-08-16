@@ -28,31 +28,53 @@
     *{box-sizing:border-box}
     html,body{
       width:100%;
+      min-width:100%;
       height:100%;
+      min-height:100%;
       margin:0;
+      overflow:hidden;
       background:var(--bg);
       font-family:Arial,sans-serif;
       color:#13231d;
     }
     body{
-      padding:
-        env(safe-area-inset-top)
-        env(safe-area-inset-right)
-        env(safe-area-inset-bottom)
-        env(safe-area-inset-left);
+      position:fixed;
+      inset:0;
+      width:100vw;
+      height:var(--app-height,100dvh);
+      padding:0;
+      overscroll-behavior:none;
+    }
+    #root{
+      position:fixed;
+      inset:0;
+      width:100vw;
+      height:var(--app-height,100dvh);
+      min-height:0;
+      overflow:hidden;
+      background:var(--bg);
     }
     #portalFrame{
+      position:absolute;
+      inset:0;
       display:block;
       width:100%;
       height:100%;
+      min-height:100%;
       border:0;
       background:var(--bg);
     }
     .shell{
       display:grid;
       place-items:center;
-      min-height:100%;
-      padding:24px;
+      min-height:var(--app-height,100dvh);
+      height:var(--app-height,100dvh);
+      overflow:auto;
+      padding:
+        max(24px,env(safe-area-inset-top))
+        max(24px,env(safe-area-inset-right))
+        max(24px,env(safe-area-inset-bottom))
+        max(24px,env(safe-area-inset-left));
     }
     .setup-card{
       width:min(560px,100%);
@@ -118,6 +140,33 @@
   <script src="./config.js"></script>
   <script>
     (function(){
+      function syncAppViewportHeight(){
+        const height=
+          window.visualViewport && window.visualViewport.height
+            ? window.visualViewport.height
+            : window.innerHeight;
+
+        document.documentElement.style.setProperty(
+          '--app-height',
+          Math.max(1,Math.round(height))+'px'
+        );
+      }
+
+      syncAppViewportHeight();
+
+      window.addEventListener('resize',syncAppViewportHeight);
+
+      if(window.visualViewport){
+        window.visualViewport.addEventListener(
+          'resize',
+          syncAppViewportHeight
+        );
+        window.visualViewport.addEventListener(
+          'scroll',
+          syncAppViewportHeight
+        );
+      }
+
       const config=window.VACATION_PORTAL_CONFIG||{};
       const url=String(config.portalUrl||'').trim();
       const root=document.getElementById('root');
@@ -147,7 +196,7 @@
 
       document.title=config.appName||'Family Vacation Portal';
 
-      root.className='';
+      root.className='portal-root';
       root.innerHTML=`
         <iframe
           id="portalFrame"

@@ -1,7 +1,8 @@
 window.VACATION_PORTAL_CONFIG = {
   // Paste the current deployed Apps Script /exec URL here before hosting.
-  portalUrl: 'https://script.google.com/macros/s/AKfycbwkb5g56znjd3MEJUa-HTZbzAIOdG4g9oL5TbF4_wuhcTIOYceDd_yJ3RWgt384xJq8vw/exec',
+  portalUrl: 'PASTE_CURRENT_APPS_SCRIPT_EXEC_URL_HERE',
 
-  appName: 'Stone Family Tennessee Vacation Portal',
-  shortName: 'Stone Tennessee Family Trip'
+  appName: 'Family Vacation Portal',
+  shortName: 'Family Trip',
+  release: 'V4.0.1'
 };
