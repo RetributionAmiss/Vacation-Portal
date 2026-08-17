@@ -4,5 +4,5 @@ window.VACATION_PORTAL_CONFIG = {
 
   appName: 'Family Vacation Portal',
   shortName: 'Family Trip',
-  release: 'V4.0.1'
+  release: 'V4.1.0'
 };
