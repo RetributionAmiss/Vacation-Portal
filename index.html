@@ -414,7 +414,7 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.12';
+      const PWA_HOST_RELEASE='V4.3.13';
 
       let portalContext={
         travelerId:'',
@@ -425,6 +425,20 @@
         pwaUrl:'',
         release:''
       };
+
+      try{
+        const savedTraveler=JSON.parse(
+          localStorage.getItem('vacationPortalTravelerContext')||'{}'
+        );
+
+        if(savedTraveler.travelerId){
+          portalContext.travelerId=String(savedTraveler.travelerId||'');
+        }
+
+        if(savedTraveler.travelerName){
+          portalContext.travelerName=String(savedTraveler.travelerName||'');
+        }
+      }catch(error){}
 
       let notificationSetupPending=false;
       let notificationSetupComplete=false;
@@ -632,6 +646,13 @@
       }
 
       async function enableNotifications(){
+        if(!portalContext.travelerId){
+          notificationSetupMessage=
+            'Traveler identity has not reached the PWA shell yet. Close this window, confirm Planning As, wait a moment, and tap the bell again.';
+          renderSetupDialog();
+          return;
+        }
+
         if(isIOS()&&!isStandalone()){
           notificationSetupMessage=
             'On iPhone, open Vacation Portal from its Home Screen icon first.';
@@ -1037,7 +1058,15 @@
       installButton.addEventListener('click',promptInstall);
       notifyButton.addEventListener('click',function(){
         notificationSetupPending=false;
-        notificationSetupMessage='';
+
+        if(!portalContext.travelerId){
+          notificationSetupMessage=
+            'Traveler identity is still syncing. Close this window, confirm Planning As, then tap the bell again in a moment.';
+        }else{
+          notificationSetupMessage=
+            'This device will be linked to '+(portalContext.travelerName||'the selected traveler')+'.';
+        }
+
         openSetup();
       });
 
@@ -1072,6 +1101,16 @@
             pwaUrl:String(data.pwaUrl||''),
             release:String(data.release||'')
           };
+
+          try{
+            localStorage.setItem(
+              'vacationPortalTravelerContext',
+              JSON.stringify({
+                travelerId:portalContext.travelerId,
+                travelerName:portalContext.travelerName
+              })
+            );
+          }catch(error){}
 
           syncOneSignalTraveler();
           return;
