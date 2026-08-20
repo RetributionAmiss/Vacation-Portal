@@ -122,6 +122,132 @@
       text-align:center;
     }
     body.offline-mode .offline{display:block}
+  
+    .app-tools{
+      position:fixed;
+      right:max(12px,env(safe-area-inset-right));
+      bottom:max(12px,env(safe-area-inset-bottom));
+      z-index:1000;
+      display:flex;
+      gap:8px;
+      pointer-events:none;
+    }
+    .app-tools button{
+      pointer-events:auto;
+      min-height:44px;
+      padding:10px 14px;
+      border:1px solid rgba(255,255,255,.3);
+      border-radius:999px;
+      color:white;
+      background:rgba(23,63,50,.94);
+      box-shadow:0 8px 24px rgba(0,0,0,.2);
+      font-weight:800;
+      cursor:pointer;
+      backdrop-filter:blur(10px);
+      -webkit-backdrop-filter:blur(10px);
+    }
+    .app-tools button.secondary{
+      color:var(--pine);
+      background:rgba(255,253,248,.96);
+      border-color:var(--line);
+    }
+    .setup-overlay{
+      position:fixed;
+      inset:0;
+      z-index:2000;
+      display:grid;
+      place-items:center;
+      padding:
+        max(18px,env(safe-area-inset-top))
+        max(18px,env(safe-area-inset-right))
+        max(18px,env(safe-area-inset-bottom))
+        max(18px,env(safe-area-inset-left));
+      background:rgba(12,28,22,.54);
+      backdrop-filter:blur(7px);
+      -webkit-backdrop-filter:blur(7px);
+    }
+    .setup-overlay.hidden{display:none}
+    .setup-dialog{
+      width:min(520px,100%);
+      max-height:min(760px,calc(100dvh - 36px));
+      overflow:auto;
+      padding:22px;
+      border-radius:20px;
+      background:var(--paper);
+      box-shadow:0 24px 70px rgba(0,0,0,.28);
+    }
+    .setup-dialog h2{margin:4px 0 8px;font-family:Georgia,serif}
+    .setup-dialog .eyebrow{
+      margin:0;
+      color:#a46c05;
+      font-size:11px;
+      font-weight:900;
+      letter-spacing:.12em;
+    }
+    .setup-steps{
+      display:grid;
+      gap:9px;
+      margin:16px 0;
+      padding:0;
+      list-style:none;
+      counter-reset:steps;
+    }
+    .setup-steps li{
+      display:grid;
+      grid-template-columns:30px 1fr;
+      gap:9px;
+      align-items:start;
+      line-height:1.4;
+    }
+    .setup-steps li:before{
+      counter-increment:steps;
+      content:counter(steps);
+      display:grid;
+      place-items:center;
+      width:28px;
+      height:28px;
+      border-radius:50%;
+      color:white;
+      background:var(--pine);
+      font-weight:900;
+    }
+    .setup-actions{
+      display:flex;
+      flex-wrap:wrap;
+      gap:9px;
+      margin-top:16px;
+    }
+    .setup-actions button{
+      min-height:44px;
+      padding:10px 14px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      background:white;
+      color:var(--pine);
+      font-weight:900;
+      cursor:pointer;
+    }
+    .setup-actions button.primary{
+      color:white;
+      border-color:var(--pine);
+      background:var(--pine);
+    }
+    .setup-status{
+      margin:12px 0;
+      padding:10px 12px;
+      border-radius:10px;
+      background:#edf4ef;
+      font-size:13px;
+      line-height:1.45;
+    }
+    @media(max-width:650px){
+      .app-tools{
+        right:10px;
+        bottom:max(10px,env(safe-area-inset-bottom));
+      }
+      .app-tools button{font-size:12px;padding:9px 12px}
+    }
+
   </style>
 </head>
 <body>
@@ -137,6 +263,25 @@
     You are offline. The app shell is available, but live trip data requires an internet connection.
   </div>
 
+  <div class="app-tools" id="appTools">
+    <button class="secondary" id="installToolButton" type="button">
+      📲 Add App
+    </button>
+    <button id="notifyToolButton" type="button">
+      🔔 Notifications
+    </button>
+  </div>
+
+  <div class="setup-overlay hidden" id="appSetupOverlay">
+    <section class="setup-dialog" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+      <p class="eyebrow">VACATION PORTAL APP</p>
+      <h2 id="setupTitle">Put the trip on this device</h2>
+      <div id="setupDialogBody"></div>
+      <div class="setup-actions" id="setupDialogActions"></div>
+    </section>
+  </div>
+
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
   <script src="./config.js"></script>
   <script>
     (function(){
@@ -222,6 +367,297 @@
       window.addEventListener('online',updateOnlineState);
       window.addEventListener('offline',updateOnlineState);
       updateOnlineState();
+
+      // ------------------------------------------------------
+      // V4.3.0 install + push notification center
+      // ------------------------------------------------------
+      let deferredInstallPrompt=null;
+      let portalContext={
+        travelerId:'',
+        travelerName:'',
+        oneSignalAppId:'',
+        pwaUrl:'',
+        release:''
+      };
+      let oneSignalInitialized=false;
+
+      const installButton=document.getElementById('installToolButton');
+      const notifyButton=document.getElementById('notifyToolButton');
+      const overlay=document.getElementById('appSetupOverlay');
+      const dialogBody=document.getElementById('setupDialogBody');
+      const dialogActions=document.getElementById('setupDialogActions');
+
+      function isStandalone(){
+        return Boolean(
+          window.matchMedia &&
+          window.matchMedia('(display-mode: standalone)').matches
+        ) || Boolean(navigator.standalone);
+      }
+
+      function isIOS(){
+        return /iphone|ipad|ipod/i.test(navigator.userAgent||'');
+      }
+
+      function isAndroid(){
+        return /android/i.test(navigator.userAgent||'');
+      }
+
+      function closeSetup(){
+        overlay.classList.add('hidden');
+      }
+
+      function openSetup(){
+        overlay.classList.remove('hidden');
+        renderSetupDialog();
+      }
+
+      overlay.addEventListener('click',function(event){
+        if(event.target===overlay) closeSetup();
+      });
+
+      window.addEventListener('beforeinstallprompt',function(event){
+        event.preventDefault();
+        deferredInstallPrompt=event;
+        installButton.textContent='📲 Install App';
+      });
+
+      window.addEventListener('appinstalled',function(){
+        deferredInstallPrompt=null;
+        installButton.textContent='✓ App Installed';
+        renderSetupDialog();
+      });
+
+      async function promptInstall(){
+        if(deferredInstallPrompt){
+          deferredInstallPrompt.prompt();
+          try{
+            await deferredInstallPrompt.userChoice;
+          }catch(ignore){}
+          deferredInstallPrompt=null;
+          renderSetupDialog();
+          return;
+        }
+        openSetup();
+      }
+
+      async function initOneSignal(){
+        if(oneSignalInitialized) return true;
+        if(!portalContext.oneSignalAppId) return false;
+
+        window.OneSignalDeferred=window.OneSignalDeferred||[];
+
+        return new Promise(function(resolve){
+          window.OneSignalDeferred.push(async function(OneSignal){
+            try{
+              await OneSignal.init({
+                appId:portalContext.oneSignalAppId,
+                serviceWorkerPath:'push/onesignal/OneSignalSDKWorker.js',
+                serviceWorkerParam:{
+                  scope:'/Vacation-Portal/push/onesignal/'
+                },
+                autoResubscribe:true,
+                notifyButton:{enable:false}
+              });
+
+              oneSignalInitialized=true;
+
+              if(portalContext.travelerId){
+                await OneSignal.login(portalContext.travelerId);
+              }
+
+              resolve(true);
+            }catch(error){
+              console.warn('OneSignal initialization failed.',error);
+              resolve(false);
+            }
+          });
+        });
+      }
+
+      async function syncOneSignalTraveler(){
+        if(!portalContext.travelerId) return;
+        const ready=await initOneSignal();
+        if(!ready) return;
+
+        window.OneSignalDeferred.push(async function(OneSignal){
+          try{
+            await OneSignal.login(portalContext.travelerId);
+          }catch(error){
+            console.warn('OneSignal traveler login failed.',error);
+          }
+        });
+      }
+
+      async function enableNotifications(){
+        if(isIOS()&&!isStandalone()){
+          openSetup();
+          return;
+        }
+
+        if(!portalContext.oneSignalAppId){
+          openSetup();
+          return;
+        }
+
+        const ready=await initOneSignal();
+
+        if(!ready){
+          openSetup();
+          return;
+        }
+
+        window.OneSignalDeferred.push(async function(OneSignal){
+          try{
+            if(portalContext.travelerId){
+              await OneSignal.login(portalContext.travelerId);
+            }
+
+            await OneSignal.Notifications.requestPermission();
+            renderSetupDialog();
+          }catch(error){
+            console.warn('Notification permission failed.',error);
+            openSetup();
+          }
+        });
+      }
+
+      function renderSetupDialog(){
+        const installed=isStandalone();
+
+        if(isIOS()&&!installed){
+          dialogBody.innerHTML=`
+            <p>
+              iPhone and iPad require the portal to be added to the Home Screen
+              before notifications can be enabled.
+            </p>
+            <ol class="setup-steps">
+              <li><span>Tap the <strong>Share</strong> button in your browser.</span></li>
+              <li><span>Choose <strong>Add to Home Screen</strong>.</span></li>
+              <li><span>Tap <strong>Add</strong>, then open <strong>Family Vacation</strong> from the new Home Screen icon.</span></li>
+              <li><span>Tap <strong>Enable Notifications</strong> when the app opens.</span></li>
+            </ol>
+            <div class="setup-status">
+              Apple does not allow a website to press “Add to Home Screen” for you,
+              so these few taps are the only manual part.
+            </div>`;
+          dialogActions.innerHTML=`
+            <button type="button" onclick="document.getElementById('appSetupOverlay').classList.add('hidden')">
+              Got it
+            </button>`;
+          return;
+        }
+
+        if(!installed && deferredInstallPrompt){
+          dialogBody.innerHTML=`
+            <p>
+              This device supports one-tap installation. Installing gives the portal
+              its own icon and app-style window.
+            </p>
+            <div class="setup-status">
+              After installation, enable notifications so trip updates can reach you
+              even when the portal is closed.
+            </div>`;
+          dialogActions.innerHTML=`
+            <button class="primary" type="button" id="dialogInstallButton">
+              Install Vacation Portal
+            </button>
+            <button type="button" id="dialogCloseButton">Not now</button>`;
+          document.getElementById('dialogInstallButton').onclick=promptInstall;
+          document.getElementById('dialogCloseButton').onclick=closeSetup;
+          return;
+        }
+
+        if(!installed){
+          dialogBody.innerHTML=`
+            <p>
+              Use your browser's <strong>Install app</strong> or
+              <strong>Add to Home screen</strong> option to add the Vacation Portal.
+            </p>
+            <ol class="setup-steps">
+              <li><span>Open the browser menu.</span></li>
+              <li><span>Choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</span></li>
+              <li><span>Confirm the installation.</span></li>
+            </ol>`;
+          dialogActions.innerHTML=`
+            <button type="button" id="dialogCloseButton">Done</button>`;
+          document.getElementById('dialogCloseButton').onclick=closeSetup;
+          return;
+        }
+
+        if(!portalContext.oneSignalAppId){
+          dialogBody.innerHTML=`
+            <p>The app is installed on this device.</p>
+            <div class="setup-status">
+              Push notifications are not configured by the trip administrator yet.
+            </div>`;
+          dialogActions.innerHTML=`
+            <button type="button" id="dialogCloseButton">Done</button>`;
+          document.getElementById('dialogCloseButton').onclick=closeSetup;
+          return;
+        }
+
+        dialogBody.innerHTML=`
+          <p>
+            The Vacation Portal is installed. Turn on notifications for voting,
+            room assignments, itinerary changes, and family announcements.
+          </p>
+          <div class="setup-status">
+            Notifications will be linked to
+            <strong>${(portalContext.travelerName||'your selected traveler')
+              .replace(/[&<>"']/g,function(c){
+                return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+              })}</strong>.
+          </div>`;
+        dialogActions.innerHTML=`
+          <button class="primary" type="button" id="dialogNotifyButton">
+            Enable Notifications
+          </button>
+          <button type="button" id="dialogCloseButton">Not now</button>`;
+        document.getElementById('dialogNotifyButton').onclick=enableNotifications;
+        document.getElementById('dialogCloseButton').onclick=closeSetup;
+      }
+
+      installButton.addEventListener('click',promptInstall);
+      notifyButton.addEventListener('click',enableNotifications);
+
+      window.addEventListener('message',function(event){
+        const frame=document.getElementById('portalFrame');
+        if(!frame||event.source!==frame.contentWindow) return;
+
+        const data=event.data||{};
+
+        if(data.type==='vacation-portal-context'){
+          portalContext={
+            travelerId:String(data.travelerId||''),
+            travelerName:String(data.travelerName||''),
+            oneSignalAppId:String(data.oneSignalAppId||''),
+            pwaUrl:String(data.pwaUrl||''),
+            release:String(data.release||'')
+          };
+
+          syncOneSignalTraveler();
+          return;
+        }
+
+        if(data.type==='vacation-portal-open-app-setup'){
+          openSetup();
+        }
+      });
+
+      if(isStandalone()){
+        installButton.textContent='✓ App Installed';
+      }else if(isIOS()){
+        installButton.textContent='📲 Add to Home';
+      }
+
+      // Gentle first-run onboarding. Do not repeatedly nag the traveler.
+      const onboardingKey='vacationPortalAppSetupShownV430';
+      if(!isStandalone()&&!localStorage.getItem(onboardingKey)){
+        setTimeout(function(){
+          localStorage.setItem(onboardingKey,'1');
+          openSetup();
+        },1800);
+      }
     })();
   </script>
 </body>
