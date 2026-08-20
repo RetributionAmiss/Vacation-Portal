@@ -521,6 +521,142 @@
         });
       }
 
+      function portalFrameWindow(){
+        const frame=document.getElementById('portalFrame');
+        return frame ? frame.contentWindow : null;
+      }
+
+      function sendNotificationResultToPortal(result){
+        const target=portalFrameWindow();
+        if(!target) return;
+
+        target.postMessage(Object.assign({
+          type:'vacation-portal-notification-result',
+          travelerName:portalContext.travelerName||''
+        },result||{}),'*');
+      }
+
+      async function currentNotificationStatus(){
+        const permission=
+          ('Notification' in window)
+            ? String(Notification.permission||'default')
+            : 'unsupported';
+
+        const result={
+          enabled:permission==='granted',
+          permission:permission
+        };
+
+        if(isIOS()&&!isStandalone()){
+          result.enabled=false;
+          result.message='Open Vacation Portal from its Home Screen icon before enabling notifications.';
+          result.help='On iPhone/iPad, Web Push is available to installed Home Screen web apps.';
+        }else if(!portalContext.oneSignalAppId){
+          result.enabled=false;
+          result.message='OneSignal is not configured for this trip.';
+        }else if(permission==='granted'){
+          result.message='Notifications enabled on this device.';
+          result.help='This device is linked to '+(portalContext.travelerName||'the selected traveler')+'.';
+        }else if(permission==='denied'){
+          result.message='Notifications are blocked on this device.';
+          result.help='Allow notifications for Vacation Portal in your device settings.';
+        }else if(permission==='unsupported'){
+          result.message='This browser does not support push notifications.';
+        }else{
+          result.message='Notifications are not enabled on this device.';
+        }
+
+        return result;
+      }
+
+      async function enableNotificationsFromPortalCommand(data){
+        if(data&&data.travelerId){
+          portalContext.travelerId=String(data.travelerId||'');
+        }
+        if(data&&data.travelerName){
+          portalContext.travelerName=String(data.travelerName||'');
+        }
+        if(data&&data.oneSignalAppId){
+          portalContext.oneSignalAppId=String(data.oneSignalAppId||'');
+        }
+
+        if(isIOS()&&!isStandalone()){
+          sendNotificationResultToPortal({
+            enabled:false,
+            message:'Open Vacation Portal from its iPhone Home Screen icon before enabling notifications.',
+            help:'Safari cannot register this subscription until the PWA is running in Home Screen app mode.',
+            toastMessage:'Open the Home Screen app, then try Enable Notifications again.'
+          });
+          openSetup();
+          return;
+        }
+
+        const ready=await initOneSignal();
+
+        if(!ready){
+          sendNotificationResultToPortal({
+            enabled:false,
+            message:'OneSignal could not initialize from the GitHub PWA host.',
+            toastMessage:'OneSignal could not initialize.'
+          });
+          return;
+        }
+
+        window.OneSignalDeferred.push(async function(OneSignal){
+          try{
+            if(portalContext.travelerId){
+              await OneSignal.login(portalContext.travelerId);
+            }
+
+            await OneSignal.Notifications.requestPermission();
+
+            if(portalContext.travelerId){
+              await OneSignal.login(portalContext.travelerId);
+            }
+
+            const permission=
+              ('Notification' in window)
+                ? String(Notification.permission||'default')
+                : 'unsupported';
+
+            const enabled=permission==='granted';
+
+            sendNotificationResultToPortal({
+              enabled:enabled,
+              permission:permission,
+              message:
+                enabled
+                  ? 'Notifications enabled on this device.'
+                  : permission==='denied'
+                    ? 'Notifications are blocked on this device.'
+                    : 'Notification permission was not granted.',
+              help:
+                enabled
+                  ? 'This device is linked to '+(portalContext.travelerName||'the selected traveler')+'.'
+                  : '',
+              toastMessage:
+                enabled
+                  ? 'Notifications enabled for '+(portalContext.travelerName||'this traveler')+'.'
+                  : 'Notification permission was not granted.'
+            });
+
+            renderSetupDialog();
+          }catch(error){
+            console.warn('Notification permission failed.',error);
+
+            sendNotificationResultToPortal({
+              enabled:false,
+              message:String(
+                error&&error.message
+                  ? error.message
+                  : 'Notifications could not be enabled.'
+              ),
+              toastMessage:'Notifications could not be enabled.'
+            });
+          }
+        });
+      }
+
       function renderSetupDialog(){
         const installed=isStandalone();
 
@@ -641,6 +777,28 @@
 
         if(data.type==='vacation-portal-open-app-setup'){
           openSetup();
+          return;
+        }
+
+        if(data.type==='vacation-portal-enable-notifications'){
+          enableNotificationsFromPortalCommand(data);
+          return;
+        }
+
+        if(data.type==='vacation-portal-notification-status'){
+          if(data.travelerId){
+            portalContext.travelerId=String(data.travelerId||'');
+          }
+          if(data.travelerName){
+            portalContext.travelerName=String(data.travelerName||'');
+          }
+          if(data.oneSignalAppId){
+            portalContext.oneSignalAppId=String(data.oneSignalAppId||'');
+          }
+
+          currentNotificationStatus().then(function(result){
+            sendNotificationResultToPortal(result);
+          });
         }
       });
 
