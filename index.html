@@ -281,6 +281,9 @@
     </section>
   </div>
 
+  <script>
+    window.OneSignalDeferred=window.OneSignalDeferred||[];
+  </script>
   <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
   <script src="./config.js"></script>
   <script>
@@ -380,6 +383,8 @@
         release:''
       };
       let oneSignalInitialized=false;
+      let oneSignalClient=null;
+      let oneSignalInitPromise=null;
 
       const installButton=document.getElementById('installToolButton');
       const notifyButton=document.getElementById('notifyToolButton');
@@ -441,17 +446,41 @@
       }
 
       async function initOneSignal(){
-        if(oneSignalInitialized) return true;
-        if(!portalContext.oneSignalAppId) return false;
+        if(oneSignalInitialized && oneSignalClient){
+          return true;
+        }
+
+        if(oneSignalInitPromise){
+          return oneSignalInitPromise;
+        }
+
+        if(!portalContext.oneSignalAppId){
+          return false;
+        }
 
         window.OneSignalDeferred=window.OneSignalDeferred||[];
 
-        return new Promise(function(resolve){
+        oneSignalInitPromise=new Promise(function(resolve){
+          let settled=false;
+
+          function finish(value){
+            if(settled) return;
+            settled=true;
+            resolve(value);
+          }
+
+          const timeout=setTimeout(function(){
+            console.warn('OneSignal initialization timed out.');
+            finish(false);
+          },10000);
+
           window.OneSignalDeferred.push(async function(OneSignal){
             try{
+              oneSignalClient=OneSignal;
+
               await OneSignal.init({
                 appId:portalContext.oneSignalAppId,
-                serviceWorkerPath:'push/onesignal/OneSignalSDKWorker.js',
+                serviceWorkerPath:'/Vacation-Portal/push/onesignal/OneSignalSDKWorker.js',
                 serviceWorkerParam:{
                   scope:'/Vacation-Portal/push/onesignal/'
                 },
@@ -465,27 +494,36 @@
                 await OneSignal.login(portalContext.travelerId);
               }
 
-              resolve(true);
+              clearTimeout(timeout);
+              finish(true);
             }catch(error){
               console.warn('OneSignal initialization failed.',error);
-              resolve(false);
+              clearTimeout(timeout);
+              oneSignalInitialized=false;
+              oneSignalClient=null;
+              finish(false);
             }
           });
+        }).finally(function(){
+          if(!oneSignalInitialized){
+            oneSignalInitPromise=null;
+          }
         });
+
+        return oneSignalInitPromise;
       }
 
       async function syncOneSignalTraveler(){
         if(!portalContext.travelerId) return;
-        const ready=await initOneSignal();
-        if(!ready) return;
 
-        window.OneSignalDeferred.push(async function(OneSignal){
-          try{
-            await OneSignal.login(portalContext.travelerId);
-          }catch(error){
-            console.warn('OneSignal traveler login failed.',error);
-          }
-        });
+        const ready=await initOneSignal();
+        if(!ready || !oneSignalClient) return;
+
+        try{
+          await oneSignalClient.login(portalContext.travelerId);
+        }catch(error){
+          console.warn('OneSignal traveler login failed.',error);
+        }
       }
 
       async function enableNotifications(){
@@ -501,24 +539,28 @@
 
         const ready=await initOneSignal();
 
-        if(!ready){
+        if(!ready || !oneSignalClient){
+          console.warn('OneSignal was not ready for notification permission.');
           openSetup();
           return;
         }
 
-        window.OneSignalDeferred.push(async function(OneSignal){
-          try{
-            if(portalContext.travelerId){
-              await OneSignal.login(portalContext.travelerId);
-            }
-
-            await OneSignal.Notifications.requestPermission();
-            renderSetupDialog();
-          }catch(error){
-            console.warn('Notification permission failed.',error);
-            openSetup();
+        try{
+          if(portalContext.travelerId){
+            await oneSignalClient.login(portalContext.travelerId);
           }
-        });
+
+          await oneSignalClient.Notifications.requestPermission();
+
+          if(portalContext.travelerId){
+            await oneSignalClient.login(portalContext.travelerId);
+          }
+
+          renderSetupDialog();
+        }catch(error){
+          console.warn('Notification permission failed.',error);
+          openSetup();
+        }
       }
 
       function portalFrameWindow(){
@@ -602,59 +644,61 @@
           return;
         }
 
-        window.OneSignalDeferred.push(async function(OneSignal){
-          try{
-            if(portalContext.travelerId){
-              await OneSignal.login(portalContext.travelerId);
-            }
-
-            await OneSignal.Notifications.requestPermission();
-
-            if(portalContext.travelerId){
-              await OneSignal.login(portalContext.travelerId);
-            }
-
-            const permission=
-              ('Notification' in window)
-                ? String(Notification.permission||'default')
-                : 'unsupported';
-
-            const enabled=permission==='granted';
-
-            sendNotificationResultToPortal({
-              enabled:enabled,
-              permission:permission,
-              message:
-                enabled
-                  ? 'Notifications enabled on this device.'
-                  : permission==='denied'
-                    ? 'Notifications are blocked on this device.'
-                    : 'Notification permission was not granted.',
-              help:
-                enabled
-                  ? 'This device is linked to '+(portalContext.travelerName||'the selected traveler')+'.'
-                  : '',
-              toastMessage:
-                enabled
-                  ? 'Notifications enabled for '+(portalContext.travelerName||'this traveler')+'.'
-                  : 'Notification permission was not granted.'
-            });
-
-            renderSetupDialog();
-          }catch(error){
-            console.warn('Notification permission failed.',error);
-
-            sendNotificationResultToPortal({
-              enabled:false,
-              message:String(
-                error&&error.message
-                  ? error.message
-                  : 'Notifications could not be enabled.'
-              ),
-              toastMessage:'Notifications could not be enabled.'
-            });
+        try{
+          if(!oneSignalClient){
+            throw new Error('OneSignal client is unavailable after initialization.');
           }
-        });
+
+          if(portalContext.travelerId){
+            await oneSignalClient.login(portalContext.travelerId);
+          }
+
+          await oneSignalClient.Notifications.requestPermission();
+
+          if(portalContext.travelerId){
+            await oneSignalClient.login(portalContext.travelerId);
+          }
+
+          const permission=
+            ('Notification' in window)
+              ? String(Notification.permission||'default')
+              : 'unsupported';
+
+          const enabled=permission==='granted';
+
+          sendNotificationResultToPortal({
+            enabled:enabled,
+            permission:permission,
+            message:
+              enabled
+                ? 'Notifications enabled on this device.'
+                : permission==='denied'
+                  ? 'Notifications are blocked on this device.'
+                  : 'Notification permission was not granted.',
+            help:
+              enabled
+                ? 'This device is linked to '+(portalContext.travelerName||'the selected traveler')+'.'
+                : '',
+            toastMessage:
+              enabled
+                ? 'Notifications enabled for '+(portalContext.travelerName||'this traveler')+'.'
+                : 'Notification permission was not granted.'
+          });
+
+          renderSetupDialog();
+        }catch(error){
+          console.warn('Notification permission failed.',error);
+
+          sendNotificationResultToPortal({
+            enabled:false,
+            message:String(
+              error&&error.message
+                ? error.message
+                : 'Notifications could not be enabled.'
+            ),
+            toastMessage:'Notifications could not be enabled.'
+          });
+        }
       }
 
       function renderSetupDialog(){
