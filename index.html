@@ -375,6 +375,8 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
+      const PWA_HOST_RELEASE='V4.3.7';
+
       let portalContext={
         travelerId:'',
         travelerName:'',
@@ -480,7 +482,7 @@
 
               await OneSignal.init({
                 appId:portalContext.oneSignalAppId,
-                serviceWorkerPath:'/Vacation-Portal/push/onesignal/OneSignalSDKWorker.js',
+                serviceWorkerPath:'Vacation-Portal/push/onesignal/OneSignalSDKWorker.js',
                 serviceWorkerParam:{
                   scope:'/Vacation-Portal/push/onesignal/'
                 },
@@ -568,13 +570,24 @@
         return frame ? frame.contentWindow : null;
       }
 
+      function sendNotificationAckToPortal(){
+        const target=portalFrameWindow();
+        if(!target) return;
+
+        target.postMessage({
+          type:'vacation-portal-notification-ack',
+          hostRelease:PWA_HOST_RELEASE
+        },'*');
+      }
+
       function sendNotificationResultToPortal(result){
         const target=portalFrameWindow();
         if(!target) return;
 
         target.postMessage(Object.assign({
           type:'vacation-portal-notification-result',
-          travelerName:portalContext.travelerName||''
+          travelerName:portalContext.travelerName||'',
+          hostRelease:PWA_HOST_RELEASE
         },result||{}),'*');
       }
 
@@ -825,11 +838,30 @@
         }
 
         if(data.type==='vacation-portal-enable-notifications'){
+          sendNotificationAckToPortal();
+
+          if(
+            data.requiredHostRelease &&
+            String(data.requiredHostRelease)!==PWA_HOST_RELEASE
+          ){
+            sendNotificationResultToPortal({
+              enabled:false,
+              message:
+                'Installed PWA host version mismatch. Expected '+
+                String(data.requiredHostRelease)+
+                ' but this shell is '+PWA_HOST_RELEASE+'.',
+              toastMessage:'Update/reopen the installed Vacation Portal app.'
+            });
+            return;
+          }
+
           enableNotificationsFromPortalCommand(data);
           return;
         }
 
         if(data.type==='vacation-portal-notification-status'){
+          sendNotificationAckToPortal();
+
           if(data.travelerId){
             portalContext.travelerId=String(data.travelerId||'');
           }
