@@ -375,7 +375,7 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.8';
+      const PWA_HOST_RELEASE='V4.3.10';
 
       let portalContext={
         travelerId:'',
@@ -384,9 +384,71 @@
         pwaUrl:'',
         release:''
       };
+
+      let notificationSetupPending=false;
+      let notificationSetupComplete=false;
+      let notificationSetupMessage='';
+
       let oneSignalInitialized=false;
       let oneSignalClient=null;
       let oneSignalInitPromise=null;
+
+      function decodeNotificationSetupHash(){
+        const hash=String(window.location.hash||'');
+
+        if(!hash.startsWith('#notifySetup=')){
+          return null;
+        }
+
+        try{
+          const encoded=decodeURIComponent(
+            hash.slice('#notifySetup='.length)
+          );
+
+          const json=decodeURIComponent(
+            escape(
+              atob(encoded)
+            )
+          );
+
+          return JSON.parse(json);
+        }catch(error){
+          console.warn('Could not decode notification setup payload.',error);
+          return null;
+        }
+      }
+
+      const notificationLaunch=decodeNotificationSetupHash();
+
+      if(notificationLaunch){
+        if(notificationLaunch.travelerId){
+          portalContext.travelerId=String(
+            notificationLaunch.travelerId||''
+          );
+        }
+
+        if(notificationLaunch.travelerName){
+          portalContext.travelerName=String(
+            notificationLaunch.travelerName||''
+          );
+        }
+
+        if(notificationLaunch.oneSignalAppId){
+          portalContext.oneSignalAppId=String(
+            notificationLaunch.oneSignalAppId||''
+          );
+        }
+
+        notificationSetupPending=true;
+
+        try{
+          history.replaceState(
+            {},
+            document.title,
+            window.location.pathname
+          );
+        }catch(error){}
+      }
 
       const installButton=document.getElementById('installToolButton');
       const notifyButton=document.getElementById('notifyToolButton');
@@ -530,11 +592,15 @@
 
       async function enableNotifications(){
         if(isIOS()&&!isStandalone()){
+          notificationSetupMessage=
+            'On iPhone, open Vacation Portal from its Home Screen icon first.';
           openSetup();
           return;
         }
 
         if(!portalContext.oneSignalAppId){
+          notificationSetupMessage=
+            'The OneSignal App ID is not available to this app shell.';
           openSetup();
           return;
         }
@@ -542,7 +608,8 @@
         const ready=await initOneSignal();
 
         if(!ready || !oneSignalClient){
-          console.warn('OneSignal was not ready for notification permission.');
+          notificationSetupMessage=
+            'OneSignal could not initialize. Check the OneSignal Web Push site and service worker settings.';
           openSetup();
           return;
         }
@@ -558,10 +625,33 @@
             await oneSignalClient.login(portalContext.travelerId);
           }
 
+          const permission=
+            ('Notification' in window)
+              ? String(Notification.permission||'default')
+              : 'unsupported';
+
+          if(permission==='granted'){
+            notificationSetupComplete=true;
+            notificationSetupPending=false;
+            notificationSetupMessage=
+              'Notifications are enabled for '+
+              (portalContext.travelerName||'this traveler')+'.';
+          }else{
+            notificationSetupMessage=
+              permission==='denied'
+                ? 'Notifications are blocked for Vacation Portal on this device.'
+                : 'Notification permission was not granted.';
+          }
+
           renderSetupDialog();
         }catch(error){
           console.warn('Notification permission failed.',error);
-          openSetup();
+          notificationSetupMessage=String(
+            error&&error.message
+              ? error.message
+              : 'Notifications could not be enabled.'
+          );
+          renderSetupDialog();
         }
       }
 
@@ -739,6 +829,70 @@
 
       function renderSetupDialog(){
         const installed=isStandalone();
+
+        if(notificationSetupComplete){
+          dialogBody.innerHTML=`
+            <p>
+              <strong>Notifications are enabled.</strong>
+            </p>
+            <div class="setup-status">
+              ${notificationSetupMessage}
+            </div>
+            <p>
+              This device is now registered to
+              <strong>${(portalContext.travelerName||'the selected traveler')
+                .replace(/[&<>"']/g,function(c){
+                  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+                })}</strong>.
+            </p>`;
+
+          dialogActions.innerHTML=`
+            <button class="primary" type="button" id="dialogDoneButton">
+              Return to Vacation Portal
+            </button>`;
+
+          document.getElementById('dialogDoneButton').onclick=function(){
+            closeSetup();
+          };
+
+          return;
+        }
+
+        if(notificationSetupPending && installed){
+          dialogBody.innerHTML=`
+            <p class="eyebrow">NOTIFICATIONS</p>
+            <h2>Enable trip notifications</h2>
+            <p>
+              Register this device to
+              <strong>${(portalContext.travelerName||'the selected traveler')
+                .replace(/[&<>"']/g,function(c){
+                  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+                })}</strong>.
+            </p>
+            <div class="setup-status">
+              ${
+                notificationSetupMessage
+                  ? notificationSetupMessage
+                  : 'Tap the button below so iOS can request notification permission directly from the installed Vacation Portal app.'
+              }
+            </div>`;
+
+          dialogActions.innerHTML=`
+            <button class="primary" type="button" id="dialogNotifyDirectButton">
+              Enable Notifications
+            </button>
+            <button type="button" id="dialogCancelNotifyButton">
+              Cancel
+            </button>`;
+
+          document.getElementById('dialogNotifyDirectButton').onclick=
+            enableNotifications;
+
+          document.getElementById('dialogCancelNotifyButton').onclick=
+            closeSetup;
+
+          return;
+        }
 
         if(isIOS()&&!installed){
           dialogBody.innerHTML=`
@@ -918,6 +1072,19 @@
         installButton.textContent='✓ App Installed';
       }else if(isIOS()){
         installButton.textContent='📲 Add to Home';
+      }
+
+      if(notificationSetupPending){
+        document.body.classList.add('notification-setup-launch');
+
+        setTimeout(function(){
+          openSetup();
+
+          const setupTitle=document.getElementById('setupTitle');
+          if(setupTitle){
+            setupTitle.textContent='Enable notifications';
+          }
+        },350);
       }
 
       [300,1000,2500,5000,9000].forEach(function(delay){
