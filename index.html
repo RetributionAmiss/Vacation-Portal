@@ -249,6 +249,36 @@
       .app-tools button{font-size:12px;padding:9px 12px}
     }
 
+  
+    /* V4.3.12 compact, non-blocking PWA shell controls */
+    .app-tools{
+      position:fixed!important;
+      right:max(10px,env(safe-area-inset-right))!important;
+      top:auto!important;
+      bottom:max(10px,env(safe-area-inset-bottom))!important;
+      z-index:1500!important;
+      display:block!important;
+      pointer-events:none!important;
+    }
+    .notification-bell{
+      pointer-events:auto!important;
+      display:grid!important;
+      place-items:center!important;
+      width:42px!important;
+      min-width:42px!important;
+      height:42px!important;
+      min-height:42px!important;
+      padding:0!important;
+      border-radius:50%!important;
+      border:1px solid rgba(255,255,255,.3)!important;
+      background:rgba(23,63,50,.92)!important;
+      color:white!important;
+      font-size:19px!important;
+      line-height:1!important;
+      box-shadow:0 5px 16px rgba(0,0,0,.16)!important;
+    }
+    .visually-hidden-tool{display:none!important}
+    .setup-overlay{z-index:2500!important}
   </style>
 </head>
 <body>
@@ -265,12 +295,20 @@
   </div>
 
   <div class="app-tools" id="appTools">
-    <button class="secondary" id="installToolButton" type="button">
-      📲 Add App
-    </button>
-    <button id="notifyToolButton" type="button">
-      🔔 Enable Notifications
-    </button>
+    <button
+      id="notifyToolButton"
+      class="notification-bell"
+      type="button"
+      aria-label="Notifications"
+      title="Notifications"
+    >🔔</button>
+    <button
+      id="installToolButton"
+      class="visually-hidden-tool"
+      type="button"
+      aria-hidden="true"
+      tabindex="-1"
+    >App</button>
   </div>
 
   <div class="setup-overlay hidden" id="appSetupOverlay">
@@ -376,12 +414,14 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.11';
+      const PWA_HOST_RELEASE='V4.3.12';
 
       let portalContext={
         travelerId:'',
         travelerName:'',
-        oneSignalAppId:'',
+        oneSignalAppId:String(
+          (window.VACATION_PORTAL_CONFIG&&window.VACATION_PORTAL_CONFIG.oneSignalAppId)||''
+        ),
         pwaUrl:'',
         release:''
       };
@@ -488,12 +528,12 @@
       window.addEventListener('beforeinstallprompt',function(event){
         event.preventDefault();
         deferredInstallPrompt=event;
-        installButton.textContent='📲 Install App';
+        installButton.textContent='App';
       });
 
       window.addEventListener('appinstalled',function(){
         deferredInstallPrompt=null;
-        installButton.textContent='✓ App Installed';
+        installButton.textContent='App';
         renderSetupDialog();
       });
 
@@ -956,6 +996,12 @@
         }
 
         if(!portalContext.oneSignalAppId){
+          portalContext.oneSignalAppId=String(
+            (window.VACATION_PORTAL_CONFIG&&window.VACATION_PORTAL_CONFIG.oneSignalAppId)||''
+          );
+        }
+
+        if(!portalContext.oneSignalAppId){
           dialogBody.innerHTML=`
             <p>The app is installed on this device.</p>
             <div class="setup-status">
@@ -990,8 +1036,8 @@
 
       installButton.addEventListener('click',promptInstall);
       notifyButton.addEventListener('click',function(){
-        notificationSetupPending=true;
-        notificationSetupMessage='Tap Enable Notifications below to allow trip alerts on this device.';
+        notificationSetupPending=false;
+        notificationSetupMessage='';
         openSetup();
       });
 
@@ -1018,7 +1064,11 @@
           portalContext={
             travelerId:String(data.travelerId||''),
             travelerName:String(data.travelerName||''),
-            oneSignalAppId:String(data.oneSignalAppId||''),
+            oneSignalAppId:String(
+              data.oneSignalAppId||
+              (window.VACATION_PORTAL_CONFIG&&window.VACATION_PORTAL_CONFIG.oneSignalAppId)||
+              ''
+            ),
             pwaUrl:String(data.pwaUrl||''),
             release:String(data.release||'')
           };
@@ -1074,37 +1124,15 @@
       });
 
       if(isStandalone()){
-        installButton.textContent='✓ App Installed';
+        installButton.textContent='App';
       }else if(isIOS()){
-        installButton.textContent='📲 Add to Home';
-      }
-
-      if(notificationSetupPending){
-        document.body.classList.add('notification-setup-launch');
-
-        setTimeout(function(){
-          openSetup();
-
-          const setupTitle=document.getElementById('setupTitle');
-          if(setupTitle){
-            setupTitle.textContent='Enable notifications';
-          }
-        },350);
+        installButton.textContent='App';
       }
 
       [300,1000,2500,5000,9000].forEach(function(delay){
         setTimeout(announcePwaHostReady,delay);
       });
-
-      // Gentle first-run onboarding. Do not repeatedly nag the traveler.
-      const onboardingKey='vacationPortalAppSetupShownV430';
-      if(!isStandalone()&&!localStorage.getItem(onboardingKey)){
-        setTimeout(function(){
-          localStorage.setItem(onboardingKey,'1');
-          openSetup();
-        },1800);
-      }
-    })();
+})();
   </script>
 </body>
 </html>
