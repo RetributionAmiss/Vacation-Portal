@@ -472,7 +472,61 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.19';
+      const PWA_HOST_RELEASE='V4.3.22';
+
+
+      const DEVICE_TRAVELER_PROFILE_KEY='vacationPortalDeviceTravelerProfileV1';
+
+      function readDurableDeviceTravelerProfile(){
+        try{
+          const value=JSON.parse(
+            localStorage.getItem(DEVICE_TRAVELER_PROFILE_KEY)||'null'
+          );
+
+          if(value&&value.travelerId){
+            return {
+              travelerId:String(value.travelerId||''),
+              travelerName:String(value.travelerName||''),
+              selectedAt:String(value.selectedAt||'')
+            };
+          }
+        }catch(error){}
+
+        return null;
+      }
+
+      function saveDurableDeviceTravelerProfile(profile){
+        if(!profile||!profile.travelerId) return;
+
+        try{
+          localStorage.setItem(
+            DEVICE_TRAVELER_PROFILE_KEY,
+            JSON.stringify({
+              travelerId:String(profile.travelerId||''),
+              travelerName:String(profile.travelerName||''),
+              selectedAt:String(profile.selectedAt||new Date().toISOString())
+            })
+          );
+        }catch(error){}
+      }
+
+      function clearDurableDeviceTravelerProfile(){
+        try{
+          localStorage.removeItem(DEVICE_TRAVELER_PROFILE_KEY);
+        }catch(error){}
+      }
+
+      function sendDurableDeviceTravelerProfile(){
+        const profile=readDurableDeviceTravelerProfile();
+
+        broadcastToDescendantFrames({
+          type:'vacation-portal-device-profile',
+          hostRelease:PWA_HOST_RELEASE,
+          travelerId:profile?profile.travelerId:'',
+          travelerName:profile?profile.travelerName:'',
+          selectedAt:profile?profile.selectedAt:''
+        });
+      }
 
       let portalContext={
         travelerId:'',
@@ -1139,6 +1193,35 @@
           return;
         }
 
+        if(data.type==='vacation-portal-request-device-profile'){
+          sendDurableDeviceTravelerProfile();
+          return;
+        }
+
+        if(data.type==='vacation-portal-save-device-profile'){
+          saveDurableDeviceTravelerProfile({
+            travelerId:String(data.travelerId||''),
+            travelerName:String(data.travelerName||''),
+            selectedAt:String(data.selectedAt||'')
+          });
+
+          broadcastToDescendantFrames({
+            type:'vacation-portal-device-profile',
+            hostRelease:PWA_HOST_RELEASE,
+            travelerId:String(data.travelerId||''),
+            travelerName:String(data.travelerName||''),
+            selectedAt:String(data.selectedAt||'')
+          });
+
+          return;
+        }
+
+        if(data.type==='vacation-portal-clear-device-profile'){
+          clearDurableDeviceTravelerProfile();
+          sendDurableDeviceTravelerProfile();
+          return;
+        }
+
         if(data.type==='vacation-portal-handshake-request'){
           broadcastToDescendantFrames({
             type:'vacation-portal-handshake-response',
@@ -1227,7 +1310,10 @@
       }
 
       [300,1000,2500,5000,9000].forEach(function(delay){
-        setTimeout(announcePwaHostReady,delay);
+        setTimeout(function(){
+          announcePwaHostReady();
+          sendDurableDeviceTravelerProfile();
+        },delay);
       });
 })();
   </script>

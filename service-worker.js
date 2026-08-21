@@ -1,4 +1,4 @@
-const CACHE_NAME='family-vacation-pwa-v4-3-21';
+const CACHE_NAME='family-vacation-pwa-v4-3-22';
 
 const APP_SHELL=[
   './',
