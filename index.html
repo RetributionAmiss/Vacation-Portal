@@ -279,6 +279,42 @@
     }
     .visually-hidden-tool{display:none!important}
     .setup-overlay{z-index:2500!important}
+  
+    /* V4.3.19 first-visit app onboarding */
+    .onboarding-overlay{
+      position:fixed;inset:0;z-index:4000;
+      display:grid;place-items:center;
+      padding:22px max(18px,env(safe-area-inset-right)) 22px max(18px,env(safe-area-inset-left));
+      background:linear-gradient(180deg,#173f32 0%,#0f2f26 100%);
+      overflow:auto;
+    }
+    .onboarding-overlay.hidden{display:none!important}
+    .onboarding-card{
+      width:min(100%,430px);background:#fff;border-radius:24px;
+      padding:28px 22px;text-align:center;color:#1f2d27;
+      box-shadow:0 24px 70px rgba(0,0,0,.28);
+    }
+    .onboarding-mark{font-size:48px;line-height:1;margin-bottom:10px}
+    .onboarding-eyebrow{
+      margin:0 0 5px;font-size:11px;font-weight:800;letter-spacing:.13em;color:#537065
+    }
+    .onboarding-card h1{font-size:27px;line-height:1.08;margin:0 0 12px}
+    .onboarding-lead{font-size:15px;line-height:1.5;color:#5c6964;margin:0 0 22px}
+    .onboarding-primary,.onboarding-secondary{
+      width:100%;min-height:50px;border-radius:12px;margin-top:10px;
+      font-size:16px;font-weight:800;padding:12px 14px
+    }
+    .onboarding-primary{background:#173f32;color:#fff;border:1px solid #173f32}
+    .onboarding-secondary{background:#fff;color:#173f32;border:1px solid #cbd5d0}
+    .onboarding-instructions{
+      text-align:left;background:#f3f6f4;border:1px solid #dce5e1;
+      border-radius:14px;padding:14px 16px;margin:10px 0 4px
+    }
+    .onboarding-instructions strong{display:block;margin-bottom:7px}
+    .onboarding-instructions ol{margin:7px 0 0;padding-left:22px}
+    .onboarding-instructions li{margin:7px 0;line-height:1.35}
+    .onboarding-footnote{font-size:11px;color:#7b8581;margin:16px 0 0}
+
   </style>
 </head>
 <body>
@@ -309,6 +345,28 @@
       aria-hidden="true"
       tabindex="-1"
     >App</button>
+  </div>
+
+  <div class="onboarding-overlay hidden" id="onboardingOverlay">
+    <div class="onboarding-card">
+      <div class="onboarding-mark">🏔️</div>
+      <p class="onboarding-eyebrow">FAMILY VACATION</p>
+      <h1>Smoky Mountain Vacation Portal</h1>
+      <p class="onboarding-lead">
+        Keep voting, rentals, meals, groceries, itinerary and trip updates
+        together in one place.
+      </p>
+
+      <div id="onboardingInstallArea"></div>
+
+      <button id="onboardingBrowserButton" class="onboarding-secondary" type="button">
+        Continue in Browser
+      </button>
+
+      <p class="onboarding-footnote">
+        You only need to do this once on each device.
+      </p>
+    </div>
   </div>
 
   <div class="setup-overlay hidden" id="appSetupOverlay">
@@ -414,7 +472,7 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.13';
+      const PWA_HOST_RELEASE='V4.3.19';
 
       let portalContext={
         travelerId:'',
@@ -1173,5 +1231,98 @@
       });
 })();
   </script>
+
+<script>
+(function(){
+  const KEY='vacationPortalOnboardingSeenV4319';
+
+  function standalone_(){
+    return window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone===true;
+  }
+
+  function ios_(){
+    return /iphone|ipad|ipod/i.test(navigator.userAgent||'');
+  }
+
+  function showOnboarding_(){
+    const overlay=document.getElementById('onboardingOverlay');
+    const area=document.getElementById('onboardingInstallArea');
+    const browser=document.getElementById('onboardingBrowserButton');
+    if(!overlay||!area||!browser) return;
+
+    // Installed PWA should go straight to the portal.
+    if(standalone_()){
+      localStorage.setItem(KEY,'1');
+      overlay.classList.add('hidden');
+      return;
+    }
+
+    if(localStorage.getItem(KEY)==='1'){
+      overlay.classList.add('hidden');
+      return;
+    }
+
+    overlay.classList.remove('hidden');
+
+    if(ios_()){
+      area.innerHTML=
+        '<div class="onboarding-instructions">'+
+          '<strong>Install on iPhone / iPad</strong>'+
+          '<ol>'+
+            '<li>Tap the <strong>Share</strong> button in Safari.</li>'+
+            '<li>Choose <strong>Add to Home Screen</strong>.</li>'+
+            '<li>Tap <strong>Add</strong>, then open the new Vacation Portal icon.</li>'+
+          '</ol>'+
+        '</div>';
+    }else{
+      area.innerHTML=
+        '<button id="onboardingInstallButton" class="onboarding-primary" type="button">'+
+          '📲 Install Vacation App'+
+        '</button>';
+
+      const install=document.getElementById('onboardingInstallButton');
+      if(install){
+        install.addEventListener('click',async function(){
+          try{
+            if(window.deferredInstallPrompt){
+              window.deferredInstallPrompt.prompt();
+              await window.deferredInstallPrompt.userChoice;
+              localStorage.setItem(KEY,'1');
+              overlay.classList.add('hidden');
+            }else{
+              // Reuse the host's existing setup/install UI when browser prompt is unavailable.
+              localStorage.setItem(KEY,'1');
+              overlay.classList.add('hidden');
+              const existing=document.getElementById('installToolButton');
+              if(existing) existing.click();
+            }
+          }catch(error){}
+        });
+      }
+    }
+
+    browser.addEventListener('click',function(){
+      localStorage.setItem(KEY,'1');
+      overlay.classList.add('hidden');
+    });
+  }
+
+  window.addEventListener('appinstalled',function(){
+    try{localStorage.setItem(KEY,'1');}catch(error){}
+    const overlay=document.getElementById('onboardingOverlay');
+    if(overlay) overlay.classList.add('hidden');
+  });
+
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',function(){
+      setTimeout(showOnboarding_,250);
+    });
+  }else{
+    setTimeout(showOnboarding_,250);
+  }
+})();
+</script>
+
 </body>
 </html>
