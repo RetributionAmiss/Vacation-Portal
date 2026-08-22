@@ -415,6 +415,58 @@
       const config=window.VACATION_PORTAL_CONFIG||{};
       let url=String(config.portalUrl||'').trim();
 
+      const PWA_DEVICE_ID_KEY='vacationPortalStableDeviceIdV1';
+
+      function getOrCreateStableDeviceId(){
+        try{
+          let value=String(
+            localStorage.getItem(PWA_DEVICE_ID_KEY)||''
+          ).trim();
+
+          if(value) return value;
+
+          if(
+            window.crypto &&
+            typeof window.crypto.randomUUID==='function'
+          ){
+            value=window.crypto.randomUUID();
+          }else{
+            value=
+              'dev-'+
+              Date.now().toString(36)+'-'+
+              Math.random().toString(36).slice(2,14);
+          }
+
+          localStorage.setItem(PWA_DEVICE_ID_KEY,value);
+          return value;
+        }catch(error){
+          return (
+            'session-'+
+            Date.now().toString(36)+'-'+
+            Math.random().toString(36).slice(2,10)
+          );
+        }
+      }
+
+      const stableDeviceId=getOrCreateStableDeviceId();
+
+      try{
+        if(/^https:\/\//i.test(url)){
+          const portalDeviceUrl=new URL(url);
+          portalDeviceUrl.searchParams.set(
+            'deviceId',
+            stableDeviceId
+          );
+          portalDeviceUrl.searchParams.set(
+            'pwaHostRelease',
+            'V4.3.25'
+          );
+          url=portalDeviceUrl.toString();
+        }
+      }catch(error){
+        console.warn('Could not add stable device ID to portal URL.',error);
+      }
+
       try{
         const durableDeviceTraveler=JSON.parse(
           localStorage.getItem('vacationPortalDeviceTravelerProfileV1')||'null'
@@ -523,7 +575,7 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.24';
+      const PWA_HOST_RELEASE='V4.3.25';
 
 
       const DEVICE_TRAVELER_PROFILE_KEY='vacationPortalDeviceTravelerProfileV1';
