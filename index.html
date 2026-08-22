@@ -450,6 +450,19 @@
           src="${url.replace(/"/g,'&quot;')}"
         ></iframe>`;
 
+      const portalFrame=document.getElementById('portalFrame');
+
+      if(portalFrame){
+        portalFrame.addEventListener('load',function(){
+          [100,500,1400,3200].forEach(function(delay){
+            setTimeout(function(){
+              sendDurableDeviceTravelerProfile();
+              announcePwaHostReady();
+            },delay);
+          });
+        });
+      }
+
       if('serviceWorker' in navigator){
         navigator.serviceWorker.register('./service-worker.js')
           .catch(error=>{
@@ -472,7 +485,7 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.22';
+      const PWA_HOST_RELEASE='V4.3.23';
 
 
       const DEVICE_TRAVELER_PROFILE_KEY='vacationPortalDeviceTravelerProfileV1';
@@ -551,6 +564,24 @@
           portalContext.travelerName=String(savedTraveler.travelerName||'');
         }
       }catch(error){}
+
+      // One-time migration for devices that already had a traveler identity
+      // stored by the notification system before durable device profiles existed.
+      if(!readDurableDeviceTravelerProfile()){
+        try{
+          const legacyContext=JSON.parse(
+            localStorage.getItem('vacationPortalTravelerContext')||'{}'
+          );
+
+          if(legacyContext&&legacyContext.travelerId){
+            saveDurableDeviceTravelerProfile({
+              travelerId:String(legacyContext.travelerId||''),
+              travelerName:String(legacyContext.travelerName||''),
+              selectedAt:new Date().toISOString()
+            });
+          }
+        }catch(error){}
+      }
 
       let notificationSetupPending=false;
       let notificationSetupComplete=false;
@@ -1231,6 +1262,17 @@
         }
 
         if(data.type==='vacation-portal-context'){
+          // The normal context channel is already used successfully for
+          // OneSignal identity. Also use it to reinforce the permanent
+          // saved/default traveler whenever Apps Script knows one.
+          if(data.savedTravelerId){
+            saveDurableDeviceTravelerProfile({
+              travelerId:String(data.savedTravelerId||''),
+              travelerName:String(data.savedTravelerName||''),
+              selectedAt:new Date().toISOString()
+            });
+          }
+
           portalContext={
             travelerId:String(data.travelerId||''),
             travelerName:String(data.travelerName||''),

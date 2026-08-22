@@ -5,5 +5,5 @@ window.VACATION_PORTAL_CONFIG = {
   appName: 'Family Vacation Portal',
   shortName: 'Family Trip',
   oneSignalAppId: 'fac4d46d-ba5b-4755-b5b1-8740f59c3b1d',
-  release: 'V4.3.22'
+  release: 'V4.3.23'
 };
