@@ -457,6 +457,16 @@
             'deviceId',
             stableDeviceId
           );
+
+          portalDeviceUrl.searchParams.set(
+            'pwaInstalled',
+            (
+              window.matchMedia('(display-mode: standalone)').matches ||
+              window.navigator.standalone===true
+            )
+              ? '1'
+              : '0'
+          );
           portalDeviceUrl.searchParams.set(
             'pwaHostRelease',
             'V4.3.25'
@@ -575,7 +585,7 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.25';
+      const PWA_HOST_RELEASE='V4.3.28';
 
 
       const DEVICE_TRAVELER_PROFILE_KEY='vacationPortalDeviceTravelerProfileV1';
