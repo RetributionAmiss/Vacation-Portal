@@ -413,7 +413,45 @@
       }
 
       const config=window.VACATION_PORTAL_CONFIG||{};
-      const url=String(config.portalUrl||'').trim();
+      let url=String(config.portalUrl||'').trim();
+
+      try{
+        const durableDeviceTraveler=JSON.parse(
+          localStorage.getItem('vacationPortalDeviceTravelerProfileV1')||'null'
+        );
+
+        if(
+          durableDeviceTraveler &&
+          durableDeviceTraveler.travelerId &&
+          /^https:\/\//i.test(url)
+        ){
+          const portalLaunchUrl=new URL(url);
+
+          portalLaunchUrl.searchParams.set(
+            'deviceTravelerId',
+            String(durableDeviceTraveler.travelerId||'')
+          );
+
+          portalLaunchUrl.searchParams.set(
+            'deviceTravelerName',
+            String(durableDeviceTraveler.travelerName||'')
+          );
+
+          portalLaunchUrl.searchParams.set(
+            'deviceTravelerSavedAt',
+            String(durableDeviceTraveler.selectedAt||'')
+          );
+
+          portalLaunchUrl.searchParams.set(
+            'pwaHostRelease',
+            'V4.3.24'
+          );
+
+          url=portalLaunchUrl.toString();
+        }
+      }catch(error){
+        console.warn('Could not apply saved device traveler to portal URL.',error);
+      }
       const root=document.getElementById('root');
 
       const configured=
@@ -485,7 +523,7 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.23';
+      const PWA_HOST_RELEASE='V4.3.24';
 
 
       const DEVICE_TRAVELER_PROFILE_KEY='vacationPortalDeviceTravelerProfileV1';
