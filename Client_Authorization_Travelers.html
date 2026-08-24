@@ -1,0 +1,76 @@
+<script>
+function saveTravelerForm(e){
+  e.preventDefault();
+
+  const travelerType=val('travelerType');
+  const parentGuardianId=travelerType==='Child'?val('parentGuardianId'):'';
+  const payload={
+    id:val('travelerId'),
+    name:val('travelerName').trim(),
+    email:val('travelerEmail').trim(),
+    group:val('travelerGroup').trim(),
+    homeLocation:val('travelerHome').trim(),
+    travelerType:travelerType,
+    parentGuardianId:parentGuardianId,
+    priceCap:travelerType==='Adult'?Number(val('travelerPriceCap')||0):0,
+    costPercent:travelerType==='Adult'?Number(val('travelerCostPercent')||0):0,
+    payMore:travelerType==='Adult'&&val('travelerPayMore')==='yes',
+    shareRoom:travelerType==='Adult'&&Boolean(document.getElementById('travelerShareRoom')?.checked),
+    notes:val('travelerNotes').trim(),
+    deviceId:String(PWA_DEVICE_ID_||'')
+  };
+
+  if(!payload.name){toast('Traveler name is required.',true);return;}
+
+  const editingOwnProfile=Boolean(
+    payload.id && String(payload.id)===String(currentTravelerId||'')
+  );
+
+  const save=function(){
+    const previous=(DATA.travelers||[]).map(function(row){return Object.assign({},row);});
+    const optimistic=travelerOptimisticRecord_(payload);
+    const localId=optimistic['Traveler ID'];
+    const existingIndex=(DATA.travelers||[]).findIndex(function(row){
+      return row['Traveler ID']===payload.id;
+    });
+
+    if(existingIndex>=0) DATA.travelers[existingIndex]=optimistic;
+    else DATA.travelers.push(optimistic);
+
+    closeModal();hydrateHeader();render();
+    toast('Traveler saved. Syncing in the background…');
+
+    const serverPayload=editingOwnProfile
+      ? Object.assign({},payload,{deviceId:String(PWA_DEVICE_ID_||'')})
+      : organizerAuthorizationValues_(payload);
+
+    google.script.run
+      .withSuccessHandler(function(saved){
+        const index=(DATA.travelers||[]).findIndex(function(row){
+          return row['Traveler ID']===localId||row['Traveler ID']===saved['Traveler ID'];
+        });
+        if(index>=0) DATA.travelers[index]=saved;
+        else DATA.travelers.push(saved);
+
+        if(currentTravelerId===localId){
+          currentTravelerId=saved['Traveler ID'];
+          localStorage.setItem('vacationTravelerId',currentTravelerId);
+          const savedDefault=savedDeviceTravelerProfile_&&
+            String(savedDeviceTravelerProfile_.travelerId||'')===String(localId||'');
+          if(savedDefault) commitDeviceTravelerProfile_(saved);
+        }
+
+        hydrateHeader();render();toast('Traveler changes synced.');
+      })
+      .withFailureHandler(function(error){
+        DATA.travelers=previous;hydrateHeader();render();
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+        toast('Traveler could not be saved: '+(error&&error.message?error.message:String(error)),true);
+      })
+      .saveTraveler(serverPayload);
+  };
+
+  if(editingOwnProfile) save();
+  else withOrganizerAuthorization_(save);
+}
+</script>
