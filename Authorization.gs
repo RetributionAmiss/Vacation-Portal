@@ -25,6 +25,14 @@ function authRandomToken_() {
   ].join('.');
 }
 
+function assertSpreadsheetAdminContext_() {
+  // Portal/web-app executions do not have an interactive Spreadsheet UI.
+  // Calling getUi() first makes spreadsheet-menu maintenance functions fail
+  // before they mutate data when invoked through google.script.run.
+  SpreadsheetApp.getUi();
+  return true;
+}
+
 function organizerAccessConfigured_() {
   const props = PropertiesService.getScriptProperties();
   return Boolean(
@@ -70,11 +78,12 @@ function setOrganizerAccessKey() {
 }
 
 function revokeOrganizerSessions() {
+  const ui = SpreadsheetApp.getUi();
   revokeOrganizerSessions_();
-  SpreadsheetApp.getUi().alert(
+  ui.alert(
     'Organizer sessions',
     'All organizer sessions were revoked.',
-    SpreadsheetApp.getUi().ButtonSet.OK
+    ui.ButtonSet.OK
   );
 }
 
@@ -101,8 +110,6 @@ function verifyOrganizerAccessKey_(accessKey) {
   if (!salt || !expected) return false;
 
   const actual = authHexDigest_(salt + ':' + String(accessKey || ''));
-
-  // Compare every character instead of exiting on the first mismatch.
   if (actual.length !== expected.length) return false;
 
   let mismatch = 0;
