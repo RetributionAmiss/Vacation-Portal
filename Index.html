@@ -18,9 +18,7 @@
     <div class="mountain-mark loading-mountain-mark" aria-hidden="true">▲</div>
     <h1>Smoky Mountain Vacation</h1>
     <p id="loadingText">Opening the family portal…</p>
-    <p id="loadingDetail" class="loading-detail">
-      Connecting to the trip workbook…
-    </p>
+    <p id="loadingDetail" class="loading-detail">Connecting to the trip workbook…</p>
   </div>
 
   <div id="app" class="app hidden">
@@ -32,22 +30,10 @@
       </div>
       <div class="topbar-actions">
         <label class="traveler-picker">
-          <span>
-            Planning as
-            <small id="deviceProfileHint" class="device-profile-hint">· saved on this device</small>
-          </span>
+          <span>Planning as <small id="deviceProfileHint" class="device-profile-hint">· saved on this device</small></span>
           <select id="currentTraveler" onchange="changeTraveler()"></select>
         </label>
-
-        <button
-          id="returnToSavedTravelerButton"
-          class="ghost temporary-traveler-return hidden"
-          type="button"
-          onclick="returnToSavedTraveler_()"
-        >
-          Return to saved traveler
-        </button>
-
+        <button id="returnToSavedTravelerButton" class="ghost temporary-traveler-return hidden" type="button" onclick="returnToSavedTraveler_()">Return to saved traveler</button>
         <button class="ghost" onclick="openCurrentTravelerInfo_()">Traveler Info</button>
         <button id="diagnosticsButton" class="ghost hidden" onclick="openDiagnostics()">Diagnostics</button>
         <button class="ghost" onclick="refreshData()">Refresh</button>
@@ -71,16 +57,11 @@
       <span>Updating trip data…</span>
     </div>
 
-    
     <div class="mobile-simple-nav" aria-label="Mobile navigation">
-      <button type="button" class="mobile-dashboard-button" onclick="navigate('dashboard')">
-        <span>🏠</span><span>Dashboard</span>
-      </button>
-      <button type="button" class="mobile-more-button" onclick="openMobileSectionMenu_()">
-        <span>☰</span><span>More</span>
-      </button>
+      <button type="button" class="mobile-dashboard-button" onclick="navigate('dashboard')"><span>🏠</span><span>Dashboard</span></button>
+      <button type="button" class="mobile-more-button" onclick="openMobileSectionMenu_()"><span>☰</span><span>More</span></button>
     </div>
-<main id="viewRoot"></main>
+    <main id="viewRoot"></main>
   </div>
 
   <div id="modal" class="modal hidden" aria-hidden="true">
@@ -112,5 +93,7 @@
   <?!= include('Client_Diagnostics'); ?>
   <?!= include('Client_Feedback'); ?>
   <?!= include('Client_PWA'); ?>
+  <?!= include('Client_Authorization'); ?>
+  <?!= include('Client_Authorization_Travelers'); ?>
 </body>
 </html>
