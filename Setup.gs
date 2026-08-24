@@ -3,6 +3,8 @@ function getSpreadsheet_() {
 }
 
 function setupVacationPortal() {
+  assertSpreadsheetAdminContext_();
+
   const ss = getSpreadsheet_();
   Object.keys(SCHEMAS).forEach(name => ensureSheet_(ss, name, SCHEMAS[name]));
 
@@ -35,7 +37,7 @@ function setupVacationPortal() {
     'The portal sheets were created or repaired without deleting existing data.'
   );
 
-  return getSystemHealth();
+  return getSystemHealth_();
 }
 
 function ensureSheet_(ss, name, requiredHeaders) {
@@ -94,12 +96,14 @@ function getSettings_(sheetName) {
 }
 
 function openRentalGathering() {
+  assertSpreadsheetAdminContext_();
   setSetting_('Trip', 'Portal Stage', 'Gathering');
   safeUiAlert_('Vacation Portal', 'Portal stage updated to Rental Gathering.');
   return getPortalData();
 }
 
 function openPreliminaryVoting() {
+  assertSpreadsheetAdminContext_();
   setSetting_('Trip', 'Portal Stage', 'Preliminary Voting');
   setSetting_('Trip', 'Voting Round', 'Preliminary');
   safeUiAlert_('Vacation Portal', 'Portal stage updated to Preliminary Voting.');
@@ -107,6 +111,7 @@ function openPreliminaryVoting() {
 }
 
 function openFinalistVoting() {
+  assertSpreadsheetAdminContext_();
   setSetting_('Trip', 'Portal Stage', 'Finalist Voting');
   setSetting_('Trip', 'Voting Round', 'Final');
   safeUiAlert_('Vacation Portal', 'Portal stage updated to Finalist Voting.');
@@ -115,16 +120,27 @@ function openFinalistVoting() {
 
 function setGeminiApiKey() {
   const ui = SpreadsheetApp.getUi();
-  const response = ui.prompt('Gemini API key', 'Paste the API key from Google AI Studio.', ui.ButtonSet.OK_CANCEL);
+  const response = ui.prompt(
+    'Gemini API key',
+    'Paste the API key from Google AI Studio.',
+    ui.ButtonSet.OK_CANCEL
+  );
+
   if (response.getSelectedButton() === ui.Button.OK) {
-    PropertiesService.getScriptProperties().setProperty('GEMINI_API_KEY', response.getResponseText().trim());
+    PropertiesService.getScriptProperties().setProperty(
+      'GEMINI_API_KEY',
+      response.getResponseText().trim()
+    );
     safeUiAlert_('Gemini API key', 'Gemini API key saved.');
   }
 }
 
 function testGeminiConnection() {
+  assertSpreadsheetAdminContext_();
+
   const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
   if (!apiKey) throw new Error('Set the Gemini API key first.');
+
   const payload = {
     contents: [{role: 'user', parts: [{text: 'Return exactly {"status":"ok"}'}]}],
     generationConfig: {
@@ -136,19 +152,26 @@ function testGeminiConnection() {
       }
     }
   };
+
   const response = UrlFetchApp.fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL +
     ':generateContent?key=' + encodeURIComponent(apiKey),
-    {method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true}
+    {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    }
   );
-  if (response.getResponseCode() >= 300) throw new Error(response.getContentText());
+
+  if (response.getResponseCode() >= 300) {
+    throw new Error(response.getContentText());
+  }
+
   safeUiAlert_(
     'Gemini connection successful',
     'The portal connected using ' + GEMINI_MODEL + '.'
   );
 
-  return {
-    status: 'ok',
-    model: GEMINI_MODEL
-  };
+  return {status: 'ok', model: GEMINI_MODEL};
 }
