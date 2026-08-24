@@ -50,6 +50,8 @@ function getOneSignalStatus(values) {
 }
 
 function testOneSignalSetup() {
+  assertSpreadsheetAdminContext_();
+
   const trip = getSettings_('Trip');
   const appId = String(trip['OneSignal App ID'] || '').trim();
   const key = String(
