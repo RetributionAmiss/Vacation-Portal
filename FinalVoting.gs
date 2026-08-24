@@ -1,17 +1,3 @@
-function isJustinTraveler_(travelerId) {
-  travelerId = String(travelerId || '').trim();
-
-  const traveler = normalizeTravelerRows_(readSheet_('Travelers'))
-    .find(function (row) {
-      return String(row['Traveler ID'] || '') === travelerId;
-    });
-
-  return Boolean(
-    traveler &&
-    /^justin(?:\s|$)/i.test(String(traveler.Name || '').trim())
-  );
-}
-
 function getFinalistCabinIds_() {
   return String(getSettings_('Trip')['Finalist Cabin IDs'] || '')
     .split('|')
@@ -21,6 +7,7 @@ function getFinalistCabinIds_() {
 
 function saveTripSettings(values) {
   values = values || {};
+  assertOrganizerFromValues_(values);
 
   [
     'Trip Name',
@@ -35,23 +22,14 @@ function saveTripSettings(values) {
     }
   });
 
-  // OneSignal App ID is a public UUID used by the browser SDK.
-  // Preserve an already-configured ID if a blank form value is submitted,
-  // and reject malformed values instead of replacing a working ID.
   if (values['OneSignal App ID'] !== undefined) {
-    const submittedAppId = String(
-      values['OneSignal App ID'] || ''
-    ).trim();
-
+    const submittedAppId = String(values['OneSignal App ID'] || '').trim();
     const currentAppId = String(
       getSettings_('Trip')['OneSignal App ID'] || ''
     ).trim();
 
     if (submittedAppId) {
-      if (
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-          .test(submittedAppId)
-      ) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(submittedAppId)) {
         throw new Error(
           'The OneSignal App ID does not look valid. ' +
           'Paste the App ID from OneSignal → Settings → Keys & IDs.'
@@ -60,7 +38,6 @@ function saveTripSettings(values) {
 
       setSetting_('Trip', 'OneSignal App ID', submittedAppId);
     } else if (!currentAppId) {
-      // No existing value and no submitted value: leave it blank.
       setSetting_('Trip', 'OneSignal App ID', '');
     }
   }
@@ -70,13 +47,8 @@ function saveTripSettings(values) {
 
 function saveFinalists(values) {
   setupVacationPortalSilent_();
-
   values = values || {};
-  const travelerId = String(values.travelerId || '').trim();
-
-  if (!isJustinTraveler_(travelerId)) {
-    throw new Error('Only the Justin traveler profile can choose finalists.');
-  }
+  assertOrganizerFromValues_(values);
 
   const ids = Array.isArray(values.cabinIds)
     ? values.cabinIds.map(function (value) {
@@ -106,16 +78,12 @@ function saveFinalists(values) {
   });
 
   setSetting_('Trip', 'Finalist Cabin IDs', unique.join('|'));
-
   return getPortalData();
 }
 
 function startFinalVoting(values) {
   values = values || {};
-
-  if (!isJustinTraveler_(values.travelerId)) {
-    throw new Error('Only the Justin traveler profile can start final voting.');
-  }
+  assertOrganizerFromValues_(values);
 
   if (getFinalistCabinIds_().length !== 3) {
     throw new Error('Choose exactly three finalists first.');
@@ -124,53 +92,36 @@ function startFinalVoting(values) {
   setSetting_('Trip', 'Portal Stage', 'Final Voting');
   setSetting_('Trip', 'Voting Round', 'Final');
   setSetting_('Trip', 'Final Voting Closed', 'No');
-
   return getPortalData();
 }
 
 function closeFinalVoting(values) {
   values = values || {};
-
-  if (!isJustinTraveler_(values.travelerId)) {
-    throw new Error('Only the Justin traveler profile can close final voting.');
-  }
+  assertOrganizerFromValues_(values);
 
   setSetting_('Trip', 'Portal Stage', 'Voting Closed');
   setSetting_('Trip', 'Voting Round', 'Final');
   setSetting_('Trip', 'Final Voting Closed', 'Yes');
-
   return getPortalData();
 }
 
 function reopenFinalVoting(values) {
   values = values || {};
-
-  if (!isJustinTraveler_(values.travelerId)) {
-    throw new Error('Only the Justin traveler profile can reopen final voting.');
-  }
+  assertOrganizerFromValues_(values);
 
   setSetting_('Trip', 'Portal Stage', 'Final Voting');
   setSetting_('Trip', 'Voting Round', 'Final');
   setSetting_('Trip', 'Final Voting Closed', 'No');
-
   return getPortalData();
 }
 
 function restartPreliminaryVoting(values) {
   values = values || {};
-
-  if (!isJustinTraveler_(values.travelerId)) {
-    throw new Error('Only the Justin traveler profile can restart preliminary voting.');
-  }
+  assertOrganizerFromValues_(values);
 
   const sheet = getSpreadsheet_().getSheetByName('Votes');
+  if (!sheet) throw new Error('Votes sheet was not found.');
 
-  if (!sheet) {
-    throw new Error('Votes sheet was not found.');
-  }
-
-  // Keep the headers but remove all Preliminary and Final voting history so
-  // this is a genuinely clean voting cycle.
   if (sheet.getLastRow() > 1) {
     sheet.getRange(
       2,
@@ -184,6 +135,5 @@ function restartPreliminaryVoting(values) {
   setSetting_('Trip', 'Voting Round', 'Preliminary');
   setSetting_('Trip', 'Finalist Cabin IDs', '');
   setSetting_('Trip', 'Final Voting Closed', 'No');
-
   return getPortalData();
 }
