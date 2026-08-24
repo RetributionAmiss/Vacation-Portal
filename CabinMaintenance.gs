@@ -1,4 +1,6 @@
 function clearCabinData() {
+  assertSpreadsheetAdminContext_();
+
   const confirmed = safeUiConfirm_(
     'Clear all cabin data?',
     'This permanently removes cabins, rental imports, photos, amenities, bedrooms, votes, comments, favorites, room assignments, import logs, queue items, and AI rental history. Travelers and trip planning data are retained.'
@@ -52,8 +54,7 @@ function clearCabinData() {
   };
 }
 
-
-function setCabinOriginalUrl(cabinId, originalUrl) {
+function setCabinOriginalUrl_(cabinId, originalUrl) {
   const providerInfo = getRentalProviderInfo_(originalUrl);
   if (!providerInfo.originalUrl) throw new Error('A full rental URL is required.');
 
