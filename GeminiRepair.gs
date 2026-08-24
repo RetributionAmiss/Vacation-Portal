@@ -1,4 +1,5 @@
 function repairGeminiImports() {
+  assertSpreadsheetAdminContext_();
   setupVacationPortalSilent_();
   setSetting_('Trip', 'Gemini Model', GEMINI_MODEL);
 
