@@ -1,22 +1,9 @@
-function removeRentalForOrganizer(cabinId, travelerId) {
+function removeRentalForOrganizer(cabinId, authorization) {
   setupVacationPortalSilent_();
 
   cabinId = String(cabinId || '').trim();
-  travelerId = String(travelerId || '').trim();
-
-  const traveler = readSheet_('Travelers').find(function (row) {
-    return String(row['Traveler ID'] || '') === travelerId;
-  });
-
-  const travelerName = String(
-    traveler && traveler.Name || ''
-  ).trim();
-
-  if (!/^justin(?:\s|$)/i.test(travelerName)) {
-    throw new Error(
-      'Only the Justin traveler profile can remove rental properties.'
-    );
-  }
+  authorization = authorization || {};
+  assertOrganizerFromValues_(authorization);
 
   const cabin = readSheet_('Cabins').find(function (row) {
     return row['Cabin ID'] === cabinId;
@@ -24,42 +11,38 @@ function removeRentalForOrganizer(cabinId, travelerId) {
 
   if (!cabin) throw new Error('The rental property could not be found.');
 
-  // Soft removal keeps votes, comments, photos, bedrooms, and historical
-  // import data intact while removing the property from every portal view.
+  const actorLabel = 'organizer';
+
   updateById_('Cabins', 'Cabin ID', cabinId, {
     'Active': 'No',
     'Status': 'Removed',
-    'Import Stage': 'Removed by ' + travelerName,
+    'Import Stage': 'Removed by ' + actorLabel,
     'Updated At': new Date()
   });
 
-  // Stop any pending work from bringing the removed property back.
   readSheet_('Rental Import Queue').forEach(function (row) {
     if (row['Cabin ID'] !== cabinId) return;
-
     updateById_('Rental Import Queue', 'Queue ID', row['Queue ID'], {
       'Status': 'Cancelled',
-      'Last Error': 'Rental removed by ' + travelerName + '.',
+      'Last Error': 'Rental removed by ' + actorLabel + '.',
       'Updated At': new Date()
     });
   });
 
   readSheet_('Rental Edit Queue').forEach(function (row) {
     if (row['Cabin ID'] !== cabinId) return;
-
     updateById_('Rental Edit Queue', 'Queue ID', row['Queue ID'], {
       'Status': 'Cancelled',
-      'Last Error': 'Rental removed by ' + travelerName + '.',
+      'Last Error': 'Rental removed by ' + actorLabel + '.',
       'Updated At': new Date()
     });
   });
 
   readSheet_('Extension Capture Queue').forEach(function (row) {
     if (row['Cabin ID'] !== cabinId) return;
-
     updateById_('Extension Capture Queue', 'Queue ID', row['Queue ID'], {
       'Status': 'Cancelled',
-      'Last Error': 'Rental removed by ' + travelerName + '.',
+      'Last Error': 'Rental removed by ' + actorLabel + '.',
       'Updated At': new Date()
     });
   });
@@ -74,7 +57,7 @@ function removeRentalForOrganizer(cabinId, travelerId) {
   if (importRow) {
     updateById_('Rental Import', 'Import ID', importRow['Import ID'], {
       'Status': 'Removed',
-      'Notes': 'Removed from the portal by ' + travelerName + '.',
+      'Notes': 'Removed from the portal by ' + actorLabel + '.',
       'Updated At': new Date()
     });
   }
