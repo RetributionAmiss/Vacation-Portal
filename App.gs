@@ -26,6 +26,10 @@ function onOpen() {
     .createMenu('Vacation Portal')
     .addItem('Set up / repair portal', 'setupVacationPortal')
     .addItem('Run diagnostics', 'runSetupDiagnostics')
+    .addSeparator()
+    .addItem('Set organizer access key', 'setOrganizerAccessKey')
+    .addItem('Revoke organizer sessions', 'revokeOrganizerSessions')
+    .addSeparator()
     .addItem('Set Gemini API key', 'setGeminiApiKey')
     .addItem('Test Gemini connection', 'testGeminiConnection')
     .addItem('Repair Gemini imports', 'repairGeminiImports')
@@ -38,7 +42,7 @@ function onOpen() {
     .addItem('Set Chrome extension key', 'setExtensionSubmissionKey')
     .addItem('Show Chrome extension setup', 'showExtensionSetup')
     .addSeparator()
-    .addItem('Process rental queues now', 'processRentalEnrichmentQueue')
+    .addItem('Process rental queues now', 'processRentalEnrichmentQueueMenu')
     .addItem('Repair rental processing', 'repairRentalProcessing')
     .addItem('Retry failed rental edits', 'retryFailedRentalEdits')
     .addItem('Retry failed rental imports', 'retryFailedRentalImports')
@@ -169,184 +173,6 @@ function addDeviceTravelerBindingToPayload_(payload, deviceId) {
   return payload;
 }
 
-function getJustinVotingSummary(requestingTravelerId) {
-  const requester = normalizeTravelerRows_(readSheet_('Travelers'))
-    .find(function(row) {
-      return String(row['Traveler ID'] || '') ===
-        String(requestingTravelerId || '');
-    });
-
-  if (
-    !requester ||
-    !/^justin(?:\s|$)/i.test(String(requester.Name || '').trim())
-  ) {
-    throw new Error('Only Justin can view the voting summary.');
-  }
-
-  const trip = getSettings_('Trip');
-  const round = String(trip['Voting Round'] || 'Preliminary');
-  const stage = String(trip['Portal Stage'] || '');
-  const travelers = normalizeTravelerRows_(readSheet_('Travelers'))
-    .filter(function(row) {
-      return String(row.Active || 'Yes').toLowerCase() !== 'no';
-    });
-
-  const cabins = readSheet_('Cabins').filter(function(row) {
-    return String(row.Active || 'Yes').toLowerCase() !== 'no';
-  });
-
-  const finalistIds = String(trip['Finalist Cabin IDs'] || '')
-    .split('|')
-    .map(function(value) { return value.trim(); })
-    .filter(Boolean);
-
-  const eligibleCabins =
-    round === 'Final' &&
-    finalistIds.length
-      ? cabins.filter(function(cabin) {
-          return finalistIds.indexOf(String(cabin['Cabin ID'] || '')) >= 0;
-        })
-      : cabins;
-
-  const eligibleIds = {};
-  const cabinById = {};
-
-  eligibleCabins.forEach(function(cabin) {
-    const id = String(cabin['Cabin ID'] || '');
-    if (!id) return;
-    eligibleIds[id] = true;
-    cabinById[id] = cabin;
-  });
-
-  const votes = readSheet_('Votes').filter(function(vote) {
-    return String(vote['Voting Round'] || 'Preliminary') === round &&
-      Boolean(eligibleIds[String(vote['Cabin ID'] || '')]);
-  });
-
-  // One current vote per traveler/cabin. If duplicate legacy rows exist,
-  // use the latest Created At value.
-  const latestVotes = {};
-
-  votes.forEach(function(vote) {
-    const travelerId = String(vote['Traveler ID'] || '');
-    const cabinId = String(vote['Cabin ID'] || '');
-
-    if (!travelerId || !cabinId) return;
-
-    const key = travelerId + '|' + cabinId;
-    const current = latestVotes[key];
-    const incomingTime = new Date(vote['Created At'] || 0).getTime() || 0;
-    const currentTime = current
-      ? (new Date(current['Created At'] || 0).getTime() || 0)
-      : -1;
-
-    if (!current || incomingTime >= currentTime) {
-      latestVotes[key] = vote;
-    }
-  });
-
-  const devicesByTraveler = {};
-  const allProperties = PropertiesService
-    .getScriptProperties()
-    .getProperties();
-
-  Object.keys(allProperties).forEach(function(key) {
-    if (key.indexOf('PORTAL_DEVICE_PROFILE_') !== 0) return;
-
-    try {
-      const profile = JSON.parse(allProperties[key] || '{}');
-      const travelerId = String(profile.travelerId || '');
-      if (!travelerId) return;
-
-      if (!devicesByTraveler[travelerId]) {
-        devicesByTraveler[travelerId] = {
-          linked: 0,
-          installed: 0
-        };
-      }
-
-      devicesByTraveler[travelerId].linked += 1;
-
-      if (Boolean(profile.pwaInstalled)) {
-        devicesByTraveler[travelerId].installed += 1;
-      }
-    } catch (error) {}
-  });
-
-  function cabinName_(cabin) {
-    return String(
-      cabin['Rental Name'] ||
-      cabin.Name ||
-      cabin['Property Name'] ||
-      cabin['Provider Property ID'] ||
-      cabin['Cabin ID'] ||
-      'Rental'
-    ).trim();
-  }
-
-  const rows = travelers
-    .map(function(traveler) {
-      const travelerId = String(traveler['Traveler ID'] || '');
-
-      const travelerVotes = Object.keys(latestVotes)
-        .map(function(key) { return latestVotes[key]; })
-        .filter(function(vote) {
-          return String(vote['Traveler ID'] || '') === travelerId;
-        });
-
-      const ranked = travelerVotes
-        .map(function(vote) {
-          const cabinId = String(vote['Cabin ID'] || '');
-          const cabin = cabinById[cabinId];
-
-          return {
-            cabinId: cabinId,
-            name: cabin ? cabinName_(cabin) : cabinId,
-            score: Number(vote.Score || 0),
-            firstChoice:
-              String(vote['First Choice'] || '').toLowerCase() === 'yes'
-          };
-        })
-        .filter(function(item) {
-          return item.cabinId && item.score >= 1 && item.score <= 5;
-        })
-        .sort(function(left, right) {
-          return Number(right.firstChoice) - Number(left.firstChoice) ||
-            right.score - left.score ||
-            left.name.localeCompare(right.name);
-        })
-        .slice(0, 3);
-
-      const deviceInfo = devicesByTraveler[travelerId] || {
-        linked: 0,
-        installed: 0
-      };
-
-      return {
-        travelerId: travelerId,
-        travelerName: String(traveler.Name || 'Traveler'),
-        family: String(traveler.Group || traveler.Family || ''),
-        votedCount: travelerVotes.length,
-        eligibleRentalCount: eligibleCabins.length,
-        top3: ranked,
-        appInstalled: deviceInfo.installed > 0,
-        installedDeviceCount: deviceInfo.installed,
-        linkedDeviceCount: deviceInfo.linked
-      };
-    })
-    .sort(function(left, right) {
-      return left.travelerName.localeCompare(right.travelerName);
-    });
-
-  return {
-    round: round,
-    stage: stage,
-    eligibleRentalCount: eligibleCabins.length,
-    rows: rows,
-    generatedAt: new Date().toISOString()
-  };
-}
-
 function getPortalStartupData(deviceId) {
   ensurePortalSchemaCurrent_();
 
@@ -427,10 +253,6 @@ function getPortalStartupData(deviceId) {
   };
 
   try {
-    // Keep this deliberately short-lived. It primarily helps a family opening
-    // the portal together, while the deferred refresh always follows.
-    // IMPORTANT: device traveler identity is deliberately NOT cached here
-    // because the startup cache is shared across all travelers/devices.
     cache.put(cacheKey, JSON.stringify(payload), 15);
   } catch (cacheError) {}
 
@@ -473,8 +295,6 @@ function buildPortalDataFull_() {
     traveler.parentName = parent ? parent.Name : '';
   });
 
-  // Build indexes once instead of repeatedly filtering every full sheet
-  // for every cabin.
   const bedroomsByCabin = indexRowsBy_(bedrooms, 'Cabin ID');
   const votesByCabin = indexRowsBy_(votes, 'Cabin ID');
   const commentsByCabin = indexRowsBy_(comments, 'Cabin ID');
@@ -637,7 +457,6 @@ function setupVacationPortalSilent_() {
     .getScriptProperties()
     .setProperty('PORTAL_SCHEMA_VERSION', PORTAL_SCHEMA_VERSION);
 }
-
 
 function getRentalImportUpdates() {
   setupVacationPortalSilent_();
