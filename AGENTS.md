@@ -15,6 +15,8 @@ The production baseline entering stabilization is V4.3.30. V4.4.0 changes must b
 - Generic server helpers that accept arbitrary sheet names or ID headers must remain private (trailing underscore). Public planner APIs must use allow-listed planner names.
 - Traveler self-service and traveler administration are separate concerns. Creating/deleting travelers and changing administrative cost/type/parent/active fields require organizer authorization.
 - Device IDs identify an app/browser instance; they are not organizer credentials.
+- A Device ID binding is convenience identity, not strong traveler authentication. Do not claim that it prevents a malicious caller from impersonating another normal traveler unless a separate traveler authentication mechanism has been added.
+- No Justin/admin functionality may rely solely on client-side visibility, `Planning As` state, traveler name, caller-supplied Traveler ID, or Device ID.
 
 ## Sensitive configuration
 
