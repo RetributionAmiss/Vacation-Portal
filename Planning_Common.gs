@@ -1,4 +1,26 @@
-function deletePlannerRecord(sheetName, idHeader, id) {
+function plannerDefinitionForDelete_(plannerName) {
+  const definitions = {
+    'Budget': {sheet: 'Budget', idHeader: 'Budget ID'},
+    'Meals': {sheet: 'Meals', idHeader: 'Meal ID'},
+    'Grocery List': {sheet: 'Grocery List', idHeader: 'Grocery ID'},
+    'Itinerary': {sheet: 'Itinerary', idHeader: 'Itinerary ID'}
+  };
+
+  const definition = definitions[String(plannerName || '').trim()];
+  if (!definition) throw new Error('Choose a valid planning section.');
+  return definition;
+}
+
+function deletePlannerItem(plannerName, id) {
+  const definition = plannerDefinitionForDelete_(plannerName);
+  return deletePlannerRecordFast_(
+    definition.sheet,
+    definition.idHeader,
+    id
+  );
+}
+
+function deletePlannerRecord_(sheetName, idHeader, id) {
   deleteById_(sheetName, idHeader, id);
   return getPortalData();
 }
@@ -11,7 +33,6 @@ function savePlannerRecord_(sheetName, idHeader, prefix, values) {
   else appendObject_(sheetName, record);
   return getPortalData();
 }
-
 
 function savePlannerRecordFast_(sheetName, idHeader, prefix, values) {
   values = values || {};
@@ -58,7 +79,7 @@ function savePlannerRecordFast_(sheetName, idHeader, prefix, values) {
   return response;
 }
 
-function deletePlannerRecordFast(sheetName, idHeader, id) {
+function deletePlannerRecordFast_(sheetName, idHeader, id) {
   const sheet = getSpreadsheet_().getSheetByName(sheetName);
   const values = sheet.getDataRange().getValues();
   const headers = values[0].map(function (value) {
