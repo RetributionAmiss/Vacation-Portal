@@ -1,0 +1,22 @@
+name: Authorization Contract
+
+on:
+  push:
+    branches:
+      - v4.4.0-alpha1-authorization
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  authorization-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run authorization contract tests
+        run: node tests/authorization_contract.test.js
