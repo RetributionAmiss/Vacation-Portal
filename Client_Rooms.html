@@ -1,0 +1,967 @@
+<script>
+function renderRooms(){
+  const availableCabins=
+    typeof visibleRentalCabins_==='function'
+      ? visibleRentalCabins_()
+      : (DATA.cabins||[]);
+
+  if(!availableCabins.length){
+    return `<div class="empty">No currently visible rentals are available for room planning.</div>`;
+  }
+
+  const selectedId=DATA.trip['Selected Cabin ID'];
+
+  const cabin=
+    availableCabins.find(function(item){
+      return item['Cabin ID']===selectedId;
+    }) ||
+    availableCabins[0];
+
+  const cabinId=cabin['Cabin ID'];
+  const rooms=cabin.bedrooms||[];
+
+  const options=availableCabins.map(function(item){
+    return `<option
+      value="${escAttr(item['Cabin ID'])}"
+      ${item['Cabin ID']===cabinId?'selected':''}
+    >${esc(displayName(item))} — ${Number(item.Bedrooms||0)} BR / ${Number(item.Bathrooms||0)} BA</option>`;
+  }).join('');
+
+  return `<section class="view">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">PHASE 4</p>
+          <h2>Room planner</h2>
+        </div>
+        <div class="room-planner-actions">
+          <button onclick="openBulkRoomAssignmentPlanner_('${cabinId}')">
+            Assign travelers
+          </button>
+          <button class="ghost" onclick="openPasteBedroomLayout('${cabinId}')">
+            Paste bedroom layout
+          </button>
+          <button class="ghost" onclick="openRoomForm('${cabinId}')">
+            Add bedroom
+          </button>
+        </div>
+      </div>
+
+      <div class="room-planner-selector">
+        <label>
+          <span>Property to plan</span>
+          <select
+            id="roomPlannerCabin"
+            onchange="changeRoomPlannerCabin(this.value)"
+          >${options}</select>
+        </label>
+
+        <div class="room-planner-summary">
+          <strong>${esc(displayName(cabin))}</strong>
+          <span>
+            Sleeps ${Number(cabin.Sleeps||0) || '?'} ·
+            ${Number(cabin.Bedrooms||0) || '?'} bedrooms ·
+            ${Number(cabin.Bathrooms||0) || '?'} bathrooms
+          </span>
+        </div>
+      </div>
+
+      <div class="room-board">
+        ${rooms.map(roomCard).join('') ||
+          '<div class="empty">No room details yet. Use Add bedroom to build the layout.</div>'}
+      </div>
+
+      ${renderTravelerCostSummary_(cabinId)}
+    </div>
+  </section>`;
+}
+
+function openBedroomPlannerModal_(html){
+  openModal(html);
+
+  const panel=document.querySelector('#modal .modal-panel');
+
+  if(panel){
+    panel.classList.add('bedroom-planner-modal-panel');
+    panel.scrollTop=0;
+  }
+}
+
+function openCabinBedroomPlanner_(cabinId){
+  const cabin=roomPlannerCabin_(cabinId);
+
+  if(!cabin){
+    toast('Rental could not be found.',true);
+    return;
+  }
+
+  const rooms=cabin.bedrooms||[];
+
+  openBedroomPlannerModal_(`<div class="rental-bedroom-modal">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">BEDROOM PLANNER</p>
+        <h2>${esc(displayName(cabin))}</h2>
+        <p class="muted">
+          Sleeps ${Number(cabin.Sleeps||0)||'?'} ·
+          ${Number(cabin.Bedrooms||0)||'?'} bedrooms ·
+          ${Number(cabin.Bathrooms||0)||'?'} bathrooms
+        </p>
+      </div>
+
+      <button type="button"
+        onclick="closeModal();setTimeout(function(){navigate('rooms')},20)">
+        Open full Room Planner
+      </button>
+    </div>
+
+    <div class="room-board bedroom-modal-board">
+      ${rooms.map(roomCard).join('') ||
+        '<div class="empty">Bedroom details are not available yet.</div>'}
+    </div>
+
+    ${renderTravelerCostSummary_(cabinId)}
+  </div>`);
+}
+
+function changeRoomPlannerCabin(cabinId){
+  run(
+    'selectRoomPlannerCabin',
+    [cabinId],
+    'Room planner property changed.',
+    false
+  );
+}
+
+function roomPlannerCabin_(cabinId){
+  return (DATA.cabins||[]).find(function(cabin){
+    return cabin['Cabin ID']===cabinId;
+  })||null;
+}
+
+function roomCostShare_(room){
+  const cabin=roomPlannerCabin_(room['Cabin ID']);
+  if(!cabin) return 0;
+
+  const bedroomCount=(cabin.bedrooms||[]).length || Number(cabin.Bedrooms||0);
+  const total=typeof rentalCostBasis_==='function'
+    ? rentalCostBasis_(cabin)
+    : Number(cabin['Total Rental Cost']||0);
+
+  return bedroomCount>0 && total>0 ? total/bedroomCount : 0;
+}
+
+function plannerTravelerCostRows_(cabinId){
+  const cabin=roomPlannerCabin_(cabinId);
+  if(!cabin) return [];
+
+  const rooms=cabin.bedrooms||[];
+  const assignments=(DATA.assignments||[]).filter(function(a){
+    return a['Cabin ID']===cabinId;
+  });
+
+  return assignments.map(function(assignment){
+    const traveler=DATA.travelers.find(function(t){
+      return t['Traveler ID']===assignment['Traveler ID'];
+    })||null;
+
+    const room=rooms.find(function(item){
+      return item['Bedroom ID']===assignment['Bedroom ID'];
+    })||null;
+
+    const isAdult=Boolean(
+      traveler &&
+      String(traveler['Traveler Type']||'Adult')==='Adult'
+    );
+
+    const adultsInRoom=assignments.filter(function(item){
+      if(item['Bedroom ID']!==assignment['Bedroom ID']) return false;
+
+      const assignedTraveler=DATA.travelers.find(function(t){
+        return t['Traveler ID']===item['Traveler ID'];
+      });
+
+      return assignedTraveler &&
+        String(assignedTraveler['Traveler Type']||'Adult')==='Adult';
+    }).length;
+
+    const roomShare=roomCostShare_({
+      'Cabin ID':cabinId
+    });
+
+    return {
+      travelerId:assignment['Traveler ID'],
+      travelerName:traveler ? traveler.Name : assignment['Traveler ID'],
+      travelerType:traveler
+        ? String(traveler['Traveler Type']||'Adult')
+        : 'Adult',
+      bedroomName:room ? room['Bedroom Name'] : 'Assigned bedroom',
+      adultsInRoom:adultsInRoom,
+      amount:isAdult && adultsInRoom>0
+        ? roomShare/adultsInRoom
+        : 0
+    };
+  }).sort(function(a,b){
+    return String(a.travelerName).localeCompare(String(b.travelerName));
+  });
+}
+
+function renderTravelerCostSummary_(cabinId){
+  const cabin=roomPlannerCabin_(cabinId);
+  if(!cabin) return '';
+
+  const result=cappedBedroomSplit_(cabin);
+  if(!result.rows.length) return '';
+
+  const rows=result.rows.slice().sort(function(a,b){
+    return String(a.travelerName).localeCompare(String(b.travelerName));
+  });
+
+  return `<section class="panel traveler-cost-panel">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">ROOM COST SPLIT</p>
+        <h3>Traveler lodging cost with caps</h3>
+        <p class="muted">
+          Each bedroom starts with an equal share of the rental total. Adults sharing
+          a bedroom split that room's base cost. A traveler's maximum cap is then applied,
+          and any remaining balance is distributed across adults marked
+          <strong>Pay More = Yes</strong>.
+        </p>
+      </div>
+    </div>
+
+    ${
+      result.unresolved>.01
+        ? `<div class="notice warning cost-balance-warning">
+            <strong>${money(result.unresolved)} is still unassigned.</strong>
+            Increase one or more price caps or mark additional adults as willing to Pay More.
+          </div>`
+        : `<div class="notice cost-balance-covered">
+            The full ${money(result.total)} rental cost is covered by this split.
+          </div>`
+    }
+
+    <div class="traveler-cost-grid">
+      ${rows.map(function(row){
+        const assigned=assignedBedroomForTraveler_(cabinId,row.travelerId);
+        const bedroomName=assigned&&assigned.bedroom
+          ? assigned.bedroom['Bedroom Name']
+          : 'No room assigned';
+
+        return `<div class="traveler-cost-row ${
+          row.travelerId===currentTravelerId?'current-traveler':''
+        } ${row.capped?'capped':''} ${row.payMore&&row.extra>0?'paying-extra':''}">
+          <div>
+            <strong>${esc(row.travelerName)}</strong>
+            <span>${esc(bedroomName)}</span>
+            <small>
+              Base ${money(row.base)}
+              ${
+                row.cap>0
+                  ? ` · Cap ${money(row.cap)}`
+                  : ' · No cap'
+              }
+              ${row.payMore?' · Pay More':''}
+            </small>
+          </div>
+          <div class="traveler-cost-amount">
+            <strong>${money(row.amount)}</strong>
+            ${
+              row.capped
+                ? '<small>Price cap applied</small>'
+                : row.extra>0
+                  ? `<small>Includes ${money(row.extra)} extra</small>`
+                  : '<small>Standard share</small>'
+            }
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </section>`;
+}
+
+function roomCard(room){
+  const assigned=DATA.assignments.filter(function(a){
+    return a['Bedroom ID']===room['Bedroom ID'];
+  });
+
+  return `<div class="room">
+    <div class="room-card-heading">
+      <div>
+        <h3>${esc(room['Bedroom Name'])}</h3>
+        ${room.Floor?`<span class="room-floor">${esc(room.Floor)}</span>`:''}
+      </div>
+      <button class="ghost room-edit-button"
+        onclick="openRoomForm('${room['Cabin ID']}','${room['Bedroom ID']}')">
+        Edit
+      </button>
+    </div>
+
+    <p class="muted">
+      ${esc(room['Bed Configuration']||'Layout not yet confirmed')}
+      • Sleeps ${room.Sleeps||'?'}
+    </p>
+
+    ${
+      roomCostShare_(room)
+        ? (function(){
+            const adultAssignments=assigned.filter(function(a){
+              const traveler=DATA.travelers.find(function(t){
+                return t['Traveler ID']===a['Traveler ID'];
+              });
+
+              return traveler &&
+                String(traveler['Traveler Type']||'Adult')==='Adult';
+            });
+
+            return `<div class="room-cost-share">
+              <strong>${money(roomCostShare_(room))}</strong>
+              <span>bedroom share</span>
+              ${
+                adultAssignments.length
+                  ? `<small>
+                      ${adultAssignments.length} paying adult${adultAssignments.length===1?'':'s'}
+                      · ${money(roomCostShare_(room)/adultAssignments.length)} each
+                    </small>`
+                  : `<small>No paying adults assigned yet.</small>`
+              }
+            </div>`;
+          })()
+        : ''
+    }
+
+    ${
+      room['Private Bathroom']==='Yes'
+        ? '<span class="room-feature-badge">Private bathroom</span>'
+        : ''
+    }
+
+    ${assigned.map(function(a){
+      const t=DATA.travelers.find(function(x){
+        return x['Traveler ID']===a['Traveler ID'];
+      });
+      return `<div class="assignment">
+        <span>${esc(t?t.Name:a['Traveler ID'])}</span>
+        <button class="ghost"
+          onclick="removeRoomAssignment('${a['Assignment ID']}')">×</button>
+      </div>`;
+    }).join('')}
+
+    <div class="room-card-actions">
+      <button class="ghost"
+        onclick="openAssignment('${room['Cabin ID']}','${room['Bedroom ID']}')">
+        Assign traveler
+      </button>
+    </div>
+  </div>`;
+}
+
+function openRoomForm(cabinId,roomId){
+  const cabin=DATA.cabins.find(function(c){
+    return c['Cabin ID']===cabinId;
+  });
+
+  const room=roomId && cabin
+    ? (cabin.bedrooms||[]).find(function(item){
+        return item['Bedroom ID']===roomId;
+      })
+    : null;
+
+  openBedroomPlannerModal_(`<h2>${room?'Edit bedroom':'Add bedroom'}</h2>
+    <form onsubmit="saveRoomForm(event,'${cabinId}','${roomId||''}')" class="form-grid">
+      ${field('roomName','Bedroom name',room?room['Bedroom Name']:'Bedroom','text',true)}
+      ${field('roomFloor','Floor / level',room?room.Floor:'')}
+      ${field('roomBeds','Bed configuration',room?room['Bed Configuration']:'','text',true)}
+      ${field('roomSleeps','Sleeps',room?room.Sleeps:'2','number')}
+      <label>
+        <span>Private bathroom</span>
+        <select id="roomBath">
+          <option value="" ${!room||room['Private Bathroom']!=='Yes'?'selected':''}>No</option>
+          <option value="yes" ${room&&room['Private Bathroom']==='Yes'?'selected':''}>Yes</option>
+        </select>
+      </label>
+      ${area('roomNotes','Notes',room?room.Notes:'')}
+      <div class="wide form-actions">
+        ${
+          room
+            ? `<button type="button" class="remove-rental-button"
+                onclick="deleteRoomFromPlanner_('${room['Bedroom ID']}')">
+                Delete bedroom
+              </button>`
+            : ''
+        }
+        <button>${room?'Save changes':'Save bedroom'}</button>
+      </div>
+    </form>`);
+}
+
+function saveRoomForm(e,cabinId,roomId){
+  e.preventDefault();
+
+  const payload={
+    id:roomId||'',
+    cabinId:cabinId,
+    name:val('roomName'),
+    floor:val('roomFloor'),
+    beds:val('roomBeds'),
+    sleeps:val('roomSleeps'),
+    privateBathroom:val('roomBath')==='yes',
+    notes:val('roomNotes')
+  };
+
+  closeModal();
+  toast('Bedroom changes submitted. Saving…');
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      DATA=data;
+      render();
+      toast('Bedroom saved.');
+    })
+    .withFailureHandler(function(error){
+      toast(
+        'Bedroom could not be saved: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .saveBedroom(payload);
+}
+
+function deleteRoomFromPlanner_(roomId){
+  closeModal();
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      DATA=data;
+      render();
+      toast('Bedroom removed.');
+    })
+    .withFailureHandler(function(error){
+      toast(
+        'Bedroom could not be removed: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .deleteBedroom(roomId);
+}
+
+function estimateBedroomSleeps_(beds){
+  const value=String(beds||'').toLowerCase();
+  let total=0;
+
+  const patterns=[
+    [/(\d+)\s+(?:king|kings)\b/g,2],
+    [/(\d+)\s+(?:queen|queens)\b/g,2],
+    [/(\d+)\s+(?:full|double)\s+beds?\b/g,2],
+    [/(\d+)\s+twin\s+bunk\s+beds?\b/g,2],
+    [/(\d+)\s+bunk\s+beds?\b/g,2],
+    [/(\d+)\s+twin\s+(?:beds?|daybeds?)\b/g,1]
+  ];
+
+  patterns.forEach(function(item){
+    let match;
+    while((match=item[0].exec(value))!==null){
+      total+=Number(match[1]||0)*item[1];
+    }
+  });
+
+  if(!total){
+    if(/\bking\b/.test(value)) total+=2;
+    if(/\bqueen\b/.test(value)) total+=2;
+    if(/\bfull\b|\bdouble\b/.test(value)) total+=2;
+    if(/\btwin bunk\b|\bbunk bed\b/.test(value)) total+=2;
+    else if(/\btwin\b|\bdaybed\b/.test(value)) total+=1;
+  }
+
+  return total;
+}
+
+function bedroomFloorFromName_(name){
+  const match=String(name||'').match(
+    /\b(lower|main|upper|ground|top|basement)\s+(?:level|floor)\b/i
+  );
+
+  return match
+    ? match[1].charAt(0).toUpperCase()+match[1].slice(1)+' Level'
+    : '';
+}
+
+function parseBedroomLayoutText_(raw){
+  const lines=String(raw||'')
+    .replace(/\u00a0/g,' ')
+    .split(/\r?\n/)
+    .map(function(line){
+      return line.replace(/^#{1,6}\s*/,'').trim();
+    })
+    .filter(Boolean);
+
+  const rooms=[];
+  const headingRe=/^(?:bedroom|br)\s*\d+\b/i;
+  const bedLine=/\b(?:king|queen|twin|full|double|bunk|daybed|sofa bed|sleeper)\b/i;
+  let pending='';
+
+  lines.forEach(function(line){
+    if(/^rooms?\s*&\s*beds?$/i.test(line)) return;
+    if(/^\d+\s+bedrooms?\s*\(sleeps?\s*\d+\)/i.test(line)) return;
+
+    if(headingRe.test(line)){
+      pending=line;
+      return;
+    }
+
+    if(pending && bedLine.test(line)){
+      rooms.push({
+        name:pending,
+        floor:bedroomFloorFromName_(pending),
+        beds:line,
+        sleeps:estimateBedroomSleeps_(line),
+        privateBathroom:false,
+        notes:''
+      });
+      pending='';
+    }
+  });
+
+  return rooms.slice(0,30);
+}
+
+function openPasteBedroomLayout(cabinId){
+  openBedroomPlannerModal_(`<div class="paste-bedroom-layout">
+    <p class="eyebrow">ROOM PLANNER</p>
+    <h2>Paste bedroom layout</h2>
+    <p class="muted">
+      Paste the “Rooms & beds” section from the rental listing.
+      The portal will create one editable bedroom card for each room.
+    </p>
+
+    <label>
+      <span>Bedroom text</span>
+      <textarea id="bedroomLayoutText" rows="16"
+        placeholder="Rooms & beds
+
+8 bedrooms (sleeps 21)
+
+BR w/ 2 Queen Beds ~ Lower Level
+2 Queen Beds
+
+King BR ~ Upper Level
+1 King Bed"></textarea>
+    </label>
+
+    <div class="notice">
+      This replaces the current bedroom cards for this rental.
+      Traveler assignments should be reviewed afterward.
+    </div>
+
+    <div class="form-actions">
+      <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+      <button type="button" onclick="savePastedBedroomLayout_('${cabinId}')">
+        Import bedroom layout
+      </button>
+    </div>
+  </div>`);
+}
+
+function savePastedBedroomLayout_(cabinId){
+  const parsed=parseBedroomLayoutText_(
+    val('bedroomLayoutText')
+  );
+
+  if(!parsed.length){
+    toast(
+      'I could not find room names followed by bed descriptions in that text.',
+      true
+    );
+    return;
+  }
+
+  closeModal();
+  toast('Found '+parsed.length+' bedrooms. Saving layout…');
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      DATA=data;
+      render();
+      toast(parsed.length+' bedroom cards created.');
+    })
+    .withFailureHandler(function(error){
+      toast(
+        'Bedroom layout could not be saved: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .replaceBedroomLayout(cabinId,parsed);
+}
+
+let roomAssignmentDraft_=null;
+
+function buildRoomAssignmentDraft_(cabinId){
+  const draft={};
+
+  (DATA.travelers||[]).forEach(function(traveler){
+    if(String(traveler.Active||'Yes').toLowerCase()==='no') return;
+    draft[traveler['Traveler ID']]='';
+  });
+
+  (DATA.assignments||[]).forEach(function(assignment){
+    if(
+      assignment['Cabin ID']===cabinId &&
+      draft[assignment['Traveler ID']]!==undefined
+    ){
+      draft[assignment['Traveler ID']]=assignment['Bedroom ID'];
+    }
+  });
+
+  return draft;
+}
+
+function travelerAssignmentChip_(traveler){
+  return `<div
+    class="traveler-drag-chip"
+    draggable="true"
+    data-traveler-id="${escAttr(traveler['Traveler ID'])}"
+    ondragstart="roomTravelerDragStart_(event)"
+  >
+    <span class="traveler-drag-avatar">${esc(initials_(traveler.Name||'?'))}</span>
+    <span class="traveler-drag-copy">
+      <strong>${esc(traveler.Name||'Traveler')}</strong>
+      <small>
+        ${esc(traveler['Traveler Type']||'Adult')}
+        ${
+          String(traveler['Willing to Share Room']||'No')==='Yes'
+            ? ' · ✓ Share room'
+            : ''
+        }
+      </small>
+    </span>
+  </div>`;
+}
+
+function renderBulkRoomAssignmentPlanner_(cabinId){
+  const cabin=roomPlannerCabin_(cabinId);
+  const travelers=(DATA.travelers||[])
+    .filter(function(traveler){
+      return String(traveler.Active||'Yes').toLowerCase()!=='no';
+    })
+    .slice()
+    .sort(function(a,b){
+      return String(a.Name||'').localeCompare(String(b.Name||''));
+    });
+
+  function roomColumn_(room){
+    const roomId=room?room['Bedroom ID']:'';
+    const assigned=travelers.filter(function(traveler){
+      return roomAssignmentDraft_[traveler['Traveler ID']]===roomId;
+    });
+
+    return `<section class="room-drop-column ${room?'':'unassigned-column'}"
+      ondragover="roomAssignmentDragOver_(event)"
+      ondragleave="this.classList.remove('drag-over')"
+      ondrop="roomAssignmentDrop_(event,'${escAttr(roomId)}','${cabinId}')">
+
+      <div class="room-drop-heading">
+        <div>
+          <strong>${room?esc(room['Bedroom Name']):'Unassigned'}</strong>
+          <span>${
+            room
+              ? esc(room['Bed Configuration']||'Layout not confirmed')
+              : assigned.length+' traveler'+(assigned.length===1?'':'s')
+          }</span>
+        </div>
+        ${
+          room
+            ? `<button class="ghost tiny" type="button"
+                onclick="openMultiAssignRoom_('${cabinId}','${roomId}')">
+                Add multiple
+              </button>`
+            : ''
+        }
+      </div>
+
+      <div class="room-drop-list">
+        ${assigned.map(travelerAssignmentChip_).join('') ||
+          '<div class="room-drop-empty">Drop travelers here</div>'}
+      </div>
+    </section>`;
+  }
+
+  return `<div class="bulk-room-planner">
+    <div class="bulk-room-planner-header">
+      <p class="eyebrow">ROOM ASSIGNMENTS</p>
+      <h2>${esc(displayName(cabin))}</h2>
+      <p class="muted">
+        Drag names between rooms or use Add multiple. Nothing is saved until you choose Save room assignments.
+      </p>
+    </div>
+
+    <div class="bulk-room-columns">
+      ${roomColumn_(null)}
+      ${(cabin.bedrooms||[]).map(roomColumn_).join('')}
+    </div>
+
+    <div class="bulk-room-planner-footer">
+      <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+      <button type="button" onclick="saveBulkRoomAssignments_('${cabinId}')">
+        Save room assignments
+      </button>
+    </div>
+  </div>`;
+}
+
+function openBulkRoomAssignmentPlanner_(cabinId){
+  const cabin=roomPlannerCabin_(cabinId);
+  if(!cabin || !(cabin.bedrooms||[]).length){
+    toast('Add bedrooms before assigning travelers.',true);
+    return;
+  }
+
+  roomAssignmentDraft_=buildRoomAssignmentDraft_(cabinId);
+  openBedroomPlannerModal_(renderBulkRoomAssignmentPlanner_(cabinId));
+}
+
+function refreshBulkRoomAssignmentPlanner_(cabinId){
+  const planner=document.querySelector('.bulk-room-planner');
+  if(!planner) return;
+  planner.outerHTML=renderBulkRoomAssignmentPlanner_(cabinId);
+}
+
+function roomTravelerDragStart_(event){
+  event.dataTransfer.setData(
+    'text/plain',
+    event.currentTarget.dataset.travelerId
+  );
+  event.dataTransfer.effectAllowed='move';
+}
+
+function roomAssignmentDragOver_(event){
+  event.preventDefault();
+  event.dataTransfer.dropEffect='move';
+  event.currentTarget.classList.add('drag-over');
+}
+
+function roomAssignmentDrop_(event,bedroomId,cabinId){
+  event.preventDefault();
+  event.currentTarget.classList.remove('drag-over');
+
+  const travelerId=event.dataTransfer.getData('text/plain');
+  if(!travelerId || roomAssignmentDraft_[travelerId]===undefined) return;
+
+  roomAssignmentDraft_[travelerId]=bedroomId||'';
+  refreshBulkRoomAssignmentPlanner_(cabinId);
+}
+
+function openMultiAssignRoom_(cabinId,bedroomId){
+  const cabin=roomPlannerCabin_(cabinId);
+  const room=(cabin.bedrooms||[]).find(function(item){
+    return item['Bedroom ID']===bedroomId;
+  });
+
+  const travelers=(DATA.travelers||[])
+    .filter(function(traveler){
+      return String(traveler.Active||'Yes').toLowerCase()!=='no';
+    })
+    .slice()
+    .sort(function(a,b){
+      return String(a.Name||'').localeCompare(String(b.Name||''));
+    });
+
+  openBedroomPlannerModal_(`<div class="multi-room-assign">
+    <p class="eyebrow">ADD MULTIPLE</p>
+    <h2>${esc(room?room['Bedroom Name']:'Bedroom')}</h2>
+    <p class="muted">
+      Check everyone who should share this room. They will be moved here from any other room.
+    </p>
+
+    <div class="multi-traveler-list">
+      ${travelers.map(function(traveler){
+        const selected=roomAssignmentDraft_[traveler['Traveler ID']]===bedroomId;
+        return `<label>
+          <input
+            type="checkbox"
+            name="multiRoomTraveler"
+            value="${escAttr(traveler['Traveler ID'])}"
+            ${selected?'checked':''}
+          >
+          <span>
+            <strong>${esc(traveler.Name||'Traveler')}</strong>
+            <small>${esc(traveler['Traveler Type']||'Adult')}</small>
+          </span>
+        </label>`;
+      }).join('')}
+    </div>
+
+    <div class="form-actions">
+      <button class="ghost" type="button"
+        onclick="openBedroomPlannerModal_(renderBulkRoomAssignmentPlanner_('${cabinId}'))">
+        Back
+      </button>
+      <button type="button"
+        onclick="applyMultiAssignRoom_('${cabinId}','${bedroomId}')">
+        Apply selections
+      </button>
+    </div>
+  </div>`);
+}
+
+function applyMultiAssignRoom_(cabinId,bedroomId){
+  Object.keys(roomAssignmentDraft_||{}).forEach(function(travelerId){
+    if(roomAssignmentDraft_[travelerId]===bedroomId){
+      roomAssignmentDraft_[travelerId]='';
+    }
+  });
+
+  Array.from(
+    document.querySelectorAll('input[name="multiRoomTraveler"]:checked')
+  ).forEach(function(input){
+    roomAssignmentDraft_[input.value]=bedroomId;
+  });
+
+  openBedroomPlannerModal_(renderBulkRoomAssignmentPlanner_(cabinId));
+}
+
+function saveBulkRoomAssignments_(cabinId){
+  const payload=Object.keys(roomAssignmentDraft_||{})
+    .filter(function(travelerId){
+      return roomAssignmentDraft_[travelerId];
+    })
+    .map(function(travelerId){
+      return {
+        travelerId:travelerId,
+        bedroomId:roomAssignmentDraft_[travelerId]
+      };
+    });
+
+  const previous=(DATA.assignments||[]).slice();
+
+  DATA.assignments=(DATA.assignments||[])
+    .filter(function(assignment){
+      return assignment['Cabin ID']!==cabinId;
+    })
+    .concat(
+      payload.map(function(item,index){
+        return {
+          'Assignment ID':'LOCAL-'+Date.now()+'-'+index,
+          'Cabin ID':cabinId,
+          'Bedroom ID':item.bedroomId,
+          'Traveler ID':item.travelerId,
+          'Created At':new Date().toISOString()
+        };
+      })
+    );
+
+  closeModal();
+  render();
+  toast('Room assignments updated. Saving in the background…');
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      DATA=data;
+      render();
+      toast('Room assignments saved.');
+    })
+    .withFailureHandler(function(error){
+      DATA.assignments=previous;
+      render();
+      toast(
+        'Room assignments could not be saved: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .saveRoomAssignmentsBatch(cabinId,payload);
+}
+
+function openAssignment(cabinId){
+  openBulkRoomAssignmentPlanner_(cabinId);
+}
+
+function saveAssignmentForm(e,cabinId){
+  e.preventDefault();
+  openBulkRoomAssignmentPlanner_(cabinId);
+}
+
+function removeRoomAssignment(id){
+  const assignment=(DATA.assignments||[]).find(function(item){
+    return item['Assignment ID']===id;
+  });
+  if(!assignment) return;
+
+  const cabinId=assignment['Cabin ID'];
+  roomAssignmentDraft_=buildRoomAssignmentDraft_(cabinId);
+  roomAssignmentDraft_[assignment['Traveler ID']]='';
+
+  const payload=Object.keys(roomAssignmentDraft_)
+    .filter(function(travelerId){
+      return roomAssignmentDraft_[travelerId];
+    })
+    .map(function(travelerId){
+      return {
+        travelerId:travelerId,
+        bedroomId:roomAssignmentDraft_[travelerId]
+      };
+    });
+
+  const previous=(DATA.assignments||[]).slice();
+  DATA.assignments=(DATA.assignments||[]).filter(function(item){
+    return item['Assignment ID']!==id;
+  });
+  render();
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      DATA=data;
+      render();
+    })
+    .withFailureHandler(function(error){
+      DATA.assignments=previous;
+      render();
+      toast(error&&error.message?error.message:String(error),true);
+    })
+    .saveRoomAssignmentsBatch(cabinId,payload);
+}
+
+const PLANNERS={
+  Budget:{
+    data:'budget',
+    id:'Budget ID',
+    save:'saveBudget',
+    sheet:'Budget',
+    headers:[
+      'Category','Description','Amount','Include in Rental Split',
+      'Paid By','Split Between','Due Date','Status','Notes'
+    ]
+  },
+  Meals:{
+    data:'meals',
+    id:'Meal ID',
+    save:'saveMeal',
+    sheet:'Meals',
+    headers:['Date','Meal','Menu','Assigned To','Clean Up','Notes']
+  },
+  'Grocery List':{
+    data:'groceries',
+    id:'Grocery ID',
+    save:'saveGrocery',
+    sheet:'Grocery List',
+    headers:[
+      'Store Section','Category','Item','Quantity',
+      'Bringing','Brought By','Assigned To','Purchased','Notes'
+    ]
+  },
+  Itinerary:{
+    data:'itinerary',
+    id:'Itinerary ID',
+    save:'saveItinerary',
+    sheet:'Itinerary',
+    headers:[
+      'Date','Start Time','End Time','Activity',
+      'Location','Event URL','Assigned To',
+      'Cost','Cost Per','Notes'
+    ]
+  }
+};
+</script>

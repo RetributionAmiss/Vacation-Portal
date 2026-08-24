@@ -1,0 +1,1726 @@
+<script>
+const PORTAL_RELEASE='V4.3.30';
+let DATA = null;
+let currentView = 'dashboard';
+
+const DEVICE_TRAVELER_PROFILE_KEY_='vacationDeviceTravelerProfileV1';
+const PWA_DEVICE_ID_=String(window.PWA_DEVICE_ID||'').trim();
+const PWA_INSTALLED_=Boolean(window.PWA_INSTALLED);
+
+function markCurrentDeviceInstalledOnServer_(){
+  if(
+    !PWA_DEVICE_ID_ ||
+    !currentTravelerId ||
+    !window.google ||
+    !google.script ||
+    !google.script.run
+  ){
+    return;
+  }
+
+  const traveler=currentTraveler();
+
+  google.script.run
+    .withFailureHandler(function(error){
+      console.warn('Installed-device status update failed.',error);
+    })
+    .saveDeviceTravelerBinding(
+      PWA_DEVICE_ID_,
+      String(currentTravelerId||''),
+      traveler ? String(traveler.Name||'') : '',
+      true
+    );
+}
+
+function saveDeviceTravelerProfileToServer_(profile,onSuccess,onFailure){
+  if(
+    !PWA_DEVICE_ID_ ||
+    !profile ||
+    !profile.travelerId ||
+    !window.google ||
+    !google.script ||
+    !google.script.run
+  ){
+    if(typeof onFailure==='function'){
+      onFailure(new Error('This device does not have a valid PWA Device ID.'));
+    }
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      if(typeof onSuccess==='function') onSuccess(result);
+    })
+    .withFailureHandler(function(error){
+      console.warn('Device traveler binding save failed.',error);
+      if(typeof onFailure==='function') onFailure(error);
+    })
+    .saveDeviceTravelerBinding(
+      PWA_DEVICE_ID_,
+      String(profile.travelerId||''),
+      String(profile.travelerName||''),
+      PWA_INSTALLED_
+    );
+}
+
+function clearDeviceTravelerProfileOnServer_(){
+  if(
+    !PWA_DEVICE_ID_ ||
+    !window.google ||
+    !google.script ||
+    !google.script.run
+  ){
+    return;
+  }
+
+  google.script.run
+    .withFailureHandler(function(error){
+      console.warn('Device traveler binding clear failed.',error);
+    })
+    .clearDeviceTravelerBinding(PWA_DEVICE_ID_);
+}
+
+function applyServerDeviceTravelerProfile_(data){
+  if(!data) return false;
+
+  const travelerId=String(data.deviceTravelerId||'').trim();
+  if(!travelerId) return false;
+
+  const traveler=(data.travelers||[]).find(function(item){
+    return String(item['Traveler ID']||'')===travelerId;
+  });
+
+  if(!traveler) return false;
+
+  savedDeviceTravelerProfile_={
+    travelerId:travelerId,
+    travelerName:String(traveler.Name||data.deviceTravelerName||''),
+    selectedAt:String(data.deviceTravelerSavedAt||new Date().toISOString())
+  };
+
+  currentTravelerId=travelerId;
+  temporaryTravelerId_='';
+
+  try{
+    localStorage.setItem(
+      DEVICE_TRAVELER_PROFILE_KEY_,
+      JSON.stringify(savedDeviceTravelerProfile_)
+    );
+    localStorage.setItem('vacationTravelerId',travelerId);
+  }catch(error){}
+
+  return true;
+}
+
+let hostDeviceTravelerProfile_=null;
+let hostDeviceProfileResolved_=false;
+let hostDeviceProfileRequestTimer_=null;
+
+function postDeviceProfileMessageToHost_(payload){
+  try{
+    if(window.parent&&window.parent!==window){
+      window.parent.postMessage(payload,'*');
+    }
+  }catch(error){}
+
+  try{
+    if(window.top&&window.top!==window){
+      window.top.postMessage(payload,'*');
+    }
+  }catch(error){}
+}
+
+function requestDeviceTravelerProfileFromHost_(){
+  postDeviceProfileMessageToHost_({
+    type:'vacation-portal-request-device-profile'
+  });
+}
+
+function saveDeviceTravelerProfileToHost_(profile){
+  if(!profile||!profile.travelerId) return;
+
+  postDeviceProfileMessageToHost_({
+    type:'vacation-portal-save-device-profile',
+    travelerId:String(profile.travelerId||''),
+    travelerName:String(profile.travelerName||''),
+    selectedAt:String(profile.selectedAt||new Date().toISOString())
+  });
+}
+
+function clearDeviceTravelerProfileOnHost_(){
+  postDeviceProfileMessageToHost_({
+    type:'vacation-portal-clear-device-profile'
+  });
+}
+
+
+function readDeviceTravelerProfile_(){
+  try{
+    const raw=localStorage.getItem(DEVICE_TRAVELER_PROFILE_KEY_);
+    if(raw){
+      const profile=JSON.parse(raw);
+      if(profile && profile.travelerId){
+        return profile;
+      }
+    }
+
+    // Migrate the older single-ID preference automatically.
+    const legacyId=String(
+      localStorage.getItem('vacationTravelerId')||''
+    ).trim();
+
+    if(legacyId){
+      const migrated={
+        travelerId:legacyId,
+        travelerName:'',
+        selectedAt:new Date().toISOString()
+      };
+
+      localStorage.setItem(
+        DEVICE_TRAVELER_PROFILE_KEY_,
+        JSON.stringify(migrated)
+      );
+
+      return migrated;
+    }
+  }catch(error){}
+
+  return null;
+}
+
+let deviceProfileSaveCountdownTimer_=null;
+let deviceProfileSaveVerified_=false;
+let deviceProfileSaveTraveler_=null;
+
+function openDeviceProfileSavingModal_(traveler){
+  deviceProfileSaveTraveler_=traveler||null;
+  deviceProfileSaveVerified_=false;
+
+  if(deviceProfileSaveCountdownTimer_){
+    clearInterval(deviceProfileSaveCountdownTimer_);
+    deviceProfileSaveCountdownTimer_=null;
+  }
+
+  openModal(`
+    <div class="device-profile-save-dialog">
+      <p class="eyebrow">SAVING THIS DEVICE</p>
+      <h2>Remembering ${esc(traveler&&traveler.Name?traveler.Name:'your traveler profile')}…</h2>
+
+      <div class="device-save-countdown" id="deviceSaveCountdown">
+        <span class="device-save-step active" data-save-step="1">1</span>
+        <span class="device-save-step" data-save-step="2">2</span>
+        <span class="device-save-step" data-save-step="3">3</span>
+      </div>
+
+      <p id="deviceSaveStatus" class="muted">
+        Saving your traveler profile to this device…
+      </p>
+
+      <div id="deviceSaveResult" class="device-save-result hidden"></div>
+    </div>
+  `);
+
+  const closeButton=document.querySelector('#modal .modal-close');
+  if(closeButton) closeButton.style.display='none';
+
+  let second=1;
+
+  deviceProfileSaveCountdownTimer_=setInterval(function(){
+    second+=1;
+
+    document.querySelectorAll('#deviceSaveCountdown .device-save-step')
+      .forEach(function(element){
+        const step=Number(element.dataset.saveStep||0);
+        element.classList.toggle('active',step===second);
+        element.classList.toggle('done',step<second);
+      });
+
+    const status=document.getElementById('deviceSaveStatus');
+    if(status && second<=3){
+      status.textContent=
+        second===1
+          ? 'Saving your traveler profile to this device…'
+          : second===2
+            ? 'Confirming the device profile…'
+            : 'Finishing up…';
+    }
+
+    if(second>=3){
+      clearInterval(deviceProfileSaveCountdownTimer_);
+      deviceProfileSaveCountdownTimer_=null;
+
+      setTimeout(finishDeviceProfileSavingModal_,650);
+    }
+  },1000);
+}
+
+function markDeviceProfileSaveVerified_(){
+  deviceProfileSaveVerified_=true;
+
+  const status=document.getElementById('deviceSaveStatus');
+  if(status){
+    status.textContent='Profile saved. Finishing up…';
+  }
+}
+
+function finishDeviceProfileSavingModal_(){
+  const result=document.getElementById('deviceSaveResult');
+
+  if(deviceProfileSaveVerified_){
+    if(result){
+      result.classList.remove('hidden');
+      result.classList.remove('error');
+      result.innerHTML='<strong>✓ Saved to this device</strong>';
+    }
+
+    setTimeout(function(){
+      closeModal();
+      syncTravelerSelector_();
+      hydrateHeader();
+      render();
+
+      const traveler=deviceProfileSaveTraveler_;
+      toast(
+        'Welcome, '+(
+          traveler&&traveler.Name
+            ? traveler.Name
+            : 'traveler'
+        )+'! This device will remember you.'
+      );
+    },450);
+
+    return;
+  }
+
+  if(result){
+    result.classList.remove('hidden');
+    result.classList.add('error');
+    result.innerHTML=`
+      <strong>Still saving…</strong>
+      <span>
+        We haven't received confirmation yet. Keep the app open and try again.
+      </span>
+      <button type="button" onclick="retryDeviceProfileSave_()">
+        Try Again
+      </button>
+    `;
+  }
+
+  const status=document.getElementById('deviceSaveStatus');
+  if(status){
+    status.textContent='The device profile has not been confirmed yet.';
+  }
+}
+
+function retryDeviceProfileSave_(){
+  const traveler=deviceProfileSaveTraveler_;
+  if(!traveler) return;
+
+  commitDeviceTravelerProfile_(traveler,true);
+}
+
+function commitDeviceTravelerProfile_(traveler,showSavingModal){
+  if(!traveler || !traveler['Traveler ID']) return;
+
+  const profile={
+    travelerId:String(traveler['Traveler ID']||''),
+    travelerName:String(traveler.Name||''),
+    selectedAt:new Date().toISOString()
+  };
+
+  savedDeviceTravelerProfile_=profile;
+  currentTravelerId=profile.travelerId;
+  temporaryTravelerId_='';
+
+  try{
+    localStorage.setItem(
+      DEVICE_TRAVELER_PROFILE_KEY_,
+      JSON.stringify(profile)
+    );
+    localStorage.setItem(
+      'vacationTravelerId',
+      profile.travelerId
+    );
+  }catch(error){}
+
+  if(showSavingModal){
+    openDeviceProfileSavingModal_(traveler);
+  }
+
+  saveDeviceTravelerProfileToHost_(profile);
+
+  saveDeviceTravelerProfileToServer_(
+    profile,
+    function(){
+      markDeviceProfileSaveVerified_();
+    },
+    function(error){
+      console.warn('Waiting for device profile confirmation.',error);
+    }
+  );
+
+  [500,1400,2400].forEach(function(delay){
+    setTimeout(function(){
+      saveDeviceTravelerProfileToHost_(profile);
+
+      if(!deviceProfileSaveVerified_){
+        saveDeviceTravelerProfileToServer_(
+          profile,
+          function(){
+            markDeviceProfileSaveVerified_();
+          }
+        );
+      }
+
+      if(typeof syncPwaHostContext_==='function'){
+        syncPwaHostContext_();
+      }
+    },delay);
+  });
+}
+
+function saveDeviceTravelerProfile_(traveler){
+  if(!traveler || !traveler['Traveler ID']) return;
+
+  const profile={
+    travelerId:String(traveler['Traveler ID']),
+    travelerName:String(traveler.Name||''),
+    selectedAt:new Date().toISOString()
+  };
+
+  try{
+    localStorage.setItem(
+      DEVICE_TRAVELER_PROFILE_KEY_,
+      JSON.stringify(profile)
+    );
+
+    // Keep the old key synchronized for compatibility with existing code.
+    localStorage.setItem(
+      'vacationTravelerId',
+      profile.travelerId
+    );
+  }catch(error){}
+
+  saveDeviceTravelerProfileToHost_(profile);
+  saveDeviceTravelerProfileToServer_(profile);
+}
+
+function clearDeviceTravelerProfile_(){
+  try{
+    localStorage.removeItem(DEVICE_TRAVELER_PROFILE_KEY_);
+    localStorage.removeItem('vacationTravelerId');
+  }catch(error){}
+
+  clearDeviceTravelerProfileOnHost_();
+  clearDeviceTravelerProfileOnServer_();
+}
+
+let savedDeviceTravelerProfile_=readDeviceTravelerProfile_();
+
+function readDeviceTravelerProfileFromLaunchUrl_(){
+  try{
+    const params=new URLSearchParams(window.location.search||'');
+    const travelerId=String(params.get('deviceTravelerId')||'').trim();
+
+    if(!travelerId) return null;
+
+    return {
+      travelerId:travelerId,
+      travelerName:String(params.get('deviceTravelerName')||''),
+      selectedAt:String(params.get('deviceTravelerSavedAt')||'')
+    };
+  }catch(error){
+    return null;
+  }
+}
+
+const launchDeviceTravelerProfile_=readDeviceTravelerProfileFromLaunchUrl_();
+
+if(launchDeviceTravelerProfile_&&launchDeviceTravelerProfile_.travelerId){
+  savedDeviceTravelerProfile_={
+    travelerId:launchDeviceTravelerProfile_.travelerId,
+    travelerName:launchDeviceTravelerProfile_.travelerName,
+    selectedAt:
+      launchDeviceTravelerProfile_.selectedAt||
+      new Date().toISOString()
+  };
+
+  try{
+    localStorage.setItem(
+      DEVICE_TRAVELER_PROFILE_KEY_,
+      JSON.stringify(savedDeviceTravelerProfile_)
+    );
+    localStorage.setItem(
+      'vacationTravelerId',
+      savedDeviceTravelerProfile_.travelerId
+    );
+  }catch(error){}
+}
+
+let currentTravelerId=
+  savedDeviceTravelerProfile_
+    ? String(savedDeviceTravelerProfile_.travelerId||'')
+    : '';
+
+let temporaryTravelerId_='';
+let pendingTravelerSwitchId_='';
+let pendingTravelerDefaultId_='';
+let rentalPollingTimer = null;
+let rentalPollingBusy = false;
+let liveActivityTimer = null;
+let liveActivityBusy = false;
+let liveActivitySince = localStorage.getItem('vacationLiveActivitySince') || '';
+let travelerChooserShown = false;
+let portalDeltaTimer = null;
+let portalDeltaBusy = false;
+let portalDeltaSince = '';
+let loadingStageTimer = null;
+let loadingStageIndex = 0;
+let portalDeferredLoadBusy_ = false;
+let portalFastStartFromSnapshot_ = false;
+const PORTAL_STARTUP_SNAPSHOT_KEY_ = 'vacationPortalStartupSnapshotV420';
+
+window.addEventListener('message',function(event){
+  const data=event.data||{};
+
+  if(data.type!=='vacation-portal-device-profile') return;
+
+  hostDeviceProfileResolved_=true;
+
+  const travelerId=String(data.travelerId||'').trim();
+
+  hostDeviceTravelerProfile_=travelerId
+    ? {
+        travelerId:travelerId,
+        travelerName:String(data.travelerName||''),
+        selectedAt:String(data.selectedAt||'')
+      }
+    : null;
+
+  if(
+    hostDeviceTravelerProfile_ &&
+    (!savedDeviceTravelerProfile_||!savedDeviceTravelerProfile_.travelerId)
+  ){
+    savedDeviceTravelerProfile_={
+      travelerId:hostDeviceTravelerProfile_.travelerId,
+      travelerName:hostDeviceTravelerProfile_.travelerName,
+      selectedAt:
+        hostDeviceTravelerProfile_.selectedAt||
+        new Date().toISOString()
+    };
+
+    currentTravelerId=hostDeviceTravelerProfile_.travelerId;
+    temporaryTravelerId_='';
+
+    try{
+      localStorage.setItem(
+        DEVICE_TRAVELER_PROFILE_KEY_,
+        JSON.stringify(savedDeviceTravelerProfile_)
+      );
+      localStorage.setItem('vacationTravelerId',currentTravelerId);
+    }catch(error){}
+
+    if(DATA&&Array.isArray(DATA.travelers)){
+      const valid=DATA.travelers.some(function(traveler){
+        return String(traveler['Traveler ID']||'')===currentTravelerId;
+      });
+
+      if(valid){
+        travelerChooserShown=true;
+
+        const modal=document.getElementById('modal');
+        if(
+          modal &&
+          !modal.classList.contains('hidden') &&
+          modal.querySelector('.traveler-welcome')
+        ){
+          closeModal();
+        }
+
+        hydrateHeader();
+        render();
+      }
+    }
+  }
+});
+
+function resolveDeviceTravelerBeforePrompt_(){
+  if(validSelectedTraveler_()){
+    travelerChooserShown=true;
+    syncTravelerSelector_();
+    return;
+  }
+
+  // If the PWA shell supplied a device traveler in the iframe URL, DATA may
+  // not have contained that traveler in an earlier startup snapshot. Fresh
+  // startup data has now loaded, so re-check before showing the chooser.
+  if(
+    launchDeviceTravelerProfile_ &&
+    launchDeviceTravelerProfile_.travelerId
+  ){
+    currentTravelerId=String(
+      launchDeviceTravelerProfile_.travelerId
+    );
+
+    if(validSelectedTraveler_()){
+      travelerChooserShown=true;
+      syncTravelerSelector_();
+      return;
+    }
+  }
+
+  requestDeviceTravelerProfileFromHost_();
+
+  if(hostDeviceProfileRequestTimer_){
+    clearTimeout(hostDeviceProfileRequestTimer_);
+  }
+
+  hostDeviceProfileRequestTimer_=setTimeout(function(){
+    hostDeviceProfileRequestTimer_=null;
+    ensureTravelerSelected_();
+  },2600);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  requestDeviceTravelerProfileFromHost_();
+
+  document.querySelectorAll('#mainNav button').forEach(button => {
+    button.addEventListener('click', () => navigate(button.dataset.view));
+  });
+
+  restoreFastStartupSnapshot_();
+  refreshData();
+});
+
+function restoreFastStartupSnapshot_(){
+  try{
+    const raw=localStorage.getItem(PORTAL_STARTUP_SNAPSHOT_KEY_);
+    if(!raw) return false;
+
+    const snapshot=JSON.parse(raw);
+
+    if(
+      !snapshot ||
+      !snapshot.trip ||
+      !Array.isArray(snapshot.travelers) ||
+      !Array.isArray(snapshot.cabins)
+    ){
+      return false;
+    }
+
+    DATA=snapshot;
+    portalFastStartFromSnapshot_=true;
+
+    setLoading(false);
+    hydrateHeader();
+    render();
+    setFastStartStatus_(
+      true,
+      'Showing your last view while fresh trip data loads…'
+    );
+
+    return true;
+  }catch(error){
+    return false;
+  }
+}
+
+function saveFastStartupSnapshot_(data){
+  try{
+    const snapshot={
+      trip:data.trip||{},
+      travelers:data.travelers||[],
+      cabins:data.cabins||[],
+      votes:data.votes||[],
+      favorites:[],
+      assignments:[],
+      budget:[],
+      meals:[],
+      groceries:[],
+      itinerary:[],
+      imports:data.imports||[],
+      importQueue:[],
+      deferredLoaded:false,
+      serverTime:data.serverTime||new Date().toISOString()
+    };
+
+    localStorage.setItem(
+      PORTAL_STARTUP_SNAPSHOT_KEY_,
+      JSON.stringify(snapshot)
+    );
+  }catch(error){}
+}
+
+function refreshData() {
+  if(!DATA){
+    startLoadingStages_();
+  }else{
+    setFastStartStatus_(true,'Refreshing trip data…');
+  }
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      DATA=data;
+      portalDeltaSince=data.serverTime||new Date().toISOString();
+
+      // V4.3.25: the server-side device binding is authoritative for the
+      // installed PWA. Apply it before header rendering or Who are you?.
+      applyServerDeviceTravelerProfile_(data);
+
+      saveFastStartupSnapshot_(data);
+
+      stopLoadingStages_();
+      setLoading(false);
+      hydrateHeader();
+      render();
+
+      setFastStartStatus_(
+        true,
+        'Dashboard ready · loading full rental and planning data…'
+      );
+
+      loadDeferredPortalData_();
+
+      scheduleRentalPolling_();
+      startLiveActivityPolling_(data.serverTime);
+      startPortalDeltaSync_();
+      resolveDeviceTravelerBeforePrompt_();
+
+      if(validSelectedTraveler_()){
+        travelerChooserShown=true;
+      }
+    })
+    .withFailureHandler(function(error){
+      stopLoadingStages_();
+
+      if(DATA){
+        setFastStartStatus_(
+          true,
+          'Using the most recent saved view. Fresh data could not be loaded.'
+        );
+        toast(
+          'Fresh portal data could not be loaded. Showing the last saved view.',
+          true
+        );
+      }else{
+        showFatal(error);
+      }
+    })
+    .getPortalStartupData(PWA_DEVICE_ID_);
+}
+
+function loadDeferredPortalData_(){
+  if(portalDeferredLoadBusy_) return;
+
+  portalDeferredLoadBusy_=true;
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      portalDeferredLoadBusy_=false;
+      DATA=data;
+      portalDeltaSince=data.serverTime||portalDeltaSince;
+      portalFastStartFromSnapshot_=false;
+
+      hydrateHeader();
+      render();
+      setFastStartStatus_(false);
+
+      scheduleRentalPolling_();
+    })
+    .withFailureHandler(function(error){
+      portalDeferredLoadBusy_=false;
+
+      setFastStartStatus_(
+        true,
+        'Dashboard is ready. Some detailed sections could not finish loading.'
+      );
+    })
+    .getPortalDeferredData();
+}
+
+function ensureDeferredPortalData_(){
+  if(DATA && DATA.deferredLoaded) return;
+  loadDeferredPortalData_();
+}
+
+function setFastStartStatus_(visible,text){
+  const element=document.getElementById('fastStartStatus');
+  if(!element) return;
+
+  element.classList.toggle('hidden',!visible);
+  const copy=element.querySelector('span:last-child');
+  if(copy) copy.textContent=text||'Updating trip data…';
+}
+
+function startLoadingStages_(){
+  const stages=[
+    'Connecting to Google Sheets…',
+    'Loading trip and travelers…',
+    'Loading cabin voting summary…',
+    'Opening Dashboard…'
+  ];
+
+  loadingStageIndex=0;
+  setLoading(true,'Opening vacation portal…');
+  setLoadingDetail_(stages[0]);
+
+  if(loadingStageTimer) clearInterval(loadingStageTimer);
+
+  loadingStageTimer=setInterval(function(){
+    loadingStageIndex=Math.min(
+      loadingStageIndex+1,
+      stages.length-1
+    );
+    setLoadingDetail_(stages[loadingStageIndex]);
+  },650);
+}
+
+function stopLoadingStages_(){
+  if(loadingStageTimer){
+    clearInterval(loadingStageTimer);
+    loadingStageTimer=null;
+  }
+}
+
+function setLoading(active,text){
+  const loadingText=document.getElementById('loadingText');
+  if(loadingText) loadingText.textContent=text||'Loading…';
+
+  document
+    .getElementById('loadingScreen')
+    .classList.toggle('hidden',!active);
+
+  document
+    .getElementById('app')
+    .classList.toggle('hidden',active);
+}
+
+function setLoadingDetail_(text){
+  const detail=document.getElementById('loadingDetail');
+  if(detail) detail.textContent=text||'';
+}
+
+function showFatal(error) {
+  document.getElementById('loadingText').textContent =
+    'Portal could not load: ' + (error && error.message ? error.message : error);
+}
+
+function savedDeviceTraveler_(){
+  if(!DATA || !savedDeviceTravelerProfile_) return null;
+
+  return (DATA.travelers||[]).find(function(traveler){
+    return String(traveler['Traveler ID']||'')===
+      String(savedDeviceTravelerProfile_.travelerId||'');
+  }) || null;
+}
+
+function isTemporaryTravelerActive_(){
+  const saved=savedDeviceTraveler_();
+
+  return Boolean(
+    temporaryTravelerId_ &&
+    saved &&
+    String(currentTravelerId||'')!==String(saved['Traveler ID']||'')
+  );
+}
+
+function updateDeviceTravelerHeader_(){
+  const saved=savedDeviceTraveler_();
+  const hint=document.getElementById('deviceProfileHint');
+  const returnButton=document.getElementById('returnToSavedTravelerButton');
+
+  if(hint){
+    if(saved){
+      hint.textContent=
+        isTemporaryTravelerActive_()
+          ? '· temporary'
+          : '· saved on this device';
+    }else{
+      hint.textContent='· not saved yet';
+    }
+  }
+
+  if(returnButton){
+    const show=Boolean(saved && isTemporaryTravelerActive_());
+
+    returnButton.classList.toggle('hidden',!show);
+
+    if(show){
+      returnButton.textContent='Return to '+String(saved.Name||'saved traveler');
+    }
+  }
+}
+
+function useTravelerTemporarily_(traveler){
+  if(!traveler || !traveler['Traveler ID']) return;
+
+  currentTravelerId=String(traveler['Traveler ID']);
+  temporaryTravelerId_=currentTravelerId;
+  pendingTravelerSwitchId_='';
+  pendingTravelerDefaultId_='';
+
+  closeModal();
+  hydrateHeader();
+  render();
+
+  toast(
+    'Temporarily planning as '+String(traveler.Name||'traveler')+
+    '. The saved device profile was not changed.'
+  );
+}
+
+function returnToSavedTraveler_(){
+  const saved=savedDeviceTraveler_();
+
+  if(!saved){
+    temporaryTravelerId_='';
+    currentTravelerId='';
+    ensureTravelerSelected_();
+    return;
+  }
+
+  temporaryTravelerId_='';
+  pendingTravelerSwitchId_='';
+  pendingTravelerDefaultId_='';
+  currentTravelerId=String(saved['Traveler ID']);
+
+  hydrateHeader();
+  render();
+
+  toast('Returned to '+String(saved.Name||'the saved traveler')+'.');
+}
+
+function hydrateHeader() {
+  document.getElementById('tripTitle').textContent = DATA.trip['Trip Name'] || 'Family Vacation';
+  const dates = [fmtDate(DATA.trip['Start Date']), fmtDate(DATA.trip['End Date'])].filter(Boolean).join(' – ');
+  document.getElementById('tripMeta').textContent =
+    [DATA.trip.Destination, dates, DATA.trip['Portal Stage']].filter(Boolean).join(' • ');
+
+  const select = document.getElementById('currentTraveler');
+  select.innerHTML = '<option value="">Select traveler</option>' +
+    DATA.travelers.map(t => `<option value="${esc(t['Traveler ID'])}">${esc(t.Name)}</option>`).join('');
+  // Never default a new/unknown device to the first traveler.
+  // The first traveler is often Justin, which would expose admin tools.
+  select.value = currentTravelerId || '';
+
+  const diagnostics=document.getElementById('diagnosticsButton');
+  if(diagnostics){
+    diagnostics.classList.toggle('hidden',!isJustinCurrentTraveler_());
+  }
+
+  applyJustinOnlyNavigation_();
+  updateDeviceTravelerHeader_();
+
+  if(typeof syncPwaHostContext_==='function'){
+    syncPwaHostContext_();
+  }
+}
+
+function isJustinCurrentTraveler_(){
+  const traveler=currentTraveler();
+  return Boolean(
+    traveler &&
+    /^justin(?:\s|$)/i.test(String(traveler.Name||'').trim())
+  );
+}
+
+function applyJustinOnlyNavigation_(){
+  const isJustin=isJustinCurrentTraveler_();
+
+  document
+    .querySelectorAll(
+      '#mainNav button[data-view="travelers"], '+
+      '#mainNav button[data-view="settings"]'
+    )
+    .forEach(function(button){
+      button.classList.toggle('hidden',!isJustin);
+    });
+
+  if(
+    !isJustin &&
+    (currentView==='travelers' || currentView==='settings')
+  ){
+    currentView='dashboard';
+  }
+}
+
+function changeTraveler() {
+  const select=document.getElementById('currentTraveler');
+  const requestedId=String(select ? select.value : '').trim();
+
+  if(!requestedId){
+    if(select) select.value=currentTravelerId||'';
+    openTravelerChooser_();
+    return;
+  }
+
+  requestTravelerSwitch_(requestedId);
+}
+
+function requestTravelerSwitch_(travelerId){
+  const traveler=(DATA.travelers||[]).find(function(item){
+    return String(item['Traveler ID']||'')===String(travelerId||'');
+  });
+
+  if(!traveler){
+    toast('That traveler could not be found.',true);
+    hydrateHeader();
+    return;
+  }
+
+  if(String(travelerId)===String(currentTravelerId||'')){
+    return;
+  }
+
+  pendingTravelerSwitchId_=String(travelerId);
+
+  const saved=savedDeviceTraveler_();
+  const savedName=saved ? String(saved.Name||'the saved traveler') : '';
+  const isJustin=/^justin(?:\s|$)/i.test(
+    String(traveler.Name||'').trim()
+  );
+
+  openModal(`<div class="traveler-switch-confirm">
+    <p class="eyebrow">
+      ${isJustin?'ADMIN PROFILE':'CHANGE TRAVELER'}
+    </p>
+
+    <h2>
+      ${isJustin
+        ? 'Use Justin on this device?'
+        : 'Plan as '+esc(traveler.Name||'this traveler')+'?'}
+    </h2>
+
+    <p class="muted">
+      ${
+        saved
+          ? 'This device is saved to <strong>'+esc(savedName)+'</strong>. You can switch temporarily without changing that saved profile.'
+          : 'Choose whether this is temporary or should become the default traveler for this device.'
+      }
+    </p>
+
+    ${
+      isJustin
+        ? `<div class="notice admin-profile-warning">
+            <strong>Admin profile:</strong>
+            Justin can access Travelers, Trip Settings, rental maintenance,
+            diagnostics, notification tools, and other administrative controls.
+            Only use this profile if you are Justin.
+          </div>`
+        : ''
+    }
+
+    <div class="traveler-switch-options">
+      <button
+        type="button"
+        class="${isJustin?'danger':''}"
+        onclick="confirmTemporaryTravelerSwitch_()"
+      >
+        ${isJustin?'Use Justin temporarily':'Use temporarily'}
+        <small>
+          ${
+            saved
+              ? 'Keep '+esc(savedName)+' saved on this device'
+              : 'Do not create a saved device profile'
+          }
+        </small>
+      </button>
+
+      <button
+        type="button"
+        class="ghost"
+        onclick="requestTravelerDefaultChange_()"
+      >
+        Make default on this device
+        <small>Use ${esc(traveler.Name||'this traveler')} automatically next time</small>
+      </button>
+
+      <button
+        class="ghost traveler-switch-cancel"
+        type="button"
+        onclick="cancelTravelerSwitch_()"
+      >
+        Cancel
+      </button>
+    </div>
+  </div>`);
+
+  const closeButton=document.querySelector('#modal .modal-close');
+  if(closeButton){
+    closeButton.style.display='none';
+  }
+}
+
+function cancelTravelerSwitch_(){
+  pendingTravelerSwitchId_='';
+  pendingTravelerDefaultId_='';
+  closeModal();
+  hydrateHeader();
+}
+
+function confirmTemporaryTravelerSwitch_(){
+  const traveler=(DATA.travelers||[]).find(function(item){
+    return String(item['Traveler ID']||'')===
+      String(pendingTravelerSwitchId_||'');
+  });
+
+  if(!traveler){
+    cancelTravelerSwitch_();
+    toast('That traveler could not be found.',true);
+    return;
+  }
+
+  useTravelerTemporarily_(traveler);
+}
+
+function requestTravelerDefaultChange_(){
+  const traveler=(DATA.travelers||[]).find(function(item){
+    return String(item['Traveler ID']||'')===
+      String(pendingTravelerSwitchId_||'');
+  });
+
+  if(!traveler){
+    cancelTravelerSwitch_();
+    toast('That traveler could not be found.',true);
+    return;
+  }
+
+  pendingTravelerDefaultId_=String(traveler['Traveler ID']);
+
+  const isJustin=/^justin(?:\s|$)/i.test(
+    String(traveler.Name||'').trim()
+  );
+
+  openModal(`<div class="traveler-default-confirm">
+    <p class="eyebrow">
+      ${isJustin?'CONFIRM ADMIN DEFAULT':'SAVE DEVICE PROFILE'}
+    </p>
+
+    <h2>
+      Make ${esc(traveler.Name||'this traveler')} the default on this device?
+    </h2>
+
+    <p class="muted">
+      This replaces the traveler currently saved on this browser/app.
+      The portal will automatically open as
+      <strong>${esc(traveler.Name||'this traveler')}</strong>
+      on future visits.
+    </p>
+
+    ${
+      isJustin
+        ? `<div class="notice admin-profile-warning">
+            <strong>Important:</strong>
+            Saving Justin as the default means this device will normally open
+            with administrative and developer controls available.
+          </div>`
+        : ''
+    }
+
+    <div class="form-actions">
+      <button
+        class="ghost"
+        type="button"
+        onclick="cancelTravelerSwitch_()"
+      >
+        Keep current default
+      </button>
+
+      <button
+        type="button"
+        class="${isJustin?'danger':''}"
+        onclick="confirmTravelerDefaultChange_()"
+      >
+        ${isJustin?'Yes, save Justin as default':'Save as device default'}
+      </button>
+    </div>
+  </div>`);
+
+  const closeButton=document.querySelector('#modal .modal-close');
+  if(closeButton){
+    closeButton.style.display='none';
+  }
+}
+
+function confirmTravelerDefaultChange_(){
+  const traveler=(DATA.travelers||[]).find(function(item){
+    return String(item['Traveler ID']||'')===
+      String(pendingTravelerDefaultId_||'');
+  });
+
+  if(!traveler){
+    cancelTravelerSwitch_();
+    toast('That traveler could not be found.',true);
+    return;
+  }
+
+  pendingTravelerSwitchId_='';
+  pendingTravelerDefaultId_='';
+
+  travelerChooserShown=true;
+  commitDeviceTravelerProfile_(traveler,true);
+}
+
+function openCurrentTravelerInfo_(){
+  if(!currentTravelerId){
+    openTravelerChooser_();
+    return;
+  }
+
+  openTravelerForm(currentTravelerId);
+}
+
+function promptTravelerVerification_(){
+  const traveler=currentTraveler();
+
+  if(!traveler){
+    openTravelerChooser_();
+    return;
+  }
+
+  openModal(`<div class="traveler-verify-dialog">
+    <p class="eyebrow">VERIFY TRAVELER</p>
+    <h2>Are you ${esc(traveler.Name||'this traveler')}?</h2>
+    <p class="muted">
+      Votes, favorites, comments, room preferences, and pricing are personalized
+      to the traveler selected on this device.
+    </p>
+
+    <div class="traveler-verify-person">
+      <span class="traveler-choice-avatar">
+        ${esc(initials_(traveler.Name||'?'))}
+      </span>
+      <div>
+        <strong>${esc(traveler.Name||'Traveler')}</strong>
+        <small>${esc(traveler['Traveler Type']||'Adult')}</small>
+      </div>
+    </div>
+
+    <div class="form-actions traveler-verify-actions">
+      <button class="ghost" type="button" onclick="openTravelerChooser_()">
+        No, choose someone else
+      </button>
+      <button type="button" onclick="confirmTravelerVerification_()">
+        Yes, that's me
+      </button>
+    </div>
+  </div>`);
+
+  const closeButton=document.querySelector('#modal .modal-close');
+  if(closeButton) closeButton.style.display='none';
+}
+
+function confirmTravelerVerification_(){
+  closeModal();
+  hydrateHeader();
+  render();
+}
+
+function navigate(view) {
+  if(
+    !isJustinCurrentTraveler_() &&
+    (view==='travelers' || view==='settings')
+  ){
+    view='dashboard';
+  }
+
+  if(view!=='dashboard'){
+    ensureDeferredPortalData_();
+  }
+
+  currentView = view;
+  document.querySelectorAll('#mainNav button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  render();
+  scheduleRentalPolling_();
+}
+
+function openMobileSectionMenu_(){
+  const items=[
+    ['dashboard','🏠','Dashboard'],
+    ['rentals','🏡','Rentals'],
+    ['rooms','🛏️','Room Planner'],
+    ['budget','💰','Budget'],
+    ['meals','🍽️','Meals'],
+    ['groceries','🛒','Grocery List'],
+    ['itinerary','🗓️','Itinerary'],
+    ['appSetup','📲','Install App']
+  ];
+
+  if(isJustinCurrentTraveler_()){
+    items.push(['travelers','👥','Travelers']);
+    items.push(['settings','⚙️','Trip Settings']);
+  }
+
+  const buttons=items.map(function(item){
+    const active=currentView===item[0]?' active':'';
+    return `<button type="button"
+      class="mobile-section-menu-item${active}"
+      onclick="selectMobileSection_('${item[0]}')">
+      <span class="mobile-section-icon">${item[1]}</span>
+      <span>${esc(item[2])}</span>
+      ${active?'<span class="mobile-section-current">Current</span>':''}
+    </button>`;
+  }).join('');
+
+  openModal(`<div class="mobile-section-menu">
+    <p class="eyebrow">VACATION PORTAL</p>
+    <h2>Go to</h2>
+    <p class="muted">
+      Choose a section below. App installation help is here too, keeping the
+      Dashboard focused on the trip itself.
+    </p>
+    <div class="mobile-section-menu-grid">${buttons}</div>
+  </div>`);
+}
+
+function selectMobileSection_(view){
+  closeModal();
+
+  if(view==='appSetup'){
+    setTimeout(function(){
+      openAppSetup_();
+    },60);
+    return;
+  }
+
+  navigate(view);
+}
+
+function render() {
+  if(
+    !isJustinCurrentTraveler_() &&
+    (currentView==='travelers' || currentView==='settings')
+  ){
+    currentView='dashboard';
+  }
+
+  applyJustinOnlyNavigation_();
+
+  const root = document.getElementById('viewRoot');
+  const renderers = {
+    dashboard: renderDashboard,
+    rentals: renderRentals,
+    travelers: renderTravelers,
+    rooms: renderRooms,
+    budget: () => renderPlanner('Budget'),
+    meals: () => renderPlanner('Meals'),
+    groceries: () => renderPlanner('Grocery List'),
+    itinerary: () => renderPlanner('Itinerary'),
+    settings: renderSettings
+  };
+  root.innerHTML = (renderers[currentView] || renderDashboard)();
+
+  if(
+    currentView==='rentals' &&
+    typeof restoreRentalFilterControls_==='function'
+  ){
+    requestAnimationFrame(function(){
+      restoreRentalFilterControls_();
+      filterRentalCards(false);
+      sortRentals(false);
+    });
+  }
+}
+
+function hasActiveRentalImports_(){
+  return Boolean(
+    DATA &&
+    DATA.cabins &&
+    DATA.cabins.some(function(cabin){
+      if(/Saving/.test(String(cabin['Import Stage']||''))) return true;
+      return cabin.queue && [
+        'Quick Queued',
+        'Quick Processing',
+        'Quick Error',
+        'Enrichment Queued',
+        'Enriching',
+        'Enrichment Error',
+        'Quota Waiting'
+      ].indexOf(String(cabin.queue.Status||'')) >= 0;
+    })
+  );
+}
+
+function scheduleRentalPolling_(){
+  if(rentalPollingTimer){
+    clearTimeout(rentalPollingTimer);
+    rentalPollingTimer=null;
+  }
+
+  if(!hasActiveRentalImports_()) return;
+
+  rentalPollingTimer=setTimeout(pollRentalImports_,10000);
+}
+
+function pollRentalImports_(){
+  if(rentalPollingBusy) return;
+  rentalPollingBusy=true;
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      rentalPollingBusy=false;
+
+      const previous=JSON.stringify(
+        (DATA.cabins||[]).map(function(c){
+          return [
+            c['Cabin ID'],
+            c['Import Stage'],
+            c.queue&&c.queue.Status,
+            c['Updated At']
+          ];
+        })
+      );
+
+      const next=JSON.stringify(
+        (result.updates||[]).map(function(c){
+          return [c.cabinId,c.stage,c.queueStatus,c.updatedAt];
+        })
+      );
+
+      if(previous!==next){
+        google.script.run
+          .withSuccessHandler(function(data){
+            DATA=data;
+            hydrateHeader();
+            render();
+            scheduleRentalPolling_();
+          })
+          .withFailureHandler(function(){
+            scheduleRentalPolling_();
+          })
+          .getPortalData();
+        return;
+      }
+
+      if(result.active){
+        rentalPollingTimer=setTimeout(pollRentalImports_,10000);
+      }
+    })
+    .withFailureHandler(function(){
+      rentalPollingBusy=false;
+      rentalPollingTimer=setTimeout(pollRentalImports_,15000);
+    })
+    .getRentalImportUpdates();
+}
+
+
+function startLiveActivityPolling_(initialServerTime) {
+  if (!liveActivitySince) {
+    liveActivitySince = initialServerTime || new Date().toISOString();
+    localStorage.setItem('vacationLiveActivitySince', liveActivitySince);
+  }
+
+  if (liveActivityTimer) clearTimeout(liveActivityTimer);
+  liveActivityTimer = setTimeout(pollLiveActivity_, 12000);
+}
+
+function pollLiveActivity_() {
+  if (liveActivityBusy) {
+    liveActivityTimer = setTimeout(pollLiveActivity_, 12000);
+    return;
+  }
+
+  liveActivityBusy = true;
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      liveActivityBusy = false;
+
+      const knownIds = new Set(
+        (DATA && DATA.cabins ? DATA.cabins : []).map(function (cabin) {
+          return cabin['Cabin ID'];
+        })
+      );
+
+      const unseen = (result.newCabins || []).filter(function (cabin) {
+        return cabin.cabinId && !knownIds.has(cabin.cabinId);
+      });
+
+      liveActivitySince = result.serverTime || new Date().toISOString();
+      localStorage.setItem('vacationLiveActivitySince', liveActivitySince);
+
+      if (unseen.length) {
+        showCabinActivityNotification_(unseen);
+
+        google.script.run
+          .withSuccessHandler(function (data) {
+            DATA = data;
+            hydrateHeader();
+            render();
+          })
+          .withFailureHandler(function () {})
+          .getPortalData();
+      }
+
+      liveActivityTimer = setTimeout(pollLiveActivity_, 12000);
+    })
+    .withFailureHandler(function () {
+      liveActivityBusy = false;
+      liveActivityTimer = setTimeout(pollLiveActivity_, 20000);
+    })
+    .getPortalLiveActivity(liveActivitySince);
+}
+
+function showCabinActivityNotification_(cabins) {
+  const container = document.getElementById('liveNotifications');
+  if (!container) return;
+
+  const first = cabins[0];
+  const message = cabins.length === 1
+    ? `${first.name} was added${first.submittedBy ? ` by ${first.submittedBy}` : ''}.`
+    : `${cabins.length} new rentals were added.`;
+
+  const notification = document.createElement('button');
+  notification.type = 'button';
+  notification.className = 'live-notification';
+  notification.innerHTML = `
+    <span class="live-notification-icon">🏡</span>
+    <span>
+      <strong>New rental added</strong>
+      <small>${esc(message)}</small>
+    </span>
+    <span class="live-notification-action">View</span>
+  `;
+
+  notification.addEventListener('click', function () {
+    navigate('rentals');
+    notification.remove();
+  });
+
+  container.appendChild(notification);
+
+  setTimeout(function () {
+    notification.classList.add('leaving');
+    setTimeout(function () { notification.remove(); }, 350);
+  }, 9000);
+}
+
+
+function startPortalDeltaSync_(){
+  if(portalDeltaTimer){
+    clearTimeout(portalDeltaTimer);
+    portalDeltaTimer=null;
+  }
+
+  portalDeltaTimer=setTimeout(pollPortalDelta_,15000);
+}
+
+function pollPortalDelta_(){
+  if(portalDeltaBusy){
+    portalDeltaTimer=setTimeout(pollPortalDelta_,15000);
+    return;
+  }
+
+  portalDeltaBusy=true;
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      portalDeltaBusy=false;
+      portalDeltaSince=result.serverTime||new Date().toISOString();
+
+      if(result.cabins&&result.cabins.length){
+        mergePortalDelta_(result);
+        render();
+      }
+
+      portalDeltaTimer=setTimeout(pollPortalDelta_,15000);
+    })
+    .withFailureHandler(function(){
+      portalDeltaBusy=false;
+      portalDeltaTimer=setTimeout(pollPortalDelta_,25000);
+    })
+    .getPortalDelta(portalDeltaSince);
+}
+
+function mergePortalDelta_(result){
+  const changedIds=new Set();
+
+  (result.cabins||[]).forEach(function(incoming){
+    changedIds.add(incoming['Cabin ID']);
+
+    const index=(DATA.cabins||[]).findIndex(function(existing){
+      return existing['Cabin ID']===incoming['Cabin ID'];
+    });
+
+    if(index>=0){
+      DATA.cabins[index]=incoming;
+    }else{
+      DATA.cabins.unshift(incoming);
+    }
+  });
+
+  if(result.votes){
+    DATA.votes=(DATA.votes||[]).filter(function(row){
+      return !changedIds.has(row['Cabin ID']);
+    }).concat(result.votes);
+  }
+
+  if(result.favorites){
+    DATA.favorites=(DATA.favorites||[]).filter(function(row){
+      return !changedIds.has(row['Cabin ID']);
+    }).concat(result.favorites);
+  }
+
+  if(result.assignments){
+    DATA.assignments=(DATA.assignments||[]).filter(function(row){
+      return !changedIds.has(row['Cabin ID']);
+    }).concat(result.assignments);
+  }
+}
+
+function validSelectedTraveler_(){
+  return Boolean(
+    currentTravelerId &&
+    DATA &&
+    DATA.travelers &&
+    DATA.travelers.some(function(traveler){
+      return traveler['Traveler ID']===currentTravelerId;
+    })
+  );
+}
+
+function ensureTravelerSelected_(){
+  if(validSelectedTraveler_()){
+    syncTravelerSelector_();
+    return;
+  }
+
+  currentTravelerId='';
+  temporaryTravelerId_='';
+  savedDeviceTravelerProfile_=null;
+  clearDeviceTravelerProfile_();
+
+  if(!travelerChooserShown){
+    travelerChooserShown=true;
+    setTimeout(openTravelerChooser_,150);
+  }
+}
+
+function openTravelerChooser_(){
+  const travelers=(DATA&&DATA.travelers?DATA.travelers:[])
+    .slice()
+    .sort(function(left,right){
+      return String(left.Name||'').localeCompare(String(right.Name||''));
+    });
+
+  if(!travelers.length){
+    toast('No travelers have been added yet.',true);
+    return;
+  }
+
+  const choices=travelers.map(function(traveler){
+    // The traveler editor stores "Family / group" in the Group column.
+    // Some older rows may still carry the legacy Family property, so retain
+    // that as a fallback while preferring the current canonical Group field.
+    const family=String(
+      traveler.Group||
+      traveler.Family||
+      ''
+    ).trim();
+
+    return `
+      <button
+        type="button"
+        class="traveler-choice"
+        onclick="chooseTraveler_('${escAttr(traveler['Traveler ID'])}')"
+      >
+        <span class="traveler-choice-avatar">
+          ${esc(initials_(traveler.Name||'?'))}
+        </span>
+        <span class="traveler-choice-copy">
+          <strong>${esc(traveler.Name||'Traveler')}</strong>
+          <small class="traveler-choice-family">
+            ${family ? esc(family) : '—'}
+          </small>
+        </span>
+      </button>
+    `;
+  }).join('');
+
+  openModal(`
+    <div class="traveler-welcome">
+      <p class="eyebrow">WELCOME TO THE TRIP</p>
+      <h2>Who are you?</h2>
+      <p class="muted">
+        Choose your name so votes, favorites, comments, room requests,
+        and feedback are recorded correctly on this device.
+      </p>
+
+      <div class="traveler-choice-grid">
+        ${choices}
+      </div>
+
+      <p class="traveler-remember-note">
+        We’ll save this traveler to this device. You will not be asked again
+        on future visits unless the saved traveler is removed or you deliberately
+        change <strong>Planning as</strong>.
+      </p>
+    </div>
+  `);
+
+  const closeButton=document.querySelector('#modal .modal-close');
+  if(closeButton){
+    closeButton.style.display='none';
+  }
+}
+
+function chooseTraveler_(travelerId){
+  const traveler=(DATA.travelers||[]).find(function(item){
+    return item['Traveler ID']===travelerId;
+  });
+
+  if(!traveler){
+    toast('That traveler could not be found.',true);
+    return;
+  }
+
+  travelerChooserShown=true;
+  commitDeviceTravelerProfile_(traveler,true);
+}
+
+function syncTravelerSelector_(){
+  const selector=document.getElementById('travelerSelect');
+  if(selector&&currentTravelerId){
+    selector.value=currentTravelerId;
+  }
+}
+
+function changeTravelerFromHeader_(travelerId){
+  if(!travelerId){
+    openTravelerChooser_();
+    return;
+  }
+
+  requestTravelerSwitch_(travelerId);
+}
+
+function initials_(name){
+  return String(name||'?')
+    .trim()
+    .split(/\s+/)
+    .slice(0,2)
+    .map(function(part){return part.charAt(0).toUpperCase();})
+    .join('')||'?';
+}
+
+
+function updateBackgroundSaveIndicator_(){
+  const element=document.getElementById('backgroundSaveStatus');
+  if(!element) return;
+
+  const active=Boolean(
+    DATA&&DATA.cabins&&(DATA.cabins||[]).some(function(cabin){
+      return /Saving/.test(String(cabin['Import Stage']||''));
+    })
+  );
+
+  element.classList.toggle('hidden',!active);
+}
+
+const renderBeforeBackgroundSaveIndicator_=render;
+render=function(){
+  const result=renderBeforeBackgroundSaveIndicator_.apply(this,arguments);
+  updateBackgroundSaveIndicator_();
+  return result;
+};
+</script>

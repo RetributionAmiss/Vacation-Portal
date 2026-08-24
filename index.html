@@ -585,7 +585,7 @@
       // V4.3.0 install + push notification center
       // ------------------------------------------------------
       let deferredInstallPrompt=null;
-      const PWA_HOST_RELEASE='V4.3.28';
+      const PWA_HOST_RELEASE='V4.3.30';
 
 
       const DEVICE_TRAVELER_PROFILE_KEY='vacationPortalDeviceTravelerProfileV1';
@@ -981,7 +981,12 @@
       function announcePwaHostReady(){
         const payload={
           type:'vacation-portal-host-ready',
-          hostRelease:PWA_HOST_RELEASE
+          hostRelease:PWA_HOST_RELEASE,
+          installed:isStandalone(),
+          displayMode:
+            isStandalone()
+              ? 'standalone'
+              : 'browser'
         };
 
         broadcastToDescendantFrames(payload);
@@ -995,7 +1000,8 @@
       function sendNotificationAckToPortal(){
         broadcastToDescendantFrames({
           type:'vacation-portal-notification-ack',
-          hostRelease:PWA_HOST_RELEASE
+          hostRelease:PWA_HOST_RELEASE,
+          installed:isStandalone()
         });
       }
 
@@ -1003,7 +1009,8 @@
         const payload=Object.assign({
           type:'vacation-portal-notification-result',
           travelerName:portalContext.travelerName||'',
-          hostRelease:PWA_HOST_RELEASE
+          hostRelease:PWA_HOST_RELEASE,
+          installed:isStandalone()
         },result||{});
 
         broadcastToDescendantFrames(payload);

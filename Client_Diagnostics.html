@@ -1,0 +1,29 @@
+<script>
+function openDiagnostics() {
+  openModal(
+    '<h2>Portal diagnostics</h2>' +
+    '<p class="muted">Checking the spreadsheet, sheets, and Gemini configuration…</p>' +
+    '<div id="diagnosticResults" class="diagnostic-list"></div>'
+  );
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      const root = document.getElementById('diagnosticResults');
+      root.innerHTML = result.checks.map(function (check) {
+        return (
+          '<div class="diagnostic-row ' + check.status + '">' +
+            '<strong>' + esc(check.name) + '</strong>' +
+            '<span>' + esc(check.detail) + '</span>' +
+          '</div>'
+        );
+      }).join('');
+    })
+    .withFailureHandler(function (error) {
+      document.getElementById('diagnosticResults').innerHTML =
+        '<div class="notice">' +
+        esc(error && error.message ? error.message : String(error)) +
+        '</div>';
+    })
+    .runSetupDiagnostics();
+}
+</script>

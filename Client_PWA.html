@@ -1,0 +1,357 @@
+<script>
+let deferredPwaInstallPrompt_=null;
+
+function syncPwaHostContext_(){
+  if(!DATA) return;
+
+  const traveler=currentTraveler();
+
+  const savedProfile=
+    typeof savedDeviceTravelerProfile_!=='undefined'
+      ? savedDeviceTravelerProfile_
+      : null;
+
+  const payload={
+    type:'vacation-portal-context',
+    travelerId:traveler?String(traveler['Traveler ID']||''):'',
+    travelerName:traveler?String(traveler.Name||''):'',
+    savedTravelerId:
+      savedProfile&&savedProfile.travelerId
+        ? String(savedProfile.travelerId)
+        : '',
+    savedTravelerName:
+      savedProfile&&savedProfile.travelerName
+        ? String(savedProfile.travelerName)
+        : '',
+    temporaryTraveler:
+      typeof isTemporaryTravelerActive_==='function'
+        ? Boolean(isTemporaryTravelerActive_())
+        : false,
+    oneSignalAppId:String(
+      DATA.trip['OneSignal App ID']||
+      'fac4d46d-ba5b-4755-b5b1-8740f59c3b1d'
+    ),
+    pwaUrl:String(DATA.trip['PWA URL']||''),
+    release:typeof PORTAL_RELEASE!=='undefined'?PORTAL_RELEASE:''
+  };
+
+  // Apps Script can be nested inside more than one Google-controlled iframe
+  // on iOS. Send directly to every ancestor we can address. postMessage is
+  // allowed cross-origin even when top-level navigation is sandboxed.
+  try{
+    if(window.parent && window.parent!==window){
+      window.parent.postMessage(payload,'*');
+    }
+  }catch(error){}
+
+  try{
+    if(window.top && window.top!==window){
+      window.top.postMessage(payload,'*');
+    }
+  }catch(error){}
+}
+
+function openAppSetup_(){
+  const pwaUrl=String((DATA&&DATA.trip&&DATA.trip['PWA URL'])||'').trim();
+
+  if(window.parent && window.parent!==window){
+    window.parent.postMessage({
+      type:'vacation-portal-open-app-setup'
+    },'*');
+    return;
+  }
+
+  if(/^https:\/\//i.test(pwaUrl)){
+    window.open(pwaUrl,'_blank','noopener');
+    return;
+  }
+
+  openPwaInstallHelp_();
+}
+
+function portalStandaloneMode_(){
+  return Boolean(
+    window.matchMedia &&
+    window.matchMedia('(display-mode: standalone)').matches
+  ) || Boolean(window.navigator.standalone);
+}
+
+function portalPlatform_(){
+  const ua=String(navigator.userAgent||'').toLowerCase();
+
+  if(/iphone|ipad|ipod/.test(ua)) return 'ios';
+  if(/android/.test(ua)) return 'android';
+  return 'desktop';
+}
+
+window.addEventListener('beforeinstallprompt',function(event){
+  event.preventDefault();
+  deferredPwaInstallPrompt_=event;
+
+  const button=document.getElementById('installAppButton');
+  if(button){
+    button.textContent='Install App';
+    button.classList.add('pwa-install-ready');
+  }
+});
+
+window.addEventListener('appinstalled',function(){
+  deferredPwaInstallPrompt_=null;
+
+  const button=document.getElementById('installAppButton');
+  if(button){
+    button.textContent='App Installed';
+    button.disabled=true;
+  }
+
+  toast('Family Vacation Portal installed.');
+});
+
+function refreshPwaInstallButton_(){
+  const button=document.getElementById('installAppButton');
+  if(!button) return;
+
+  if(portalStandaloneMode_()){
+    button.textContent='App Mode';
+    button.disabled=true;
+    document.documentElement.classList.add('standalone-app-mode');
+  }
+}
+
+function pwaInstallInstructions_(){
+  const platform=portalPlatform_();
+
+  if(platform==='ios'){
+    return `<ol class="pwa-install-steps">
+      <li>Open this portal in <strong>Safari</strong>.</li>
+      <li>Tap the <strong>Share</strong> button.</li>
+      <li>Choose <strong>Add to Home Screen</strong>.</li>
+      <li>Confirm the name and tap <strong>Add</strong>.</li>
+    </ol>`;
+  }
+
+  if(platform==='android'){
+    return `<ol class="pwa-install-steps">
+      <li>Open this portal in <strong>Chrome</strong>.</li>
+      <li>Open the browser menu.</li>
+      <li>Choose <strong>Add to Home screen</strong> or <strong>Install app</strong>.</li>
+      <li>Confirm the installation.</li>
+    </ol>`;
+  }
+
+  return `<ol class="pwa-install-steps">
+    <li>Open the portal in Chrome or Edge.</li>
+    <li>Use the browser's <strong>Install</strong> or <strong>Create shortcut</strong> option.</li>
+    <li>For the full PWA install experience, use the PWA host package included with V4.0.0.</li>
+  </ol>`;
+}
+
+async function openPwaInstallHelp_(){
+  if(deferredPwaInstallPrompt_){
+    try{
+      deferredPwaInstallPrompt_.prompt();
+      await deferredPwaInstallPrompt_.userChoice;
+      deferredPwaInstallPrompt_=null;
+      refreshPwaInstallButton_();
+      return;
+    }catch(error){
+      // Fall back to instructions below.
+    }
+  }
+
+  const platform=portalPlatform_();
+
+  openModal(`<div class="pwa-install-dialog">
+    <div class="pwa-install-mark" aria-hidden="true">
+      <span>▲</span>
+    </div>
+
+    <p class="eyebrow">MOBILE APP</p>
+    <h2>Add Family Vacation Portal to your phone</h2>
+
+    <p class="muted">
+      V4.0.0 begins the transition from an Apps Script web portal to an installable
+      Progressive Web App. You can already add the portal to your home screen, and
+      the package now includes the separate installable PWA shell for the next hosting step.
+    </p>
+
+    ${pwaInstallInstructions_()}
+
+    <div class="pwa-foundation-status">
+      <div>
+        <strong>✓ Mobile app metadata</strong>
+        <span>Added to the existing portal</span>
+      </div>
+      <div>
+        <strong>✓ Standalone app detection</strong>
+        <span>Portal recognizes home-screen/app mode</span>
+      </div>
+      <div>
+        <strong>✓ PWA host package</strong>
+        <span>Manifest, icons, install shell, and service worker are ready</span>
+      </div>
+      <div>
+        <strong>Next</strong>
+        <span>Host the PWA shell and point it at your existing Apps Script exec URL</span>
+      </div>
+    </div>
+
+    ${
+      platform==='ios'
+        ? `<div class="notice">
+            On iPhone, Safari's Add to Home Screen option is the quickest way to test
+            the app-style experience before we move the front end to the PWA host.
+          </div>`
+        : ''
+    }
+
+    <div class="form-actions">
+      <button type="button" onclick="closeModal()">Got it</button>
+    </div>
+  </div>`);
+}
+
+
+function enableTravelerNotifications_(){
+  const traveler=currentTraveler();
+
+  openModal(`<div class="notification-host-instruction">
+    <p class="eyebrow">NOTIFICATIONS</p>
+    <h2>Notifications for ${esc(traveler?traveler.Name:'this traveler')}</h2>
+    <p>
+      Close this window and tap the small <strong>🔔 bell</strong> in the app.
+      That bell is part of the GitHub PWA shell itself, so iPhone can request
+      notification permission from the correct web address.
+    </p>
+    <div class="notice">
+      The app will no longer open notification or installation dialogs automatically.
+    </div>
+    <div class="form-actions">
+      <button type="button" onclick="closeModal()">Got it</button>
+    </div>
+  </div>`);
+}
+
+let pwaHostRelease_='';
+let pwaHostConnected_=false;
+let pwaHostInstalled_=false;
+let pwaNotificationState_=null;
+
+function requestPwaHostStatus_(){
+  const traveler=currentTraveler();
+  const payload={
+    type:'vacation-portal-notification-status',
+    travelerId:traveler?String(traveler['Traveler ID']||''):'',
+    travelerName:traveler?String(traveler.Name||''):'',
+    oneSignalAppId:String(
+      (DATA&&DATA.trip&&DATA.trip['OneSignal App ID'])||
+      'fac4d46d-ba5b-4755-b5b1-8740f59c3b1d'
+    )
+  };
+
+  try{
+    if(window.parent&&window.parent!==window){
+      window.parent.postMessage(payload,'*');
+    }
+  }catch(error){}
+
+  try{
+    if(window.top&&window.top!==window){
+      window.top.postMessage(payload,'*');
+    }
+  }catch(error){}
+}
+
+function refreshTravelerNotificationStatus_(){
+  const host=document.getElementById('travelerPwaHostStatus');
+  const status=document.getElementById('travelerDeviceStatus');
+  const help=document.getElementById('travelerNotificationHelp');
+  const button=document.getElementById('enableTravelerNotificationsButton');
+
+  if(host){
+    host.classList.toggle('connected',pwaHostConnected_);
+    host.innerHTML=
+      '<span class="status-dot"></span>'+
+      '<span>'+
+      (
+        pwaHostConnected_
+          ? 'PWA Host: connected · '+esc(pwaHostRelease_||'ready')+
+            (pwaHostInstalled_?' · App installed':'')
+          : 'PWA Host: waiting for app shell…'
+      )+
+      '</span>';
+  }
+
+  if(status){
+    const enabled=Boolean(
+      pwaNotificationState_&&pwaNotificationState_.enabled
+    );
+    status.classList.toggle('enabled',enabled);
+    status.innerHTML=
+      '<span class="status-dot"></span>'+
+      '<span>'+
+      (
+        enabled
+          ? 'Notifications enabled for this device.'
+          : 'Tap the small 🔔 bell to enable notifications on this device.'
+      )+
+      '</span>';
+  }
+
+  if(help){
+    help.textContent=
+      pwaHostConnected_
+        ? 'The app shell is connected to '+((currentTraveler()||{}).Name||'the selected traveler')+'.'
+        : 'The portal is waiting for the GitHub PWA shell connection.';
+  }
+
+  if(button){
+    button.disabled=false;
+    button.textContent='Notification help';
+  }
+}
+
+window.addEventListener('message',function(event){
+  const data=event.data||{};
+  if(!data||typeof data.type!=='string') return;
+
+  if(
+    data.type==='vacation-portal-host-ready' ||
+    data.type==='vacation-portal-handshake-response' ||
+    data.type==='vacation-portal-notification-ack'
+  ){
+    pwaHostConnected_=true;
+    pwaHostRelease_=String(data.hostRelease||pwaHostRelease_||'ready');
+
+    if(data.installed===true){
+      pwaHostInstalled_=true;
+
+      if(typeof markCurrentDeviceInstalledOnServer_==='function'){
+        markCurrentDeviceInstalledOnServer_();
+      }
+    }
+
+    refreshTravelerNotificationStatus_();
+    return;
+  }
+
+  if(data.type==='vacation-portal-notification-result'){
+    pwaHostConnected_=true;
+    pwaHostRelease_=String(data.hostRelease||pwaHostRelease_||'ready');
+    pwaNotificationState_=data;
+    refreshTravelerNotificationStatus_();
+  }
+});
+
+
+document.addEventListener('DOMContentLoaded',function(){
+  refreshPwaInstallButton_();
+
+  [300,900,1800,3500].forEach(function(delay){
+    setTimeout(function(){
+      syncPwaHostContext_();
+      requestPwaHostStatus_();
+    },delay);
+  });
+});
+</script>

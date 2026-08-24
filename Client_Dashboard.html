@@ -1,0 +1,274 @@
+<script>
+function renderDashboard() {
+  if(typeof isFinalVotingStage_==='function' && isFinalVotingStage_()){
+    return renderFinalVotingDashboard_();
+  }
+
+  const totalPeople = DATA.travelers.length;
+  const reviewed = DATA.cabins.filter(c => !c.import || c.import.Status === 'Imported').length;
+  const totalBudget = (DATA.budget||[]).reduce((n,b) => n + Number(b.Amount||0), 0);
+  const upcoming = (DATA.itinerary||[]).slice().sort((a,b) => String(a.Date).localeCompare(String(b.Date))).slice(0,5);
+  return `<section class="view">
+    ${renderReleaseBadge_()}
+    ${renderAppSetupCard_()}
+    <div class="hero">
+      <div><p class="eyebrow">${esc(DATA.trip['Portal Stage'] || 'PLANNING')}</p>
+      <h2>Plan the trip without the group-text chaos.</h2>
+      <p>Compare cabins, vote, assign rooms, organize meals, and keep the whole mountain expedition in one place.</p></div>
+      <button onclick="navigate('rentals')">Browse rentals</button>
+    </div>
+    <div class="stats">
+      ${stat(DATA.cabins.length,'Rental options')}
+      ${stat(reviewed,'Reviewed rentals')}
+      ${stat(totalPeople,'Travelers')}
+      ${stat(money(totalBudget),'Planned budget')}
+    </div>
+
+    ${renderCurrentRoundVotingCompletion_()}
+
+    <div class="grid">
+      <section class="panel"><div class="panel-head"><h3>Top rentals</h3></div>
+        ${(DATA.cabins.slice().sort((a,b)=>b.averageScore-a.averageScore).slice(0,3).map(c =>
+          `<p><strong>${esc(displayName(c))}</strong><br><span class="muted">${c.voteCount} votes • ${Number(c.averageScore||0).toFixed(1)} average</span></p>`
+        ).join('') || '<p class="muted">No rentals yet.</p>')}
+      </section>
+      <section class="panel"><div class="panel-head"><h3>Upcoming plans</h3></div>
+        ${(upcoming.map(i => `<p><strong>${fmtDate(i.Date)} — ${esc(i.Activity)}</strong><br><span class="muted">${esc(i.Location||'')}</span></p>`).join('') || '<p class="muted">No itinerary items yet.</p>')}
+      </section>
+      <section class="panel"><div class="panel-head"><h3>Planning status</h3></div>
+        <p><strong>${esc(DATA.trip['Voting Round'] || 'Preliminary')}</strong><br><span class="muted">Current voting round</span></p>
+        <p><strong>${(DATA.imports||[]).filter(i=>i.Status==='Needs Review').length}</strong><br><span class="muted">Rentals needing review</span></p>
+      </section>
+    </div>
+  </section>`;
+}
+
+function currentRoundTravelerProgress_(){
+  const stage=String(DATA.trip['Portal Stage']||'');
+  const round=String(DATA.trip['Voting Round']||'Preliminary');
+  const rentals=
+    typeof visibleRentalCabins_==='function'
+      ? visibleRentalCabins_()
+      : (DATA.cabins||[]);
+
+  if(!/Voting/i.test(stage) || !rentals.length){
+    return null;
+  }
+
+  const active=(DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no';
+  });
+
+  const targetIds=new Set(rentals.map(function(cabin){
+    return cabin['Cabin ID'];
+  }));
+
+  const progress=active.map(function(traveler){
+    const votes=(DATA.votes||[]).filter(function(vote){
+      return vote['Traveler ID']===traveler['Traveler ID'] &&
+        String(vote['Voting Round']||'Preliminary')===round &&
+        targetIds.has(vote['Cabin ID']);
+    });
+
+    const rated=new Set(votes.map(function(vote){
+      return vote['Cabin ID'];
+    })).size;
+
+    const first=
+      round!=='Final' ||
+      votes.some(function(vote){
+        return String(vote['First Choice']||'').toLowerCase()==='yes';
+      });
+
+    return {
+      traveler:traveler,
+      rated:rated,
+      required:rentals.length,
+      first:first,
+      complete:rated===rentals.length&&first
+    };
+  });
+
+  return {
+    round:round,
+    rentals:rentals,
+    progress:progress
+  };
+}
+
+function renderCurrentRoundVotingCompletion_(){
+  const data=currentRoundTravelerProgress_();
+  if(!data) return '';
+
+  return `<section class="panel voting-completion-panel">
+    <div class="panel-head">
+      <div>
+        <h3>Voting completion</h3>
+        <p class="muted">${esc(data.round)} round</p>
+      </div>
+    </div>
+
+    <div class="traveler-final-progress">
+      ${data.progress.map(function(item){
+        return `<div class="${item.complete?'voting-traveler-complete':''}">
+          <strong>${esc(item.traveler.Name||'Traveler')}</strong>
+          <span>
+            ${item.rated}/${item.required} rated
+            ${
+              data.round==='Final'&&item.first
+                ? ' · #1 selected'
+                : ''
+            }
+            ${item.complete?' · Complete':''}
+          </span>
+        </div>`;
+      }).join('')}
+    </div>
+  </section>`;
+}
+
+function renderAppSetupCard_(){
+  return `<section class="app-setup-card">
+    <div>
+      <strong>📲 Put the trip on your phone</strong>
+      <span>
+        Add the Vacation Portal to your device and turn on trip notifications.
+      </span>
+    </div>
+    <button class="ghost" type="button" onclick="openAppSetup_()">
+      App setup
+    </button>
+  </section>`;
+}
+
+function renderReleaseBadge_(){
+  return `<div class="release-banner">
+    <span class="release-dot" aria-hidden="true"></span>
+    <span>Portal release</span>
+    <strong>${esc(typeof PORTAL_RELEASE!=='undefined'?PORTAL_RELEASE:'Unknown')}</strong>
+  </div>`;
+}
+
+function stat(value,label){return `<div class="stat"><strong>${value}</strong><span class="muted">${label}</span></div>`}
+
+function renderFinalVotingDashboard_(){
+  const finalists=visibleRentalCabins_();
+  const closed=finalVotingIsClosed_();
+
+  const activeTravelers=(DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no';
+  });
+
+  const travelerProgress=activeTravelers.map(function(traveler){
+    const votes=(DATA.votes||[]).filter(function(vote){
+      return vote['Traveler ID']===traveler['Traveler ID'] &&
+        String(vote['Voting Round']||'')==='Final' &&
+        finalistCabinIds_().indexOf(vote['Cabin ID'])>=0;
+    });
+
+    return {
+      traveler:traveler,
+      rated:new Set(votes.map(function(vote){return vote['Cabin ID'];})).size,
+      first:votes.some(function(vote){
+        return String(vote['First Choice']||'').toLowerCase()==='yes';
+      })
+    };
+  });
+
+  const completed=travelerProgress.filter(function(item){
+    return item.rated===finalists.length && item.first;
+  }).length;
+
+  return `<section class="view">
+    ${renderReleaseBadge_()}
+    ${renderAppSetupCard_()}
+    <div class="hero final-dashboard-hero">
+      <div>
+        <p class="eyebrow">${closed?'FINAL RESULTS':'FINAL VOTING'}</p>
+        <h2>${closed?'The family has spoken.':'Three cabins. One final choice.'}</h2>
+        <p>${
+          closed
+            ? 'Final scores and #1-choice totals are now visible.'
+            : 'Rate all three finalists and choose one as your #1 choice.'
+        }</p>
+      </div>
+      <button onclick="navigate('rentals')">
+        ${closed?'View finalists':'Vote on finalists'}
+      </button>
+    </div>
+
+    <div class="stats">
+      ${stat(finalists.length,'Finalists')}
+      ${stat(completed+' / '+activeTravelers.length,'Travelers finished')}
+      ${stat(activeTravelers.length-completed,'Still voting')}
+      ${stat(closed?'Closed':'Open','Final voting')}
+    </div>
+
+    <div class="finalist-dashboard-grid">
+      ${finalists.map(function(cabin,index){
+        const summary=familyVoteSummary_(cabin['Cabin ID']);
+
+        const firstChoices=(DATA.votes||[]).filter(function(vote){
+          return vote['Cabin ID']===cabin['Cabin ID'] &&
+            String(vote['Voting Round']||'')==='Final' &&
+            String(vote['First Choice']||'').toLowerCase()==='yes';
+        }).length;
+
+        const myVote=myVoteForCabin_(cabin['Cabin ID']);
+
+        return `<article class="finalist-dashboard-card">
+          <span class="finalist-number">Finalist ${index+1}</span>
+          <h3>${esc(displayName(cabin))}</h3>
+          <p class="muted">${esc(cabin.Location||'')}</p>
+
+          ${
+            closed
+              ? `<div class="final-results-numbers">
+                  <strong>${summary.average.toFixed(1)} / 5</strong>
+                  <span>${summary.reviewed} final ratings</span>
+                  <strong>${firstChoices}</strong>
+                  <span>#1-choice votes</span>
+                </div>`
+              : `<div class="my-final-status">
+                  ${
+                    myVote
+                      ? `✓ Your rating: ${Number(myVote.Score)}/5${
+                          String(myVote['First Choice']||'').toLowerCase()==='yes'
+                            ? ' · Your #1 choice'
+                            : ''
+                        }`
+                      : 'Not yet rated by you'
+                  }
+                </div>`
+          }
+        </article>`;
+      }).join('')}
+    </div>
+
+    ${
+      closed
+        ? ''
+        : `<section class="panel">
+            <div class="panel-head">
+              <h3>Voting completion</h3>
+            </div>
+            <div class="traveler-final-progress">
+              ${travelerProgress.map(function(item){
+                const itemComplete=
+                  item.rated===finalists.length && item.first;
+
+                return `<div class="${itemComplete?'voting-traveler-complete':''}">
+                  <strong>${esc(item.traveler.Name||'Traveler')}</strong>
+                  <span>
+                    ${item.rated}/${finalists.length} rated
+                    ${item.first?'· #1 selected':''}
+                  </span>
+                </div>`;
+              }).join('')}
+            </div>
+          </section>`
+    }
+  </section>`;
+}
+
+</script>

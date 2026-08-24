@@ -1,0 +1,797 @@
+<script>
+function renderSettings(){
+  const finalistIds=String(DATA.trip['Finalist Cabin IDs']||'')
+    .split('|')
+    .filter(Boolean);
+
+  const isJustin=Boolean(
+    currentTraveler() &&
+    /^justin(?:\s|$)/i.test(String(currentTraveler().Name||'').trim())
+  );
+
+  if(isJustin){
+    setTimeout(loadJustinVotingSummary_,80);
+  }
+
+  return `<section class="view">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">TRIP CONTROL CENTER</p>
+          <h2>Trip settings</h2>
+        </div>
+      </div>
+
+      <form onsubmit="saveSettingsForm(event)" class="form-grid">
+        ${field('setTripName','Trip name',DATA.trip['Trip Name'],'text',true)}
+        ${field('setDestination','Destination',DATA.trip.Destination)}
+        ${field('setStart','Start date',dateInput(DATA.trip['Start Date']),'date')}
+        ${field('setEnd','End date',dateInput(DATA.trip['End Date']),'date')}
+
+        <label>
+          <span>Portal stage</span>
+          <select id="setStage">
+            ${['Gathering','Preliminary Voting','Final Voting','Voting Closed','Room Planning','Trip Planning']
+              .map(function(x){
+                return `<option ${DATA.trip['Portal Stage']===x?'selected':''}>${x}</option>`;
+              }).join('')}
+          </select>
+        </label>
+
+        <label>
+          <span>Voting round</span>
+          <select id="setRound">
+            ${['Preliminary','Final']
+              .map(function(x){
+                return `<option ${DATA.trip['Voting Round']===x?'selected':''}>${x}</option>`;
+              }).join('')}
+          </select>
+        </label>
+
+        ${
+          isJustin
+            ? `${field(
+                'setOneSignalAppId',
+                'OneSignal App ID',
+                DATA.trip['OneSignal App ID']||'',
+                'text'
+              )}
+              <div class="wide muted onesignal-app-id-hint">
+                Paste the public App ID from
+                <strong>OneSignal → Settings → Keys &amp; IDs</strong>.
+                The secret App API Key is configured separately from the Google Sheet menu.
+              </div>`
+            : ''
+        }
+
+        <div class="wide form-actions">
+          <button>Save trip settings</button>
+        </div>
+      </form>
+
+      ${
+        isJustin
+          ? `<section class="voting-admin-summary-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">VOTING SUMMARY</p>
+                  <h3>Traveler voting progress</h3>
+                  <p class="muted">
+                    Current-round voting progress, each traveler's top three rentals,
+                    and installed-app status.
+                  </p>
+                </div>
+                <button
+                  class="ghost"
+                  type="button"
+                  onclick="loadJustinVotingSummary_(true)"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              <div id="justinVotingSummary">
+                <div class="voting-summary-loading">
+                  Loading traveler voting summary…
+                </div>
+              </div>
+            </section>`
+          : ''
+      }
+
+      ${
+        isJustin
+          ? `<section class="push-admin-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">TRAVELER NOTIFICATIONS</p>
+                  <h3>Send a push notification</h3>
+                  <p class="muted">
+                    Travelers receive these on subscribed phones and computers,
+                    even when the portal is closed.
+                  </p>
+                </div>
+                <button
+                  class="ghost"
+                  type="button"
+                  onclick="showPushSetupStatus_()"
+                >
+                  Check setup
+                </button>
+              </div>
+
+              <div class="push-composer-grid">
+                <label>
+                  <span>Send to</span>
+                  <select id="pushAudience" onchange="togglePushTravelerPicker_()">
+                    <option value="everyone">Everyone</option>
+                    <option value="adults">Adults only</option>
+                    <option value="selected">Specific travelers</option>
+                  </select>
+                </label>
+
+                <label>
+                  <span>Title</span>
+                  <input
+                    id="pushTitle"
+                    maxlength="50"
+                    value="Family Vacation Update"
+                  >
+                </label>
+
+                <label class="wide">
+                  <span>Message</span>
+                  <textarea
+                    id="pushMessage"
+                    maxlength="180"
+                    rows="3"
+                    placeholder="Voting is open — please rate the new cabins by Friday."
+                  ></textarea>
+                </label>
+
+                <div id="pushTravelerPicker" class="wide push-traveler-picker hidden">
+                  <span class="field-caption">Choose travelers</span>
+                  <div class="push-traveler-grid">
+                    ${(DATA.travelers||[])
+                      .filter(function(t){
+                        return String(t.Active||'Yes').toLowerCase()!=='no';
+                      })
+                      .map(function(t){
+                        return `<label>
+                          <input
+                            type="checkbox"
+                            name="pushTraveler"
+                            value="${escAttr(t['Traveler ID'])}"
+                          >
+                          <span>${esc(t.Name||'Traveler')}</span>
+                        </label>`;
+                      }).join('')}
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-actions">
+                <button type="button" onclick="sendPushNotificationClient_()">
+                  Send notification
+                </button>
+              </div>
+            </section>`
+          : ''
+      }
+
+      ${
+        isJustin
+          ? `<section class="finalist-control-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">FINAL ROUND</p>
+                  <h3>Select the three finalists</h3>
+                  <p class="muted">
+                    Preliminary votes stay preserved. Final voting creates a separate Final round.
+                  </p>
+                </div>
+              </div>
+
+              <div class="finalist-selection-grid">
+                ${DATA.cabins.map(function(cabin){
+                  return `<label class="finalist-option">
+                    <input
+                      type="checkbox"
+                      name="finalistCabin"
+                      value="${escAttr(cabin['Cabin ID'])}"
+                      ${finalistIds.indexOf(cabin['Cabin ID'])>=0?'checked':''}
+                      onchange="limitFinalistSelection_(this)"
+                    >
+                    <span>
+                      <strong>${esc(displayName(cabin))}</strong>
+                      <small>${esc(cabin.Location||'')}</small>
+                    </span>
+                  </label>`;
+                }).join('')}
+              </div>
+
+              <div class="finalist-actions">
+                <button class="ghost" type="button" onclick="saveFinalistsClient_()">
+                  Save finalists
+                </button>
+
+                <button type="button" onclick="startFinalVotingClient_()">
+                  Start final voting
+                </button>
+
+                ${
+                  DATA.trip['Portal Stage']==='Final Voting'
+                    ? `<button class="remove-rental-button" type="button"
+                        onclick="closeFinalVotingClient_()">
+                        Close voting & reveal results
+                      </button>`
+                    : ''
+                }
+
+                ${
+                  DATA.trip['Portal Stage']==='Voting Closed'
+                    ? `<button class="ghost" type="button"
+                        onclick="reopenFinalVotingClient_()">
+                        Reopen final voting
+                      </button>`
+                    : ''
+                }
+              </div>
+            </section>`
+          : ''
+      }
+
+      ${
+        isJustin
+          ? `<section class="gathering-reset-panel">
+              <div>
+                <p class="eyebrow">START PLANNING OVER</p>
+                <h3>Reset portal to Gathering</h3>
+                <p class="muted">
+                  Archives the current planning activity, keeps rentals and traveler
+                  profiles, and lets you choose exactly which planning sections to clear.
+                </p>
+              </div>
+
+              <button
+                class="remove-rental-button"
+                type="button"
+                onclick="confirmGatheringReset_()"
+              >
+                Reset to Gathering
+              </button>
+            </section>`
+          : ''
+      }
+
+      ${
+        isJustin
+          ? `<section class="restart-voting-panel">
+              <div>
+                <p class="eyebrow">NEW PRELIMINARY ROUND</p>
+                <h3>Restart preliminary voting</h3>
+                <p class="muted">
+                  Use this after adding more rentals when you want everyone to vote again
+                  from a completely clean slate.
+                </p>
+              </div>
+              <button
+                class="remove-rental-button"
+                type="button"
+                onclick="confirmRestartPreliminaryVoting_()"
+              >
+                Restart preliminary voting
+              </button>
+            </section>`
+          : ''
+      }
+
+      <div class="notice" style="margin-top:18px">
+        <strong>Chrome extension submissions</strong><br>
+        Travelers can still use <strong>Add rental link</strong> from Rentals when needed.
+      </div>
+    </div>
+  </section>`;
+}
+
+let justinVotingSummaryLoading_=false;
+
+function loadJustinVotingSummary_(force){
+  const container=document.getElementById('justinVotingSummary');
+
+  if(!container || justinVotingSummaryLoading_) return;
+
+  justinVotingSummaryLoading_=true;
+
+  if(force){
+    container.innerHTML=
+      '<div class="voting-summary-loading">Refreshing voting summary…</div>';
+  }
+
+  google.script.run
+    .withSuccessHandler(function(summary){
+      justinVotingSummaryLoading_=false;
+
+      const target=document.getElementById('justinVotingSummary');
+      if(!target) return;
+
+      target.innerHTML=renderJustinVotingSummary_(summary||{});
+    })
+    .withFailureHandler(function(error){
+      justinVotingSummaryLoading_=false;
+
+      const target=document.getElementById('justinVotingSummary');
+      if(!target) return;
+
+      target.innerHTML=
+        '<div class="notice">'+
+          '<strong>Voting summary could not load.</strong><br>'+
+          esc(error&&error.message?error.message:String(error))+
+        '</div>';
+    })
+    .getJustinVotingSummary(currentTravelerId);
+}
+
+function renderJustinVotingSummary_(summary){
+  const rows=Array.isArray(summary.rows)?summary.rows:[];
+  const round=String(summary.round||DATA.trip['Voting Round']||'Preliminary');
+  const eligible=Number(summary.eligibleRentalCount||0);
+
+  if(!rows.length){
+    return '<div class="muted">No active travelers were found.</div>';
+  }
+
+  return `
+    <div class="voting-summary-round">
+      <strong>${esc(round)} voting</strong>
+      <span>${eligible} rental${eligible===1?'':'s'} in this round</span>
+    </div>
+
+    <div class="voting-summary-table-wrap">
+      <table class="voting-summary-table">
+        <thead>
+          <tr>
+            <th>Traveler</th>
+            <th>Voted</th>
+            <th>Top 3 rentals</th>
+            <th>Mobile app</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(function(row){
+            const top3=Array.isArray(row.top3)?row.top3:[];
+            const complete=
+              Number(row.eligibleRentalCount||0)>0 &&
+              Number(row.votedCount||0)>=Number(row.eligibleRentalCount||0);
+
+            return `<tr>
+              <td data-label="Traveler">
+                <strong>${esc(row.travelerName||'Traveler')}</strong>
+                ${row.family
+                  ? `<small>${esc(row.family)}</small>`
+                  : ''}
+              </td>
+
+              <td data-label="Voted">
+                <span class="voting-count ${complete?'complete':''}">
+                  ${Number(row.votedCount||0)} / ${Number(row.eligibleRentalCount||0)}
+                </span>
+                ${complete?'<small class="voting-complete-label">Complete</small>':''}
+              </td>
+
+              <td data-label="Top 3 rentals">
+                ${
+                  top3.length
+                    ? `<ol class="traveler-top-three">
+                        ${top3.map(function(item){
+                          return `<li>
+                            <span>${esc(item.name||'Rental')}</span>
+                            <small>${Number(item.score||0).toFixed(0)}★${item.firstChoice?' · First choice':''}</small>
+                          </li>`;
+                        }).join('')}
+                      </ol>`
+                    : '<span class="muted">No votes yet</span>'
+                }
+              </td>
+
+              <td data-label="Mobile app">
+                ${
+                  row.appInstalled
+                    ? `<span class="app-install-status installed">✓ Installed</span>
+                       <small>${Number(row.installedDeviceCount||0)} device${Number(row.installedDeviceCount||0)===1?'':'s'}</small>`
+                    : `<span class="app-install-status not-installed">Not installed</span>
+                       ${Number(row.linkedDeviceCount||0)>0
+                         ? '<small>Browser/device linked</small>'
+                         : ''}`
+                }
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function saveSettingsForm(e){
+  e.preventDefault();
+
+  run(
+    'saveTripSettings',
+    [{
+      'Trip Name':val('setTripName'),
+      Destination:val('setDestination'),
+      'Start Date':val('setStart'),
+      'End Date':val('setEnd'),
+      'Portal Stage':val('setStage'),
+      'Voting Round':val('setRound'),
+      'OneSignal App ID':
+        document.getElementById('setOneSignalAppId')
+          ? val('setOneSignalAppId')
+          : (DATA.trip['OneSignal App ID']||'')
+    }],
+    'Trip settings saved.'
+  );
+}
+
+function limitFinalistSelection_(changed){
+  const selected=Array.from(
+    document.querySelectorAll('input[name="finalistCabin"]:checked')
+  );
+
+  if(selected.length>3){
+    changed.checked=false;
+    toast('Select exactly three finalists.',true);
+  }
+}
+
+function selectedFinalistIds_(){
+  return Array.from(
+    document.querySelectorAll('input[name="finalistCabin"]:checked')
+  ).map(function(input){
+    return input.value;
+  });
+}
+
+function saveFinalistsClient_(){
+  const ids=selectedFinalistIds_();
+
+  if(ids.length!==3){
+    toast('Select exactly three finalists.',true);
+    return;
+  }
+
+  run(
+    'saveFinalists',
+    [{travelerId:currentTravelerId,cabinIds:ids}],
+    'Finalists saved.'
+  );
+}
+
+function startFinalVotingClient_(){
+  const ids=selectedFinalistIds_();
+
+  if(ids.length!==3){
+    toast('Select exactly three finalists.',true);
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(function(){
+      google.script.run
+        .withSuccessHandler(function(data){
+          DATA=data;
+          render();
+          toast('Final voting is now open.');
+        })
+        .withFailureHandler(function(error){
+          toast(error&&error.message?error.message:String(error),true);
+        })
+        .startFinalVoting({travelerId:currentTravelerId});
+    })
+    .withFailureHandler(function(error){
+      toast(error&&error.message?error.message:String(error),true);
+    })
+    .saveFinalists({
+      travelerId:currentTravelerId,
+      cabinIds:ids
+    });
+}
+
+function closeFinalVotingClient_(){
+  run(
+    'closeFinalVoting',
+    [{travelerId:currentTravelerId}],
+    'Final voting closed. Results are now visible.'
+  );
+}
+
+function reopenFinalVotingClient_(){
+  run(
+    'reopenFinalVoting',
+    [{travelerId:currentTravelerId}],
+    'Final voting reopened.'
+  );
+}
+
+function confirmGatheringReset_(){
+  openModal(`<div class="restart-voting-confirm gathering-reset-dialog">
+    <p class="eyebrow">RESET PLANNING PORTAL</p>
+    <h2>Start the planning process over?</h2>
+
+    <p>
+      The portal will always return to <strong>Gathering</strong> and clear the
+      current finalist/final-voting state. Choose which planning sections should
+      also be cleared.
+    </p>
+
+    <div class="notice">
+      <strong>An archive is created first.</strong>
+      Rentals, traveler profiles, rental photos, bedroom/property details, and
+      portal configuration are always retained.
+    </div>
+
+    <div class="reset-section-picker">
+      <div class="reset-section-toolbar">
+        <strong>Clear these sections</strong>
+        <div>
+          <button class="ghost tiny" type="button"
+            onclick="setGatheringResetSections_(true)">
+            Select all
+          </button>
+          <button class="ghost tiny" type="button"
+            onclick="setGatheringResetSections_(false)">
+            Clear selections
+          </button>
+        </div>
+      </div>
+
+      ${[
+        ['Votes','Votes','Start voting over from a completely clean slate.',true],
+        ['Favorites','Favorites','Clear all traveler favorites.',true],
+        ['Comments','Comments','Clear rental comments.',true],
+        ['Assignments','Room assignments','Clear current bedroom/traveler assignments.',true],
+        ['Budget','Budget','Clear Budget items.',false],
+        ['Meals','Meals','Clear meal planning.',false],
+        ['Grocery List','Grocery List','Clear grocery items.',false],
+        ['Itinerary','Itinerary','Clear itinerary events.',false]
+      ].map(function(item){
+        return `<label class="reset-section-option">
+          <input
+            type="checkbox"
+            name="gatheringResetSection"
+            value="${escAttr(item[0])}"
+            ${item[3]?'checked':''}
+          >
+          <span>
+            <strong>${esc(item[1])}</strong>
+            <small>${esc(item[2])}</small>
+          </span>
+        </label>`;
+      }).join('')}
+    </div>
+
+    <div class="notice warning">
+      Budget, Meals, Grocery List, and Itinerary are <strong>preserved by default</strong>.
+      Check them only when you intentionally want to start those sections over too.
+    </div>
+
+    <div class="form-actions">
+      <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+      <button class="remove-rental-button" type="button"
+        onclick="resetPlanningPortalToGatheringClient_()">
+        Archive & reset selected
+      </button>
+    </div>
+  </div>`);
+}
+
+function setGatheringResetSections_(checked){
+  document
+    .querySelectorAll('input[name="gatheringResetSection"]')
+    .forEach(function(input){
+      input.checked=checked;
+    });
+}
+
+function resetPlanningPortalToGatheringClient_(){
+  const button=document.querySelector(
+    '#modalContent .remove-rental-button'
+  );
+
+  const sections=Array.from(
+    document.querySelectorAll(
+      'input[name="gatheringResetSection"]:checked'
+    )
+  ).map(function(input){
+    return input.value;
+  });
+
+  if(button){
+    button.disabled=true;
+    button.textContent='Archiving & resetting…';
+  }
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      DATA=result.data;
+      currentView='dashboard';
+      closeModal();
+      hydrateHeader();
+      render();
+
+      const cleared=(result.clearedSections||[]);
+
+      toast(
+        cleared.length
+          ? 'Portal reset to Gathering. Cleared: '+cleared.join(', ')+'.'
+          : 'Portal reset to Gathering. Planning sections were preserved.'
+      );
+    })
+    .withFailureHandler(function(error){
+      if(button){
+        button.disabled=false;
+        button.textContent='Archive & reset selected';
+      }
+
+      toast(
+        error&&error.message?error.message:String(error),
+        true
+      );
+    })
+    .resetPlanningPortalToGathering({
+      travelerId:currentTravelerId,
+      sections:sections
+    });
+}
+
+function confirmRestartPreliminaryVoting_(){
+  openModal(`<div class="restart-voting-confirm">
+    <p class="eyebrow">RESTART VOTING</p>
+    <h2>Start preliminary voting over?</h2>
+    <p>
+      This permanently clears all current preliminary and final ratings and starts
+      a brand-new preliminary round.
+    </p>
+    <div class="notice warning">
+      Rentals, traveler profiles, comments, room information, budget, meals,
+      groceries, and itinerary data will not be deleted.
+    </div>
+    <p class="muted">
+      After the reset you can continue adding rentals with the Chrome extension,
+      and every traveler will begin with no ratings.
+    </p>
+    <div class="form-actions">
+      <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+      <button
+        class="remove-rental-button"
+        type="button"
+        onclick="restartPreliminaryVotingClient_()"
+      >
+        Clear votes & restart
+      </button>
+    </div>
+  </div>`);
+}
+
+function restartPreliminaryVotingClient_(){
+  closeModal();
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      DATA=data;
+      navigate('rentals');
+      render();
+      toast('Preliminary voting restarted. All rentals are open for a fresh vote.');
+    })
+    .withFailureHandler(function(error){
+      toast(
+        error&&error.message?error.message:String(error),
+        true
+      );
+    })
+    .restartPreliminaryVoting({
+      travelerId:currentTravelerId
+    });
+}
+
+function togglePushTravelerPicker_(){
+  const picker=document.getElementById('pushTravelerPicker');
+  const audience=document.getElementById('pushAudience');
+  if(!picker||!audience) return;
+  picker.classList.toggle('hidden',audience.value!=='selected');
+}
+
+function showPushSetupStatus_(){
+  google.script.run
+    .withSuccessHandler(function(status){
+      const lines=[
+        status.appIdConfigured
+          ? '✓ OneSignal App ID configured'
+          : '✕ OneSignal App ID missing',
+        status.apiKeyConfigured
+          ? '✓ OneSignal API key configured'
+          : '✕ OneSignal API key missing',
+        status.pwaUrl
+          ? '✓ PWA URL configured'
+          : '✕ PWA URL missing'
+      ];
+
+      openModal(`<div class="push-status-dialog">
+        <p class="eyebrow">PUSH NOTIFICATIONS</p>
+        <h2>Notification setup</h2>
+        <div class="push-status-list">
+          ${lines.map(function(line){
+            return `<div>${esc(line)}</div>`;
+          }).join('')}
+        </div>
+        <p class="muted">
+          The API key is configured from the spreadsheet menu:
+          <strong>Vacation Portal → Set OneSignal API key</strong>.
+        </p>
+        <div class="form-actions">
+          <button type="button" onclick="closeModal()">Done</button>
+        </div>
+      </div>`);
+    })
+    .withFailureHandler(function(error){
+      toast(error&&error.message?error.message:String(error),true);
+    })
+    .getOneSignalStatus();
+}
+
+function sendPushNotificationClient_(){
+  const audience=val('pushAudience');
+  const title=val('pushTitle').trim();
+  const message=val('pushMessage').trim();
+
+  const travelerIds=Array.from(
+    document.querySelectorAll('input[name="pushTraveler"]:checked')
+  ).map(function(input){return input.value;});
+
+  if(!message){
+    toast('Enter a notification message.',true);
+    return;
+  }
+
+  if(audience==='selected'&&!travelerIds.length){
+    toast('Choose at least one traveler.',true);
+    return;
+  }
+
+  const button=document.querySelector(
+    '.push-admin-panel button[onclick="sendPushNotificationClient_()"]'
+  );
+
+  if(button){
+    button.disabled=true;
+    button.textContent='Sending…';
+  }
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      if(button){
+        button.disabled=false;
+        button.textContent='Send notification';
+      }
+
+      toast(result.message||'Notification sent.');
+
+      const messageBox=document.getElementById('pushMessage');
+      if(messageBox) messageBox.value='';
+    })
+    .withFailureHandler(function(error){
+      if(button){
+        button.disabled=false;
+        button.textContent='Send notification';
+      }
+      toast(error&&error.message?error.message:String(error),true);
+    })
+    .sendPortalPushNotification({
+      senderTravelerId:currentTravelerId,
+      audience:audience,
+      travelerIds:travelerIds,
+      title:title,
+      message:message
+    });
+}
+</script>

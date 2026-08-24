@@ -1,0 +1,539 @@
+<script>
+const plannerSortState_={};
+let groceryShowBringing_=true;
+
+function plannerSortValue_(header,value){
+  if(header==='Amount'||header==='Cost'||header==='Quantity'){
+    const number=Number(value);
+    return isFinite(number)?number:0;
+  }
+
+  return String(value||'').toLowerCase();
+}
+
+function plannerRows_(name){
+  const planner=PLANNERS[name];
+  const rows=(DATA[planner.data]||[]).slice();
+
+  const state=plannerSortState_[name];
+
+  if(!state){
+    if(name==='Grocery List'){
+      plannerSortState_[name]={
+        header:'Store Section',
+        direction:'asc'
+      };
+    }else{
+      return rows;
+    }
+  }
+
+  if(name==='Grocery List' && !groceryShowBringing_){
+    for(let i=rows.length-1;i>=0;i--){
+      if(String(rows[i].Bringing||'No').toLowerCase()==='yes'){
+        rows.splice(i,1);
+      }
+    }
+  }
+
+  const active=plannerSortState_[name];
+
+  rows.sort(function(left,right){
+    const av=plannerSortValue_(active.header,left[active.header]);
+    const bv=plannerSortValue_(active.header,right[active.header]);
+
+    let result=0;
+
+    if(typeof av==='number'&&typeof bv==='number'){
+      result=av-bv;
+    }else{
+      result=String(av).localeCompare(String(bv),undefined,{
+        numeric:true,
+        sensitivity:'base'
+      });
+    }
+
+    return active.direction==='desc' ? -result : result;
+  });
+
+  return rows;
+}
+
+function plannerSortIcon_(name,header){
+  const state=plannerSortState_[name];
+  if(!state || state.header!==header) return '↕';
+  return state.direction==='asc' ? '↑' : '↓';
+}
+
+function sortPlannerBy_(name,header){
+  const current=plannerSortState_[name];
+
+  if(current && current.header===header){
+    current.direction=current.direction==='asc'?'desc':'asc';
+  }else{
+    plannerSortState_[name]={
+      header:header,
+      direction:'asc'
+    };
+  }
+
+  render();
+}
+
+function plannerDisplayValue_(name,header,value){
+  if(header==='Event URL'){
+    const url=String(value||'').trim();
+
+    return url
+      ? `<a class="planner-event-link"
+           href="${escAttr(url)}"
+           target="_blank"
+           rel="noopener noreferrer">Open event ↗</a>`
+      : '<span class="muted">—</span>';
+  }
+
+  if(header.includes('Amount') || header==='Cost'){
+    return money(value||0);
+  }
+
+  if(header==='Include in Rental Split'){
+    return String(value||'No')==='Yes'
+      ? '<span class="planner-yes-badge">Included</span>'
+      : '<span class="muted">No</span>';
+  }
+
+  if(header==='Bringing'){
+    return String(value||'').toLowerCase()==='yes'
+      ? '<span class="grocery-bringing-badge">Bringing</span>'
+      : '<span class="muted">Buy</span>';
+  }
+
+  if(header==='Purchased'){
+    return String(value||'').toLowerCase()==='yes'
+      ? '<span class="planner-yes-badge">Purchased</span>'
+      : '<span class="muted">No</span>';
+  }
+
+  return esc(value||'');
+}
+
+function renderPlanner(name){
+  const p=PLANNERS[name];
+  const rows=plannerRows_(name);
+  return `<section class="view">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>${name}</h2>
+          <p class="muted">Click any column heading to sort ascending or descending.</p>
+        </div>
+        <div class="planner-head-actions">
+          ${
+            name==='Grocery List'
+              ? `<label class="grocery-bringing-toggle">
+                  <input
+                    type="checkbox"
+                    ${groceryShowBringing_?'checked':''}
+                    onchange="toggleGroceryBringing_(this.checked)"
+                  >
+                  <span>Show items being brought</span>
+                </label>`
+              : ''
+          }
+          <button onclick="openPlannerForm('${name}')">Add item</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="sortable-planner-table">
+          <thead>
+            <tr>
+              ${p.headers.map(function(header){
+                return `<th
+                  class="sortable-header"
+                  onclick="sortPlannerBy_('${name}','${escAttr(header)}')"
+                >
+                  ${esc(header)}
+                  <span>${plannerSortIcon_(name,header)}</span>
+                </th>`;
+              }).join('')}
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(function(row){
+              return `<tr>
+                ${p.headers.map(function(header){
+                  if(name==='Grocery List' && header==='Bringing'){
+                    const bringing=String(row.Bringing||'No').toLowerCase()==='yes';
+
+                    return `<td data-label="Bringing">
+                      <label class="grocery-inline-bringing">
+                        <input
+                          type="checkbox"
+                          ${bringing?'checked':''}
+                          onchange="quickSetGroceryBringing_(
+                            '${escAttr(row[p.id])}',
+                            this.checked
+                          )"
+                        >
+                        <span>${bringing?'Bringing':'Buy'}</span>
+                      </label>
+                    </td>`;
+                  }
+
+                  return `<td data-label="${escAttr(header)}">${plannerDisplayValue_(name,header,row[header])}</td>`;
+                }).join('')}
+                <td class="planner-row-actions" data-label="Actions">
+                  <button class="ghost tiny"
+                    onclick="openPlannerForm('${name}','${escAttr(row[p.id])}')">
+                    Edit
+                  </button>
+                  <button class="planner-delete tiny"
+                    onclick="deletePlannerItem_('${name}','${escAttr(row[p.id])}')">
+                    Delete
+                  </button>
+                </td>
+              </tr>`;
+            }).join('') || `<tr><td colspan="${p.headers.length+1}" class="empty-state">No items yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>`;
+}
+
+function toggleGroceryBringing_(show){
+  groceryShowBringing_=Boolean(show);
+  render();
+}
+
+function quickSetGroceryBringing_(id,bringing){
+  const planner=PLANNERS['Grocery List'];
+  const rows=DATA[planner.data]||[];
+  const index=rows.findIndex(function(row){
+    return row[planner.id]===id;
+  });
+
+  if(index<0) return;
+
+  const previous=Object.assign({},rows[index]);
+  const updated=Object.assign({},rows[index],{
+    Bringing:bringing?'Yes':'No'
+  });
+
+  if(!bringing){
+    updated['Brought By']='';
+  }
+
+  rows[index]=updated;
+  render();
+
+  google.script.run
+    .withSuccessHandler(function(saved){
+      const currentIndex=(DATA[planner.data]||[]).findIndex(function(row){
+        return row[planner.id]===id ||
+          row[planner.id]===saved[planner.id];
+      });
+
+      if(currentIndex>=0){
+        DATA[planner.data][currentIndex]=saved;
+      }
+      render();
+    })
+    .withFailureHandler(function(error){
+      const restoreIndex=(DATA[planner.data]||[]).findIndex(function(row){
+        return row[planner.id]===id;
+      });
+
+      if(restoreIndex>=0){
+        DATA[planner.data][restoreIndex]=previous;
+      }
+
+      render();
+      toast(
+        'Grocery item could not be updated: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .saveGrocery(updated);
+}
+
+function openPlannerForm(name,id){
+  const p=PLANNERS[name];
+  const row=id
+    ? (DATA[p.data]||[]).find(function(item){return item[p.id]===id;})||{}
+    : {};
+
+  openModal(`<h2>${id?'Edit':'Add'} ${name} item</h2>
+    <form onsubmit="savePlannerForm(event,'${name}')" class="form-grid">
+      <input id="plannerId" type="hidden" value="${escAttr(id||'')}">
+      ${p.headers.map(function(header){
+        return plannerInput(name,header,row[header]);
+      }).join('')}
+      <div class="wide form-actions">
+        ${
+          id
+            ? `<button type="button" class="planner-delete"
+                onclick="deletePlannerItem_('${name}','${escAttr(id)}')">
+                Delete item
+              </button>`
+            : ''
+        }
+        <button>Save item</button>
+      </div>
+    </form>`);
+}
+
+function plannerInput(name,header,value){
+  const id='plan_'+header.replace(/\W/g,'');
+
+  if(header==='Notes' || header==='Menu' || header==='Description'){
+    return area(id,header,value||'');
+  }
+
+  if(header==='Include in Rental Split'){
+    return `<label>
+      <span>Include in rental split?</span>
+      <select id="${id}">
+        <option value="No" ${String(value||'No')!=='Yes'?'selected':''}>No</option>
+        <option value="Yes" ${String(value||'No')==='Yes'?'selected':''}>Yes</option>
+      </select>
+      <small>
+        Adds this amount to the rental cost used for adult, bedroom, and price-cap calculations.
+      </small>
+    </label>`;
+  }
+
+  if(header==='Cost Per'){
+    return `<label>
+      <span>Cost Per</span>
+      <select id="${id}">
+        <option value="Person" ${String(value||'Person')==='Person'?'selected':''}>Per person</option>
+        <option value="Group" ${String(value||'')==='Group'?'selected':''}>Group total</option>
+      </select>
+      <small>Choose whether Cost is for each person or for the full group.</small>
+    </label>`;
+  }
+
+  if(header==='Bringing'){
+    return `<label class="wide grocery-bringing-field">
+      <span>Bringing instead of buying?</span>
+      <span class="traveler-checkbox-line">
+        <input
+          id="${id}"
+          type="checkbox"
+          ${String(value||'No').toLowerCase()==='yes'?'checked':''}
+        >
+        <strong>This item is being brought from home.</strong>
+      </span>
+      <small>
+        Use Brought By to identify who is responsible for bringing it.
+      </small>
+    </label>`;
+  }
+
+  if(header==='Purchased'){
+    return `<label>
+      <span>Purchased</span>
+      <select id="${id}">
+        <option value="No" ${String(value||'No')!=='Yes'?'selected':''}>No</option>
+        <option value="Yes" ${String(value||'No')==='Yes'?'selected':''}>Yes</option>
+      </select>
+    </label>`;
+  }
+
+  if(header==='Store Section'){
+    const sections=[
+      'Produce','Bakery','Deli','Meat & Seafood','Dairy',
+      'Frozen','Drinks','Snacks','Pantry','Condiments',
+      'Breakfast','Household','Paper Goods','Other'
+    ];
+
+    return `<label>
+      <span>Store Section</span>
+      <input id="${id}" list="storeSectionOptions" value="${escAttr(value||'')}">
+      <datalist id="storeSectionOptions">
+        ${sections.map(function(section){
+          return `<option value="${escAttr(section)}"></option>`;
+        }).join('')}
+      </datalist>
+    </label>`;
+  }
+
+  if(
+    header==='Assigned To' ||
+    header==='Clean Up' ||
+    header==='Paid By' ||
+    header==='Brought By'
+  ){
+    const names=(DATA.travelers||[])
+      .filter(function(t){
+        return String(t.Active||'Yes').toLowerCase()!=='no';
+      })
+      .map(function(t){return t.Name;})
+      .filter(Boolean)
+      .sort();
+
+    return `<label>
+      <span>${esc(header)}</span>
+      <input id="${id}" list="${id}_people" value="${escAttr(value||'')}">
+      <datalist id="${id}_people">
+        ${names.map(function(person){
+          return `<option value="${escAttr(person)}"></option>`;
+        }).join('')}
+      </datalist>
+    </label>`;
+  }
+
+  const type=
+    (header==='Date'||header==='Due Date')
+      ? 'date'
+      : (header==='Amount'||header==='Cost')
+        ? 'number'
+        : header==='Event URL'
+          ? 'url'
+          : header.includes('Time')
+            ? 'time'
+            : 'text';
+
+  return field(id,header,value||'',type);
+}
+
+function plannerObjectFromForm_(name){
+  const p=PLANNERS[name];
+  const object={};
+  const id=val('plannerId');
+
+  if(id) object[p.id]=id;
+
+  p.headers.forEach(function(header){
+    const fieldId='plan_'+header.replace(/\W/g,'');
+
+    if(name==='Grocery List' && header==='Bringing'){
+      object[header]=document.getElementById(fieldId)?.checked
+        ? 'Yes'
+        : 'No';
+    }else{
+      object[header]=val(fieldId);
+    }
+  });
+
+  if(
+    name==='Grocery List' &&
+    String(object.Bringing||'No')!=='Yes'
+  ){
+    object['Brought By']='';
+  }
+
+  return object;
+}
+
+function optimisticPlannerRecord_(name,object){
+  const p=PLANNERS[name];
+  const rows=DATA[p.data]||[];
+  const id=object[p.id]||('LOCAL-'+Date.now());
+
+  object[p.id]=id;
+
+  const index=rows.findIndex(function(row){
+    return row[p.id]===id;
+  });
+
+  if(index>=0){
+    rows[index]=Object.assign({},rows[index],object);
+  }else{
+    rows.unshift(Object.assign({},object));
+  }
+
+  DATA[p.data]=rows;
+  return id;
+}
+
+function replaceOptimisticPlannerRecord_(name,localId,saved){
+  const p=PLANNERS[name];
+  const rows=DATA[p.data]||[];
+  const index=rows.findIndex(function(row){
+    return row[p.id]===localId;
+  });
+
+  if(index>=0){
+    rows[index]=saved;
+  }else{
+    const savedIndex=rows.findIndex(function(row){
+      return row[p.id]===saved[p.id];
+    });
+
+    if(savedIndex>=0) rows[savedIndex]=saved;
+    else rows.unshift(saved);
+  }
+
+  DATA[p.data]=rows;
+}
+
+function savePlannerForm(e,name){
+  e.preventDefault();
+
+  const p=PLANNERS[name];
+  const object=plannerObjectFromForm_(name);
+  const existingId=object[p.id]||'';
+  const previous=(DATA[p.data]||[]).map(function(row){
+    return Object.assign({},row);
+  });
+
+  const localId=optimisticPlannerRecord_(name,object);
+
+  closeModal();
+  render();
+  toast(name+' item saved. Syncing in the background…');
+
+  const payload=Object.assign({},object);
+  if(!existingId){
+    delete payload[p.id];
+  }
+
+  google.script.run
+    .withSuccessHandler(function(saved){
+      replaceOptimisticPlannerRecord_(name,localId,saved);
+      render();
+    })
+    .withFailureHandler(function(error){
+      DATA[p.data]=previous;
+      render();
+      toast(
+        name+' item could not be saved: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })[p.save](payload);
+}
+
+function deletePlannerItem_(name,id){
+  const p=PLANNERS[name];
+  const previous=(DATA[p.data]||[]).map(function(row){
+    return Object.assign({},row);
+  });
+
+  DATA[p.data]=(DATA[p.data]||[]).filter(function(row){
+    return row[p.id]!==id;
+  });
+
+  closeModal();
+  render();
+  toast(name+' item removed. Syncing in the background…');
+
+  google.script.run
+    .withSuccessHandler(function(){})
+    .withFailureHandler(function(error){
+      DATA[p.data]=previous;
+      render();
+      toast(
+        name+' item could not be deleted: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .deletePlannerRecordFast(p.sheet,p.id,id);
+}
+</script>

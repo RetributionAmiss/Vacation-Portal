@@ -1,0 +1,84 @@
+<script>
+function openFeedback() {
+  const traveler = currentTraveler();
+  const travelerName = traveler ? traveler.Name : '';
+
+  openModal(`
+    <div class="feedback-form">
+      <p class="eyebrow">BETA FEEDBACK</p>
+      <h2>Tell us what you found</h2>
+      <p class="muted">
+        Bug reports and suggestions are written directly to the shared Feedback sheet.
+        The current portal page and browser details are included automatically.
+      </p>
+
+      <div class="form-grid" style="margin-top:16px">
+        <label>
+          <span>Feedback type</span>
+          <select id="feedbackType">
+            <option>Bug</option>
+            <option>Something was confusing</option>
+            <option>Feature suggestion</option>
+            <option>General feedback</option>
+          </select>
+        </label>
+
+        ${field('feedbackName', 'Your name', travelerName, 'text', true)}
+        ${field('feedbackSummary', 'Short summary', '', 'text', true)}
+        ${area('feedbackWhatHappened', 'What happened?')}
+        ${area('feedbackExpected', 'What did you expect to happen?')}
+        ${area('feedbackSteps', 'Steps to reproduce it')}
+      </div>
+
+      <div class="notice">
+        Tip: include the rental name and the button you clicked. Screenshots can still
+        be sent separately during this first testing round.
+      </div>
+
+      <div class="form-actions">
+        <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+        <button id="submitFeedbackButton" type="button" onclick="submitFeedbackForm()">
+          Send feedback
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+function submitFeedbackForm() {
+  const button = document.getElementById('submitFeedbackButton');
+  const payload = {
+    travelerId: currentTravelerId,
+    travelerName: val('feedbackName'),
+    type: val('feedbackType'),
+    summary: val('feedbackSummary'),
+    whatHappened: val('feedbackWhatHappened'),
+    expectedResult: val('feedbackExpected'),
+    steps: val('feedbackSteps'),
+    portalView: currentView,
+    pageUrl: window.location.href,
+    browser: navigator.userAgent
+  };
+
+  if (!payload.summary && !payload.whatHappened) {
+    toast('Enter a summary or tell us what happened.', true);
+    return;
+  }
+
+  closeModal();
+  toast('Feedback submitted. Sending in the background…');
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      toast(result.message || 'Feedback submitted.');
+    })
+    .withFailureHandler(function (error) {
+      toast(
+        'Feedback could not be saved: ' +
+        (error && error.message ? error.message : String(error)),
+        true
+      );
+    })
+    .submitPortalFeedback(payload);
+}
+</script>

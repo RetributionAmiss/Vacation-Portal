@@ -1,0 +1,460 @@
+<script>
+const travelerSortState_={
+  header:'Name',
+  direction:'asc'
+};
+
+function travelerSortValue_(traveler,header){
+  if(header==='Type') return traveler['Traveler Type']||'Adult';
+  if(header==='Parent / guardian') return traveler.parentName||'';
+  if(header==='Price cap') return Number(traveler['Price Cap']||0);
+  if(header==='Cost %') return Number(traveler['Cost %']||100);
+  if(header==='Pay more?') return traveler['Pay More']||'No';
+  if(header==='Share room?') return traveler['Willing to Share Room']||'No';
+  if(header==='Group') return traveler.Group||'';
+  if(header==='Home') return traveler['Home Location']||'';
+  return traveler.Name||'';
+}
+
+function sortedTravelers_(){
+  return (DATA.travelers||[]).slice().sort(function(a,b){
+    const av=travelerSortValue_(a,travelerSortState_.header);
+    const bv=travelerSortValue_(b,travelerSortState_.header);
+
+    let result=0;
+
+    if(typeof av==='number'&&typeof bv==='number'){
+      result=av-bv;
+    }else{
+      result=String(av).localeCompare(String(bv),undefined,{
+        numeric:true,
+        sensitivity:'base'
+      });
+    }
+
+    return travelerSortState_.direction==='desc' ? -result : result;
+  });
+}
+
+function sortTravelersBy_(header){
+  if(travelerSortState_.header===header){
+    travelerSortState_.direction=
+      travelerSortState_.direction==='asc'?'desc':'asc';
+  }else{
+    travelerSortState_.header=header;
+    travelerSortState_.direction='asc';
+  }
+
+  render();
+}
+
+function travelerSortIcon_(header){
+  if(travelerSortState_.header!==header) return '↕';
+  return travelerSortState_.direction==='asc'?'↑':'↓';
+}
+
+function renderTravelers(){
+  const adults = DATA.travelers.filter(function(t){
+    return t['Traveler Type'] === 'Adult';
+  });
+  const children = DATA.travelers.filter(function(t){
+    return t['Traveler Type'] === 'Child';
+  });
+
+  const headers=[
+    'Name','Type','Parent / guardian','Price cap','Cost %',
+    'Pay more?','Share room?','Group','Home'
+  ];
+
+  return `<section class="view">
+    <div class="stats">
+      ${stat(DATA.travelers.length,'Total travelers')}
+      ${stat(adults.length,'Adults')}
+      ${stat(children.length,'Children')}
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">WHO IS COMING</p>
+          <h2>Traveler roster</h2>
+          <p class="muted">Select any column heading to sort ascending or descending.</p>
+        </div>
+        <button onclick="openTravelerForm()">Add traveler</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              ${headers.map(function(header){
+                return `<th class="sortable-header"
+                  onclick="sortTravelersBy_('${escAttr(header)}')">
+                  ${esc(header)}
+                  <span>${travelerSortIcon_(header)}</span>
+                </th>`;
+              }).join('')}
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedTravelers_().map(function(t){
+              return `<tr>
+                <td data-label="Name">${esc(t.Name)}</td>
+                <td data-label="Type"><span class="pill">${esc(t['Traveler Type']||'Adult')}</span></td>
+                <td data-label="Parent / guardian">${esc(t.parentName||'—')}</td>
+                <td data-label="Price cap">${
+                  t['Traveler Type']==='Adult' && Number(t['Price Cap']||0)>0
+                    ? money(t['Price Cap'])
+                    : '—'
+                }</td>
+                <td data-label="Cost %">${
+                  t['Traveler Type']==='Adult'
+                    ? Math.round(Number(t['Cost %']||100))+'%'
+                    : '—'
+                }</td>
+                <td data-label="Pay more?">${
+                  t['Traveler Type']==='Adult'
+                    ? (String(t['Pay More']||'No')==='Yes'?'Yes':'No')
+                    : '—'
+                }</td>
+                <td data-label="Share room?">${
+                  t['Traveler Type']==='Adult'
+                    ? (
+                        String(t['Willing to Share Room']||'No')==='Yes'
+                          ? '<span class="share-room-badge">Yes</span>'
+                          : 'No'
+                      )
+                    : '—'
+                }</td>
+                <td data-label="Group">${esc(t.Group||'')}</td>
+                <td data-label="Home">${esc(t['Home Location']||'')}</td>
+                <td data-label="Actions">
+                  <button class="ghost" onclick="openTravelerForm('${t['Traveler ID']}')">Edit</button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>`;
+}
+
+function openTravelerForm(id){
+  const t = id
+    ? DATA.travelers.find(function(x){ return x['Traveler ID']===id; })
+    : {};
+  const type = t['Traveler Type'] || 'Adult';
+  const adultOptions = DATA.travelers
+    .filter(function(x){
+      return x['Traveler Type'] === 'Adult' && x['Traveler ID'] !== id;
+    })
+    .map(function(x){
+      const selected = x['Traveler ID'] === t['Parent/Guardian ID'] ? ' selected' : '';
+      return `<option value="${escAttr(x['Traveler ID'])}"${selected}>${esc(x.Name)}</option>`;
+    }).join('');
+
+  openModal(`<h2>${id?'Edit':'Add'} traveler</h2>
+    <form onsubmit="saveTravelerForm(event)" class="form-grid">
+      <input id="travelerId" type="hidden" value="${esc(t['Traveler ID']||'')}">
+      ${field('travelerName','Name',t.Name,'text',true)}
+      ${field('travelerEmail','Email',t.Email,'email')}
+      ${field('travelerGroup','Family / group',t.Group)}
+      ${field('travelerHome','Home location',t['Home Location'])}
+      <label>
+        <span>Traveler type</span>
+        <select id="travelerType" onchange="toggleTravelerParent()">
+          <option value="Adult"${type==='Adult'?' selected':''}>Adult</option>
+          <option value="Child"${type==='Child'?' selected':''}>Child</option>
+        </select>
+      </label>
+      <label id="parentGuardianField" class="${type==='Child'?'':'hidden'}">
+        <span>Parent / guardian</span>
+        <select id="parentGuardianId">
+          <option value="">Select an adult</option>
+          ${adultOptions}
+        </select>
+      </label>
+      <label id="travelerPriceCapField" class="${type==='Adult'?'':'hidden'}">
+        <span>Maximum lodging cost</span>
+        <input
+          id="travelerPriceCap"
+          type="number"
+          min="0"
+          step="0.01"
+          value="${escAttr(t['Price Cap']||'')}"
+          placeholder="No cap"
+        >
+        <small>Leave blank or 0 for no maximum.</small>
+      </label>
+      <label id="travelerCostPercentField" class="${type==='Adult'?'':'hidden'}">
+        <span>Cost %</span>
+        <input
+          id="travelerCostPercent"
+          type="number"
+          min="0"
+          max="100"
+          step="5"
+          value="${escAttr(
+            t['Cost %']===0 || t['Cost %']
+              ? t['Cost %']
+              : 100
+          )}"
+        >
+        <small>
+          100% = full share. Example: 50% counts as half of a full-paying adult
+          when the lodging cost is distributed.
+        </small>
+      </label>
+      <label id="travelerPayMoreField" class="${type==='Adult'?'':'hidden'} traveler-pay-more-field">
+        <span>Willing to pay more?</span>
+        <select id="travelerPayMore">
+          <option value="no" ${String(t['Pay More']||'No')!=='Yes'?'selected':''}>No</option>
+          <option value="yes" ${String(t['Pay More']||'No')==='Yes'?'selected':''}>Yes</option>
+        </select>
+        <small>Absorbs capped travelers' remaining balance when possible.</small>
+      </label>
+      <label id="travelerShareRoomField" class="${type==='Adult'?'':'hidden'} traveler-share-room-field">
+        <span>Room sharing</span>
+        <span class="traveler-checkbox-line">
+          <input
+            id="travelerShareRoom"
+            type="checkbox"
+            ${String(t['Willing to Share Room']||'No')==='Yes'?'checked':''}
+          >
+          <strong>I am willing to share a bedroom with other adult travelers.</strong>
+        </span>
+        <small>
+          This is a preference signal for room planning; it does not assign a room automatically.
+        </small>
+      </label>
+      ${area('travelerNotes','Notes',t.Notes)}
+
+      ${
+        id && String(id)===String(currentTravelerId||'')
+          ? `<section class="wide traveler-device-panel">
+              <p class="eyebrow">APP &amp; NOTIFICATIONS</p>
+              <h3>This device</h3>
+              <div id="travelerPwaHostStatus" class="traveler-device-status">
+                <span class="status-dot"></span>
+                <span>PWA Host: waiting for app shell…</span>
+              </div>
+
+              <div id="travelerDeviceStatus" class="traveler-device-status">
+                <span class="status-dot"></span>
+                <span>Tap the small 🔔 bell to manage notifications.</span>
+              </div>
+              <p class="muted">
+                Notifications on this device will be registered to
+                <strong>${esc(t.Name||'the selected traveler')}</strong>.
+              </p>
+              <div class="traveler-device-actions">
+                <button
+                  class="ghost"
+                  type="button"
+                  onclick="openAppSetup_()"
+                >
+                  App installation help
+                </button>
+                <button
+                  type="button"
+                  id="enableTravelerNotificationsButton"
+                  onclick="enableTravelerNotifications_()"
+                >
+                  Enable Notifications
+                </button>
+              </div>
+              <small id="travelerNotificationHelp" class="muted"></small>
+            </section>`
+          : id
+            ? `<div class="wide notice">
+                Device notifications can only be registered for the traveler
+                currently selected in <strong>Planning As</strong>.
+              </div>`
+            : ''
+      }
+
+      <div class="wide form-actions">
+        <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+        <button>Save traveler</button>
+      </div>
+    </form>`);
+
+  if(id && String(id)===String(currentTravelerId||'')){
+    setTimeout(refreshTravelerNotificationStatus_,60);
+  }
+}
+
+function toggleTravelerParent(){
+  const isChild = val('travelerType') === 'Child';
+  const field = document.getElementById('parentGuardianField');
+  if(field) field.classList.toggle('hidden', !isChild);
+
+  const capField=document.getElementById('travelerPriceCapField');
+  const costPercentField=document.getElementById('travelerCostPercentField');
+  const payMoreField=document.getElementById('travelerPayMoreField');
+  const shareRoomField=document.getElementById('travelerShareRoomField');
+
+  if(capField) capField.classList.toggle('hidden', isChild);
+  if(costPercentField) costPercentField.classList.toggle('hidden', isChild);
+  if(payMoreField) payMoreField.classList.toggle('hidden', isChild);
+  if(shareRoomField) shareRoomField.classList.toggle('hidden', isChild);
+}
+
+function travelerOptimisticRecord_(payload){
+  const existing=payload.id
+    ? (DATA.travelers||[]).find(function(row){
+        return row['Traveler ID']===payload.id;
+      })
+    : null;
+
+  const travelerId=payload.id || ('LOCAL-TRAV-'+Date.now());
+
+  const parent=(DATA.travelers||[]).find(function(row){
+    return row['Traveler ID']===payload.parentGuardianId;
+  });
+
+  return Object.assign({},existing||{},{
+    'Traveler ID':travelerId,
+    'Name':payload.name,
+    'Email':payload.email,
+    'Group':payload.group,
+    'Traveler Type':payload.travelerType,
+    'Parent/Guardian ID':payload.parentGuardianId,
+    'Adults':payload.travelerType==='Adult'?1:0,
+    'Children':payload.travelerType==='Child'?1:0,
+    'Price Cap':payload.travelerType==='Adult'
+      ? Number(payload.priceCap||0)
+      : 0,
+    'Cost %':payload.travelerType==='Adult'
+      ? Number(payload.costPercent===undefined?100:payload.costPercent)
+      : 0,
+    'Pay More':payload.travelerType==='Adult' && payload.payMore
+      ? 'Yes'
+      : 'No',
+    'Willing to Share Room':payload.travelerType==='Adult' && payload.shareRoom
+      ? 'Yes'
+      : 'No',
+    'Home Location':payload.homeLocation,
+    'Notes':payload.notes,
+    'Active':'Yes',
+    parentName:parent ? parent.Name : ''
+  });
+}
+
+function saveTravelerForm(e){
+  e.preventDefault();
+
+  const travelerType=val('travelerType');
+  const parentGuardianId=
+    travelerType==='Child'
+      ? val('parentGuardianId')
+      : '';
+
+  if(travelerType==='Child' && !parentGuardianId){
+    toast('Select the adult responsible for this child.',true);
+    return;
+  }
+
+  const payload={
+    id:val('travelerId'),
+    name:val('travelerName').trim(),
+    email:val('travelerEmail').trim(),
+    group:val('travelerGroup').trim(),
+    homeLocation:val('travelerHome').trim(),
+    travelerType:travelerType,
+    parentGuardianId:parentGuardianId,
+    priceCap:travelerType==='Adult'
+      ? Number(val('travelerPriceCap')||0)
+      : 0,
+    costPercent:travelerType==='Adult'
+      ? Number(val('travelerCostPercent')||0)
+      : 0,
+    payMore:
+      travelerType==='Adult' &&
+      val('travelerPayMore')==='yes',
+    shareRoom:
+      travelerType==='Adult' &&
+      Boolean(document.getElementById('travelerShareRoom')?.checked),
+    notes:val('travelerNotes').trim()
+  };
+
+  if(!payload.name){
+    toast('Traveler name is required.',true);
+    return;
+  }
+
+  const previous=(DATA.travelers||[]).map(function(row){
+    return Object.assign({},row);
+  });
+
+  const optimistic=travelerOptimisticRecord_(payload);
+  const localId=optimistic['Traveler ID'];
+
+  const existingIndex=(DATA.travelers||[]).findIndex(function(row){
+    return row['Traveler ID']===payload.id;
+  });
+
+  if(existingIndex>=0){
+    DATA.travelers[existingIndex]=optimistic;
+  }else{
+    DATA.travelers.push(optimistic);
+  }
+
+  closeModal();
+  hydrateHeader();
+  render();
+  toast('Traveler saved. Syncing in the background…');
+
+  google.script.run
+    .withSuccessHandler(function(saved){
+      const index=(DATA.travelers||[]).findIndex(function(row){
+        return row['Traveler ID']===localId ||
+          row['Traveler ID']===saved['Traveler ID'];
+      });
+
+      if(index>=0){
+        DATA.travelers[index]=saved;
+      }else{
+        DATA.travelers.push(saved);
+      }
+
+      if(currentTravelerId===localId){
+        currentTravelerId=saved['Traveler ID'];
+        localStorage.setItem('vacationTravelerId',currentTravelerId);
+
+        const savedDefault=
+          savedDeviceTravelerProfile_ &&
+          String(savedDeviceTravelerProfile_.travelerId||'')===
+            String(localId||'');
+
+        if(savedDefault){
+          commitDeviceTravelerProfile_(saved);
+        }
+      }
+
+      hydrateHeader();
+      render();
+      toast('Traveler changes synced.');
+    })
+    .withFailureHandler(function(error){
+      DATA.travelers=previous;
+
+      if(currentTravelerId===localId){
+        currentTravelerId='';
+        localStorage.removeItem('vacationTravelerId');
+      }
+
+      hydrateHeader();
+      render();
+
+      toast(
+        'Traveler could not be saved: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .saveTraveler(payload);
+}
+
+</script>

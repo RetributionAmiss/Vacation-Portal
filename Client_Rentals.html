@@ -1,0 +1,3031 @@
+<script>
+function includedBudgetExtras_(){
+  return (DATA.budget||[]).filter(function(item){
+    return String(item['Include in Rental Split']||'No')==='Yes' &&
+      Number(item.Amount||0)>0;
+  });
+}
+
+function includedBudgetExtrasTotal_(){
+  return includedBudgetExtras_().reduce(function(total,item){
+    return total+Number(item.Amount||0);
+  },0);
+}
+
+function rentalCostBasis_(cabin){
+  return Number(cabin&&cabin['Total Rental Cost']||0) +
+    includedBudgetExtrasTotal_();
+}
+
+function renderIncludedExtras_(cabin){
+  const extras=includedBudgetExtrasTotal_();
+  const rental=Number(cabin&&cabin['Total Rental Cost']||0);
+
+  if(!extras || !rental) return '';
+
+  return `<div class="included-budget-cost">
+    <span>Rental + shared extras</span>
+    <strong>${money(rentalCostBasis_(cabin))}</strong>
+    <small>${money(rental)} rental + ${money(extras)} included budget extras</small>
+  </div>`;
+}
+
+function activeAdultTravelers_(){
+  return (DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no' &&
+      String(traveler['Traveler Type']||'Adult')==='Adult';
+  });
+}
+
+function travelerPriceCap_(traveler){
+  return Math.max(0,Number(traveler&&traveler['Price Cap']||0));
+}
+
+function travelerWillPayMore_(traveler){
+  return String(traveler&&traveler['Pay More']||'No')==='Yes';
+}
+
+function travelerCostPercent_(traveler){
+  if(!traveler) return 100;
+
+  const raw=traveler['Cost %'];
+
+  if(raw==='' || raw===null || raw===undefined){
+    return 100;
+  }
+
+  const value=Number(raw);
+
+  if(!isFinite(value)) return 100;
+
+  return Math.max(0,Math.min(100,value));
+}
+
+function travelerCostWeight_(traveler){
+  return travelerCostPercent_(traveler)/100;
+}
+
+function pricingTotal_(cabin,includeExtras){
+  const rental=Number(cabin&&cabin['Total Rental Cost']||0);
+
+  return rental + (
+    includeExtras
+      ? includedBudgetExtrasTotal_()
+      : 0
+  );
+}
+
+function redistributeCappedCosts_(baseRows,totalCost){
+  const epsilon=.005;
+  const rows=baseRows.map(function(row){
+    const traveler=row.traveler;
+    const cap=travelerPriceCap_(traveler);
+    const base=Math.max(0,Number(row.base||0));
+    const capped=cap>0 && base>cap;
+
+    return {
+      travelerId:traveler['Traveler ID'],
+      travelerName:traveler.Name||'Traveler',
+      traveler:traveler,
+      base:base,
+      cap:cap,
+      payMore:travelerWillPayMore_(traveler),
+      costPercent:travelerCostPercent_(traveler),
+      amount:capped?cap:base,
+      capped:capped,
+      extra:0
+    };
+  });
+
+  let remainder=Math.max(
+    0,
+    Number(totalCost||0)-
+      rows.reduce(function(sum,row){return sum+row.amount;},0)
+  );
+
+  // Repeatedly spread the remainder across willing travelers who still
+  // have capacity under their own cap. A cap of 0 means unlimited.
+  let safety=0;
+  while(remainder>epsilon && safety<50){
+    safety++;
+
+    const eligible=rows.filter(function(row){
+      if(!row.payMore) return false;
+
+      if(row.cap<=0) return true;
+      return row.amount<row.cap-epsilon;
+    });
+
+    if(!eligible.length) break;
+
+    const equalExtra=remainder/eligible.length;
+    let distributed=0;
+
+    eligible.forEach(function(row){
+      const capacity=row.cap>0
+        ? Math.max(0,row.cap-row.amount)
+        : equalExtra;
+
+      const add=row.cap>0
+        ? Math.min(equalExtra,capacity)
+        : equalExtra;
+
+      row.amount+=add;
+      row.extra+=add;
+      distributed+=add;
+    });
+
+    if(distributed<=epsilon) break;
+    remainder=Math.max(0,remainder-distributed);
+  }
+
+  return {
+    rows:rows,
+    unresolved:remainder,
+    total:Number(totalCost||0),
+    covered:Number(totalCost||0)-remainder
+  };
+}
+
+function cappedAdultSplit_(cabin,totalOverride){
+  const adults=activeAdultTravelers_();
+  const total=
+    totalOverride===undefined
+      ? rentalCostBasis_(cabin)
+      : Number(totalOverride||0);
+
+  if(!adults.length || !total){
+    return {rows:[],unresolved:0,total:total,covered:0};
+  }
+
+  let totalWeight=adults.reduce(function(sum,traveler){
+    return sum+travelerCostWeight_(traveler);
+  },0);
+
+  // Prevent an accidental all-zero configuration from making the split unusable.
+  if(totalWeight<=0){
+    totalWeight=adults.length;
+  }
+
+  const unit=total/totalWeight;
+
+  return redistributeCappedCosts_(
+    adults.map(function(traveler){
+      const weight=travelerCostWeight_(traveler);
+
+      return {
+        traveler:traveler,
+        base:
+          totalWeight===adults.length && weight===0
+            ? unit
+            : unit*weight
+      };
+    }),
+    total
+  );
+}
+
+function cappedBedroomSplit_(cabin,totalOverride){
+  const adults=activeAdultTravelers_();
+  const total=
+    totalOverride===undefined
+      ? rentalCostBasis_(cabin)
+      : Number(totalOverride||0);
+
+  const bedrooms=(cabin&&cabin.bedrooms||[]);
+  const bedroomCount=bedrooms.length || Number(cabin&&cabin.Bedrooms||0);
+
+  if(!adults.length || !total || !bedroomCount){
+    return {rows:[],unresolved:total||0,total:total,covered:0};
+  }
+
+  const roomShare=total/bedroomCount;
+  const assignments=(DATA.assignments||[]).filter(function(a){
+    return a['Cabin ID']===cabin['Cabin ID'];
+  });
+
+  const adultAssignmentMap={};
+
+  assignments.forEach(function(a){
+    const traveler=adults.find(function(t){
+      return t['Traveler ID']===a['Traveler ID'];
+    });
+
+    if(traveler){
+      adultAssignmentMap[a['Traveler ID']]=a['Bedroom ID'];
+    }
+  });
+
+  const baseByTraveler={};
+
+  adults.forEach(function(traveler){
+    baseByTraveler[traveler['Traveler ID']]=0;
+  });
+
+  const bedroomIds=bedrooms.length
+    ? bedrooms.map(function(room){return room['Bedroom ID'];})
+    : Array.from({length:bedroomCount},function(_,i){return 'ROOM-'+i;});
+
+  bedroomIds.forEach(function(bedroomId){
+    const roomAdults=adults.filter(function(traveler){
+      return adultAssignmentMap[traveler['Traveler ID']]===bedroomId;
+    });
+
+    if(!roomAdults.length) return;
+
+    let roomWeight=roomAdults.reduce(function(sum,traveler){
+      return sum+travelerCostWeight_(traveler);
+    },0);
+
+    if(roomWeight<=0){
+      roomWeight=roomAdults.length;
+    }
+
+    roomAdults.forEach(function(traveler){
+      const weight=travelerCostWeight_(traveler);
+
+      baseByTraveler[traveler['Traveler ID']]+=
+        roomShare*(
+          roomWeight===roomAdults.length && weight===0
+            ? 1/roomAdults.length
+            : weight/roomWeight
+        );
+    });
+  });
+
+  // Adults with no room assignment start at $0. Empty rooms create an
+  // uncovered balance which can be absorbed by Pay More travelers.
+  return redistributeCappedCosts_(
+    adults.map(function(traveler){
+      return {
+        traveler:traveler,
+        base:Number(baseByTraveler[traveler['Traveler ID']]||0)
+      };
+    }),
+    total
+  );
+}
+
+function travelerAdjustedCost_(cabin,mode,travelerId){
+  const result=mode==='bedroom'
+    ? cappedBedroomSplit_(cabin)
+    : cappedAdultSplit_(cabin);
+
+  const row=result.rows.find(function(item){
+    return item.travelerId===travelerId;
+  });
+
+  return row ? Number(row.amount||0) : 0;
+}
+
+function capPricingConfigured_(){
+  return activeAdultTravelers_().some(function(traveler){
+    return travelerPriceCap_(traveler)>0 ||
+      travelerWillPayMore_(traveler) ||
+      travelerCostPercent_(traveler)!==100;
+  });
+}
+
+function capPricingSummary_(cabin){
+  const adultResult=cappedAdultSplit_(cabin);
+  const bedroomResult=cappedBedroomSplit_(cabin);
+
+  return {
+    cappedAdults:adultResult.rows.filter(function(row){
+      return row.capped;
+    }).length,
+    payMoreAdults:adultResult.rows.filter(function(row){
+      return row.payMore;
+    }).length,
+    adultUnresolved:Number(adultResult.unresolved||0),
+    bedroomUnresolved:Number(bedroomResult.unresolved||0)
+  };
+}
+
+function renderCapAdjustedCost_(cabin){
+  if(!currentTravelerId || !capPricingConfigured_()) return '';
+
+  const adultResult=cappedAdultSplit_(cabin);
+  const bedroomResult=cappedBedroomSplit_(cabin);
+
+  const adultRow=adultResult.rows.find(function(row){
+    return row.travelerId===currentTravelerId;
+  });
+
+  const bedroomRow=bedroomResult.rows.find(function(row){
+    return row.travelerId===currentTravelerId;
+  });
+
+  if(!adultRow && !bedroomRow) return '';
+
+  const traveler=travelerById_(currentTravelerId);
+  const cap=travelerPriceCap_(traveler);
+  const summary=capPricingSummary_(cabin);
+
+  return `<div class="cap-adjusted-cost cap-adjusted-cost-visible">
+    <div class="cap-adjusted-title">
+      <span>Price caps applied</span>
+      <button
+        class="ghost tiny"
+        type="button"
+        onclick="openCapPricingBreakdown_('${cabin['Cabin ID']}')"
+      >View full split</button>
+    </div>
+
+    <div class="cap-adjusted-grid">
+      ${
+        adultRow
+          ? `<div>
+              <small>Equal adult base</small>
+              <strong>${money(adultRow.base)}</strong>
+            </div>
+            <div>
+              <small>Your adjusted adult cost</small>
+              <strong>${money(adultRow.amount)}</strong>
+            </div>`
+          : ''
+      }
+
+      ${
+        bedroomRow && bedroomRow.base>0
+          ? `<div>
+              <small>Your bedroom base</small>
+              <strong>${money(bedroomRow.base)}</strong>
+            </div>
+            <div>
+              <small>Your adjusted bedroom cost</small>
+              <strong>${money(bedroomRow.amount)}</strong>
+            </div>`
+          : ''
+      }
+    </div>
+
+    <div class="cap-adjusted-flags">
+      ${
+        cap>0
+          ? `<span>Max: ${money(cap)}</span>`
+          : '<span>No personal cap</span>'
+      }
+      ${
+        travelerWillPayMore_(traveler)
+          ? '<span class="pay-more-flag">Willing to Pay More</span>'
+          : ''
+      }
+      ${
+        summary.cappedAdults
+          ? `<span>${summary.cappedAdults} traveler${summary.cappedAdults===1?'':'s'} capped</span>`
+          : ''
+      }
+    </div>
+
+    ${
+      adultRow.capped || (bedroomRow&&bedroomRow.capped)
+        ? '<em>Your maximum lodging cost is actively limiting this split.</em>'
+        : adultRow.extra>0 || (bedroomRow&&bedroomRow.extra>0)
+          ? `<em>You are absorbing ${
+              money(Math.max(adultRow.extra||0,bedroomRow?bedroomRow.extra||0:0))
+            } of redistributed cost.</em>`
+          : ''
+    }
+
+    ${
+      summary.adultUnresolved>.01
+        ? `<div class="cap-unresolved-warning">
+            ${money(summary.adultUnresolved)} remains uncovered in the adult split.
+          </div>`
+        : ''
+    }
+  </div>`;
+}
+
+function capSplitRowHtml_(row,mode,cabin){
+  const assigned=mode==='Bedroom'
+    ? assignedBedroomForTraveler_(cabin['Cabin ID'],row.travelerId)
+    : null;
+
+  const roomName=
+    assigned&&assigned.bedroom
+      ? assigned.bedroom['Bedroom Name']
+      : '';
+
+  return `<div class="cap-split-row ${
+    row.capped?'capped':''
+  } ${row.extra>0?'paying-extra':''}">
+    <div>
+      <strong>${esc(row.travelerName)}</strong>
+      ${
+        roomName
+          ? `<span>${esc(roomName)}</span>`
+          : ''
+      }
+      <small>
+        Base ${money(row.base)}
+        · ${row.cap>0?'Cap '+money(row.cap):'No cap'}
+        ${row.payMore?' · Pay More':''}
+      </small>
+    </div>
+    <div class="cap-split-amount">
+      <strong>${money(row.amount)}</strong>
+      ${
+        row.capped
+          ? '<small>Cap applied</small>'
+          : row.extra>0
+            ? `<small>+${money(row.extra)} redistributed</small>`
+            : '<small>Standard share</small>'
+      }
+    </div>
+  </div>`;
+}
+
+function openCapPricingBreakdown_(cabinId){
+  const cabin=(DATA.cabins||[]).find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  if(!cabin){
+    toast('Rental could not be found.',true);
+    return;
+  }
+
+  const adultResult=cappedAdultSplit_(cabin);
+  const bedroomResult=cappedBedroomSplit_(cabin);
+  const extras=includedBudgetExtrasTotal_();
+
+  openModal(`<div class="cap-pricing-modal">
+    <p class="eyebrow">COST SPLIT</p>
+    <h2>${esc(displayName(cabin))}</h2>
+
+    <div class="cap-pricing-basis">
+      <div>
+        <span>Rental</span>
+        <strong>${money(cabin['Total Rental Cost']||0)}</strong>
+      </div>
+      <div>
+        <span>Included extras</span>
+        <strong>${money(extras)}</strong>
+      </div>
+      <div>
+        <span>Split total</span>
+        <strong>${money(rentalCostBasis_(cabin))}</strong>
+      </div>
+    </div>
+
+    <section class="cap-split-section">
+      <div class="cap-split-heading">
+        <div>
+          <h3>Adult split with caps</h3>
+          <p class="muted">
+            Equal adult share first, then caps and Pay More redistribution.
+          </p>
+        </div>
+        ${
+          adultResult.unresolved>.01
+            ? `<span class="cap-balance-badge warning">
+                ${money(adultResult.unresolved)} uncovered
+              </span>`
+            : '<span class="cap-balance-badge">Fully covered</span>'
+        }
+      </div>
+
+      <div class="cap-split-list">
+        ${adultResult.rows
+          .slice()
+          .sort(function(a,b){
+            return String(a.travelerName).localeCompare(String(b.travelerName));
+          })
+          .map(function(row){
+            return capSplitRowHtml_(row,'Adult',cabin);
+          }).join('')}
+      </div>
+    </section>
+
+    <section class="cap-split-section">
+      <div class="cap-split-heading">
+        <div>
+          <h3>Bedroom split with caps</h3>
+          <p class="muted">
+            Bedroom share is split among assigned adults, then caps and Pay More are applied.
+          </p>
+        </div>
+        ${
+          bedroomResult.unresolved>.01
+            ? `<span class="cap-balance-badge warning">
+                ${money(bedroomResult.unresolved)} uncovered
+              </span>`
+            : '<span class="cap-balance-badge">Fully covered</span>'
+        }
+      </div>
+
+      ${
+        (DATA.assignments||[]).some(function(a){
+          return a['Cabin ID']===cabinId;
+        })
+          ? `<div class="cap-split-list">
+              ${bedroomResult.rows
+                .slice()
+                .sort(function(a,b){
+                  return String(a.travelerName).localeCompare(String(b.travelerName));
+                })
+                .map(function(row){
+                  return capSplitRowHtml_(row,'Bedroom',cabin);
+                }).join('')}
+            </div>`
+          : `<div class="notice">
+              Assign travelers to bedrooms to calculate the bedroom-based capped split.
+            </div>`
+      }
+    </section>
+  </div>`);
+}
+
+
+function adultTravelerCount_(){
+  return (DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no' &&
+      String(traveler['Traveler Type']||'Adult')==='Adult';
+  }).length;
+}
+
+function perAdultTravelerCost_(cabin){
+  const adults=adultTravelerCount_();
+  const total=rentalCostBasis_(cabin);
+
+  return adults>0 && total>0 ? total/adults : 0;
+}
+
+function renderPerAdultCost_(cabin){
+  const adults=adultTravelerCount_();
+  const cost=perAdultTravelerCost_(cabin);
+
+  if(!cost) return '';
+
+  return `<div class="per-adult-cost">
+    <span>Per adult traveler</span>
+    <strong>${money(cost)}</strong>
+    <small>Total trip cost ÷ ${adults} adult${adults===1?'':'s'}</small>
+  </div>`;
+}
+
+
+function bedroomCountForPricing_(cabin){
+  const detailed=(cabin.bedrooms||[]).length;
+  const stated=Number(cabin.Bedrooms||0);
+
+  return detailed>0 ? detailed : stated;
+}
+
+function perBedroomCost_(cabin){
+  const bedrooms=bedroomCountForPricing_(cabin);
+  const total=rentalCostBasis_(cabin);
+
+  return bedrooms>0 && total>0 ? total/bedrooms : 0;
+}
+
+function bedroomAdultOccupancySummary_(cabin){
+  const bedrooms=(cabin&&cabin.bedrooms||[]);
+  if(!bedrooms.length) return null;
+
+  const assignments=(DATA.assignments||[]).filter(function(assignment){
+    return assignment['Cabin ID']===cabin['Cabin ID'];
+  });
+
+  if(!assignments.length) return null;
+
+  const counts={};
+  let occupiedBedrooms=0;
+  let unoccupiedBedrooms=0;
+
+  bedrooms.forEach(function(room){
+    const adultCount=assignments.filter(function(assignment){
+      if(assignment['Bedroom ID']!==room['Bedroom ID']) return false;
+
+      const traveler=(DATA.travelers||[]).find(function(item){
+        return item['Traveler ID']===assignment['Traveler ID'];
+      });
+
+      return traveler &&
+        String(traveler.Active||'Yes').toLowerCase()!=='no' &&
+        String(traveler['Traveler Type']||'Adult')==='Adult';
+    }).length;
+
+    if(adultCount>0){
+      occupiedBedrooms++;
+      counts[adultCount]=(counts[adultCount]||0)+1;
+    }else{
+      unoccupiedBedrooms++;
+    }
+  });
+
+  if(!occupiedBedrooms) return null;
+
+  return {
+    counts:counts,
+    occupiedBedrooms:occupiedBedrooms,
+    unoccupiedBedrooms:unoccupiedBedrooms,
+    totalBedrooms:bedrooms.length
+  };
+}
+
+function bedroomOccupancyPricingText_(cabin){
+  const summary=bedroomAdultOccupancySummary_(cabin);
+  const bedroomCost=perBedroomCost_(cabin);
+
+  if(!summary || !bedroomCost) return '';
+
+  return Object.keys(summary.counts)
+    .map(Number)
+    .sort(function(a,b){return a-b;})
+    .map(function(adultCount){
+      const roomCount=summary.counts[adultCount];
+
+      return roomCount+
+        ' bedroom'+(roomCount===1?'':'s')+
+        ' @ '+adultCount+
+        ' adult'+(adultCount===1?'':'s')+
+        ' · '+money(bedroomCost/adultCount)+' each';
+    })
+    .join(' | ');
+}
+
+function renderBedroomCost_(cabin){
+  const bedrooms=bedroomCountForPricing_(cabin);
+  const bedroomCost=perBedroomCost_(cabin);
+  const occupancy=bedroomAdultOccupancySummary_(cabin);
+
+  if(!bedroomCost) return '';
+
+  return `<div class="bedroom-cost">
+    <span>Per bedroom</span>
+    <strong>${money(bedroomCost)}</strong>
+    <small>
+      Total trip cost ÷ ${bedrooms} bedroom${bedrooms===1?'':'s'}
+    </small>
+
+    ${
+      occupancy
+        ? `<div class="bedroom-occupancy-pricing">
+            <div class="bedroom-occupancy-heading">
+              <strong>Based on current room assignments</strong>
+              <span>
+                ${occupancy.occupiedBedrooms} of ${occupancy.totalBedrooms}
+                bedroom${occupancy.totalBedrooms===1?'':'s'} have paying adults assigned
+              </span>
+            </div>
+
+            <div class="bedroom-occupancy-groups">
+              ${Object.keys(occupancy.counts)
+                .map(Number)
+                .sort(function(a,b){return a-b;})
+                .map(function(adultCount){
+                  const roomCount=occupancy.counts[adultCount];
+                  const each=bedroomCost/adultCount;
+
+                  return `<div class="bedroom-occupancy-group">
+                    <strong>
+                      ${roomCount} bedroom${roomCount===1?'':'s'}
+                    </strong>
+                    <span>
+                      @ ${adultCount} adult${adultCount===1?'':'s'}
+                    </span>
+                    <em>${money(each)} per adult</em>
+                  </div>`;
+                }).join('')}
+            </div>
+
+            ${
+              occupancy.unoccupiedBedrooms>0
+                ? `<small class="bedroom-unassigned-note">
+                    ${occupancy.unoccupiedBedrooms}
+                    bedroom${occupancy.unoccupiedBedrooms===1?'':'s'}
+                    currently ${
+                      occupancy.unoccupiedBedrooms===1?'has':'have'
+                    } no paying adult assigned.
+                  </small>`
+                : ''
+            }
+          </div>`
+        : `<div class="bedroom-sharing-examples">
+            <span>1 adult: <strong>${money(bedroomCost)} each</strong></span>
+            <span>2 adults sharing: <strong>${money(bedroomCost/2)} each</strong></span>
+            <span>3 adults sharing: <strong>${money(bedroomCost/3)} each</strong></span>
+            <span>4 adults sharing: <strong>${money(bedroomCost/4)} each</strong></span>
+          </div>`
+    }
+  </div>`;
+}
+
+function travelerById_(travelerId){
+  return (DATA.travelers||[]).find(function(traveler){
+    return traveler['Traveler ID']===travelerId;
+  })||null;
+}
+
+function travelerIsAdult_(travelerId){
+  const traveler=travelerById_(travelerId);
+  return Boolean(
+    traveler &&
+    String(traveler.Active||'Yes').toLowerCase()!=='no' &&
+    String(traveler['Traveler Type']||'Adult')==='Adult'
+  );
+}
+
+function cabinBedroomAssignments_(cabinId){
+  return (DATA.assignments||[]).filter(function(assignment){
+    return assignment['Cabin ID']===cabinId;
+  });
+}
+
+function assignedBedroomForTraveler_(cabinId,travelerId){
+  const assignment=cabinBedroomAssignments_(cabinId).find(function(item){
+    return item['Traveler ID']===travelerId;
+  });
+
+  if(!assignment) return null;
+
+  const cabin=(DATA.cabins||[]).find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  const bedroom=cabin && (cabin.bedrooms||[]).find(function(room){
+    return room['Bedroom ID']===assignment['Bedroom ID'];
+  });
+
+  return {
+    assignment:assignment,
+    bedroom:bedroom||null
+  };
+}
+
+function assignedAdultCountForBedroom_(cabinId,bedroomId){
+  return cabinBedroomAssignments_(cabinId).filter(function(assignment){
+    return assignment['Bedroom ID']===bedroomId &&
+      travelerIsAdult_(assignment['Traveler ID']);
+  }).length;
+}
+
+function assignedTravelerCost_(cabin,travelerId){
+  if(!cabin || !travelerId) return 0;
+  if(!travelerIsAdult_(travelerId)) return 0;
+
+  const assigned=assignedBedroomForTraveler_(
+    cabin['Cabin ID'],
+    travelerId
+  );
+
+  if(!assigned || !assigned.assignment) return 0;
+
+  const bedroomId=assigned.assignment['Bedroom ID'];
+  const adultsSharing=assignedAdultCountForBedroom_(
+    cabin['Cabin ID'],
+    bedroomId
+  );
+
+  const roomShare=perBedroomCost_(cabin);
+
+  return roomShare>0 && adultsSharing>0
+    ? roomShare/adultsSharing
+    : 0;
+}
+
+function assignedTravelerCostSummary_(cabin){
+  const assignments=cabinBedroomAssignments_(cabin['Cabin ID']);
+  if(!assignments.length) return null;
+
+  const adults=assignments.filter(function(assignment){
+    return travelerIsAdult_(assignment['Traveler ID']);
+  });
+
+  if(!adults.length) return null;
+
+  const rows=adults.map(function(assignment){
+    const traveler=travelerById_(assignment['Traveler ID']);
+    const bedroom=(cabin.bedrooms||[]).find(function(room){
+      return room['Bedroom ID']===assignment['Bedroom ID'];
+    })||null;
+
+    const adultsSharing=assignedAdultCountForBedroom_(
+      cabin['Cabin ID'],
+      assignment['Bedroom ID']
+    );
+
+    const roomShare=perBedroomCost_(cabin);
+    const amount=adultsSharing>0 ? roomShare/adultsSharing : 0;
+
+    return {
+      travelerId:assignment['Traveler ID'],
+      travelerName:traveler ? traveler.Name : assignment['Traveler ID'],
+      bedroomName:bedroom ? bedroom['Bedroom Name'] : 'Assigned bedroom',
+      adultsSharing:adultsSharing,
+      amount:amount
+    };
+  });
+
+  return {
+    rows:rows,
+    assignedAdults:rows.length,
+    totalAssignedCost:rows.reduce(function(total,row){
+      return total+Number(row.amount||0);
+    },0)
+  };
+}
+
+function renderMyAssignedCost_(cabin){
+  if(!currentTravelerId) return '';
+
+  const assigned=assignedBedroomForTraveler_(
+    cabin['Cabin ID'],
+    currentTravelerId
+  );
+
+  if(!assigned) return '';
+
+  const traveler=travelerById_(currentTravelerId);
+  const isAdult=travelerIsAdult_(currentTravelerId);
+  const bedroomName=assigned.bedroom
+    ? assigned.bedroom['Bedroom Name']
+    : 'Assigned bedroom';
+
+  if(!isAdult){
+    return `<div class="my-assigned-cost child">
+      <span>Your assigned room</span>
+      <strong>${esc(bedroomName)}</strong>
+      <small>Child traveler — no lodging share calculated.</small>
+    </div>`;
+  }
+
+  const adultsSharing=assignedAdultCountForBedroom_(
+    cabin['Cabin ID'],
+    assigned.assignment['Bedroom ID']
+  );
+
+  const amount=assignedTravelerCost_(cabin,currentTravelerId);
+
+  if(!amount) return '';
+
+  return `<div class="my-assigned-cost">
+    <span>Your assigned room cost</span>
+    <strong>${money(amount)}</strong>
+    <small>
+      ${esc(bedroomName)} · ${adultsSharing} paying adult${adultsSharing===1?'':'s'} sharing
+    </small>
+  </div>`;
+}
+
+function finalistCabinIds_(){
+  return String(DATA.trip['Finalist Cabin IDs']||'')
+    .split('|')
+    .map(function(value){return value.trim();})
+    .filter(Boolean);
+}
+
+function isFinalVotingStage_(){
+  return DATA.trip['Portal Stage']==='Final Voting' ||
+    DATA.trip['Portal Stage']==='Voting Closed';
+}
+
+function finalVotingIsClosed_(){
+  return DATA.trip['Portal Stage']==='Voting Closed' ||
+    String(DATA.trip['Final Voting Closed']||'No').toLowerCase()==='yes';
+}
+
+const rentalPricingUiState_={};
+
+function rentalPricingState_(cabinId){
+  if(!rentalPricingUiState_[cabinId]){
+    rentalPricingUiState_[cabinId]={
+      mode:'adult',
+      includeExtras:true,
+      showSharing:false,
+      showAssignments:false
+    };
+  }
+
+  return rentalPricingUiState_[cabinId];
+}
+
+function updateRentalPricingOption_(cabinId,key,value){
+  const state=rentalPricingState_(cabinId);
+
+  if(key==='mode') state.mode=value;
+  else state[key]=Boolean(value);
+
+  const cabin=(DATA.cabins||[]).find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  const container=document.getElementById('pricing-'+cabinId);
+
+  if(cabin&&container){
+    container.outerHTML=renderRentalPricingConsole_(cabin);
+  }
+}
+
+function rentalPricingPrimary_(cabin,state){
+  const total=pricingTotal_(cabin,state.includeExtras);
+
+  if(state.mode==='total'){
+    return {
+      label:state.includeExtras?'Trip total + shared extras':'Rental trip total',
+      value:total,
+      note:state.includeExtras && includedBudgetExtrasTotal_()
+        ? money(Number(cabin['Total Rental Cost']||0))+' rental + '+
+          money(includedBudgetExtrasTotal_())+' shared extras'
+        : 'Rental lodging total'
+    };
+  }
+
+  if(state.mode==='bedroom'){
+    const result=cappedBedroomSplit_(cabin,total);
+    const row=result.rows.find(function(item){
+      return item.travelerId===currentTravelerId;
+    });
+
+    if(row&&row.base>0){
+      return {
+        label:'Your bedroom-based share',
+        value:row.amount,
+        note:
+          'Base '+money(row.base)+
+          ' · Cost '+Math.round(row.costPercent||100)+'%'+
+          (row.cap>0?' · Cap '+money(row.cap):'')
+      };
+    }
+
+    const bedrooms=bedroomCountForPricing_(cabin);
+
+    return {
+      label:'Per bedroom',
+      value:bedrooms?total/bedrooms:0,
+      note:bedrooms
+        ? 'Trip cost ÷ '+bedrooms+' bedrooms'
+        : 'Bedroom count pending'
+    };
+  }
+
+  const result=cappedAdultSplit_(cabin,total);
+  const row=result.rows.find(function(item){
+    return item.travelerId===currentTravelerId;
+  });
+
+  if(row){
+    return {
+      label:'Your adult-based share',
+      value:row.amount,
+      note:
+        'Weighted base '+money(row.base)+
+        ' · Cost '+Math.round(row.costPercent||100)+'%'+
+        (row.cap>0?' · Cap '+money(row.cap):'')
+    };
+  }
+
+  const adults=activeAdultTravelers_();
+
+  return {
+    label:'Per adult',
+    value:adults.length?total/adults.length:0,
+    note:adults.length
+      ? 'Trip cost ÷ '+adults.length+' adults'
+      : 'Adult count pending'
+  };
+}
+
+function rentalBedroomSharingBreakout_(cabin,total){
+  const bedrooms=(cabin.bedrooms||[]);
+  const result=cappedBedroomSplit_(cabin,total);
+
+  if(!bedrooms.length){
+    return '<div class="pricing-breakout-empty">Bedroom details are not available yet.</div>';
+  }
+
+  const rows=bedrooms.map(function(room){
+    const assigned=(DATA.assignments||[]).filter(function(a){
+      return a['Cabin ID']===cabin['Cabin ID'] &&
+        a['Bedroom ID']===room['Bedroom ID'];
+    });
+
+    const adultRows=assigned.map(function(a){
+      return result.rows.find(function(row){
+        return row.travelerId===a['Traveler ID'];
+      });
+    }).filter(Boolean);
+
+    if(!adultRows.length) return '';
+
+    return `<div class="pricing-room-row">
+      <strong>${esc(room['Bedroom Name']||'Bedroom')}</strong>
+      <span>
+        ${adultRows.map(function(row){
+          return esc(row.travelerName)+' '+money(row.amount)+
+            (row.costPercent!==100?' ('+Math.round(row.costPercent)+'%)':'');
+        }).join(' · ')}
+      </span>
+    </div>`;
+  }).filter(Boolean);
+
+  return rows.length
+    ? rows.join('')
+    : '<div class="pricing-breakout-empty">Assign adults to bedrooms to see the sharing breakout.</div>';
+}
+
+function rentalCurrentAssignmentBreakout_(cabin,total){
+  const result=cappedBedroomSplit_(cabin,total);
+
+  const rows=result.rows.filter(function(row){
+    return row.base>0;
+  });
+
+  if(!rows.length){
+    return '<div class="pricing-breakout-empty">No current adult room assignments.</div>';
+  }
+
+  return rows
+    .slice()
+    .sort(function(a,b){
+      return String(a.travelerName).localeCompare(String(b.travelerName));
+    })
+    .map(function(row){
+      const assigned=assignedBedroomForTraveler_(
+        cabin['Cabin ID'],
+        row.travelerId
+      );
+
+      return `<div class="pricing-assignment-row">
+        <span>
+          <strong>${esc(row.travelerName)}</strong>
+          <small>${
+            assigned&&assigned.bedroom
+              ? esc(assigned.bedroom['Bedroom Name'])
+              : 'Assigned room'
+          } · ${Math.round(row.costPercent||100)}%</small>
+        </span>
+        <strong>${money(row.amount)}</strong>
+      </div>`;
+    }).join('');
+}
+
+function renderRentalPricingConsole_(cabin){
+  const cabinId=cabin['Cabin ID'];
+  const state=rentalPricingState_(cabinId);
+  const total=pricingTotal_(cabin,state.includeExtras);
+  const primary=rentalPricingPrimary_(cabin,state);
+
+  return `<section id="pricing-${escAttr(cabinId)}" class="rental-pricing-console">
+    <div class="pricing-console-main">
+      <div>
+        <span>${esc(primary.label)}</span>
+        <strong>${primary.value?money(primary.value):'Price pending'}</strong>
+        <small>${esc(primary.note||'')}</small>
+      </div>
+
+      ${
+        currentTravelerId && capPricingConfigured_()
+          ? `<button class="ghost tiny"
+              type="button"
+              onclick="openCapPricingBreakdown_('${cabinId}')">
+              Full cost split
+            </button>`
+          : ''
+      }
+    </div>
+
+    <div class="pricing-toggle-row">
+      <label>
+        <input
+          type="checkbox"
+          ${state.includeExtras?'checked':''}
+          onchange="updateRentalPricingOption_('${cabinId}','includeExtras',this.checked)"
+        >
+        <span>Include shared budget extras</span>
+      </label>
+
+      <div class="pricing-mode-switch" role="group" aria-label="Price calculation">
+        ${[
+          ['total','Trip total'],
+          ['adult','Per adult'],
+          ['bedroom','Per bedroom']
+        ].map(function(option){
+          return `<button
+            type="button"
+            class="${state.mode===option[0]?'active':''}"
+            onclick="updateRentalPricingOption_('${cabinId}','mode','${option[0]}')">
+            ${option[1]}
+          </button>`;
+        }).join('')}
+      </div>
+
+      <label>
+        <input
+          type="checkbox"
+          ${state.showSharing?'checked':''}
+          onchange="updateRentalPricingOption_('${cabinId}','showSharing',this.checked)"
+        >
+        <span>Shared bedroom cost breakout</span>
+      </label>
+
+      <label>
+        <input
+          type="checkbox"
+          ${state.showAssignments?'checked':''}
+          onchange="updateRentalPricingOption_('${cabinId}','showAssignments',this.checked)"
+        >
+        <span>Current room assignment breakout</span>
+      </label>
+    </div>
+
+    ${
+      state.showSharing
+        ? `<div class="pricing-breakout">
+            <h4>Shared bedroom cost by adult</h4>
+            ${rentalBedroomSharingBreakout_(cabin,total)}
+          </div>`
+        : ''
+    }
+
+    ${
+      state.showAssignments
+        ? `<div class="pricing-breakout">
+            <h4>Current assignment costs</h4>
+            ${rentalCurrentAssignmentBreakout_(cabin,total)}
+          </div>`
+        : ''
+    }
+  </section>`;
+}
+
+function isFavoriteByMe_(cabinId){
+  return Boolean(
+    currentTravelerId &&
+    (DATA.favorites||[]).some(function(favorite){
+      return favorite['Cabin ID']===cabinId &&
+        favorite['Traveler ID']===currentTravelerId;
+    })
+  );
+}
+
+function visibleRentalCabins_(){
+  if(!isFinalVotingStage_()) return DATA.cabins||[];
+
+  const finalists=new Set(finalistCabinIds_());
+
+  return (DATA.cabins||[]).filter(function(cabin){
+    return finalists.has(cabin['Cabin ID']);
+  });
+}
+
+const RENTAL_FILTER_STORAGE_KEY_='vacationPortalRentalFiltersV432';
+
+const rentalFilterState_={
+  search:'',
+  amenity:'',
+  reviewStatus:'',
+  myRating:'0',
+  minBedrooms:'0',
+  minReviews:'0',
+  minRating:'0',
+  maxTotal:'',
+  maxNightly:'',
+  sort:'score'
+};
+
+function loadRentalFilterState_(){
+  try{
+    const saved=JSON.parse(
+      localStorage.getItem(RENTAL_FILTER_STORAGE_KEY_)||'{}'
+    );
+
+    Object.keys(rentalFilterState_).forEach(function(key){
+      if(saved[key]!==undefined && saved[key]!==null){
+        rentalFilterState_[key]=String(saved[key]);
+      }
+    });
+  }catch(error){}
+}
+
+function saveRentalFilterState_(){
+  try{
+    localStorage.setItem(
+      RENTAL_FILTER_STORAGE_KEY_,
+      JSON.stringify(rentalFilterState_)
+    );
+  }catch(error){}
+}
+
+function captureRentalFilterState_(){
+  const value=function(id,fallback){
+    const element=document.getElementById(id);
+    return element ? String(element.value||'') : fallback;
+  };
+
+  rentalFilterState_.search=
+    value('rentalSearch',rentalFilterState_.search);
+
+  rentalFilterState_.amenity=
+    value('rentalAmenityFilter',rentalFilterState_.amenity);
+
+  rentalFilterState_.reviewStatus=
+    value('rentalReviewStatus',rentalFilterState_.reviewStatus);
+
+  rentalFilterState_.myRating=
+    value('rentalMyRating',rentalFilterState_.myRating);
+
+  rentalFilterState_.minBedrooms=
+    value('rentalMinBedrooms',rentalFilterState_.minBedrooms);
+
+  rentalFilterState_.minReviews=
+    value('rentalMinReviews',rentalFilterState_.minReviews);
+
+  rentalFilterState_.minRating=
+    value('rentalMinRating',rentalFilterState_.minRating);
+
+  rentalFilterState_.maxTotal=
+    value('rentalMaxTotal',rentalFilterState_.maxTotal);
+
+  rentalFilterState_.maxNightly=
+    value('rentalMaxNightly',rentalFilterState_.maxNightly);
+
+  rentalFilterState_.sort=
+    value('rentalSort',rentalFilterState_.sort);
+
+  saveRentalFilterState_();
+}
+
+function restoreRentalFilterControls_(){
+  const setValue=function(id,value){
+    const element=document.getElementById(id);
+    if(element) element.value=String(value??'');
+  };
+
+  setValue('rentalSearch',rentalFilterState_.search);
+  setValue('rentalAmenityFilter',rentalFilterState_.amenity);
+  setValue('rentalReviewStatus',rentalFilterState_.reviewStatus);
+  setValue('rentalMyRating',rentalFilterState_.myRating);
+  setValue('rentalMinBedrooms',rentalFilterState_.minBedrooms);
+  setValue('rentalMinReviews',rentalFilterState_.minReviews);
+  setValue('rentalMinRating',rentalFilterState_.minRating);
+  setValue('rentalMaxTotal',rentalFilterState_.maxTotal);
+  setValue('rentalMaxNightly',rentalFilterState_.maxNightly);
+  setValue('rentalSort',rentalFilterState_.sort);
+}
+
+loadRentalFilterState_();
+
+function renderRentals(){
+  return `<section class="view">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">FIND THE CABIN</p>
+          <h2>Rental options</h2>
+          <p class="muted">Submit links rapidly. Core property data loads automatically first, then detailed AI enrichment finishes in the background.</p>
+        </div>
+        <button onclick="openRentalSubmit()">Add rental link</button>
+      </div>
+      <div class="toolbar rental-filter-toolbar">
+        <input
+          id="rentalSearch"
+          value="${escAttr(rentalFilterState_.search)}"
+          oninput="filterRentalCards()"
+          placeholder="Search name, location, or amenity"
+        >
+
+        <input
+          id="rentalAmenityFilter"
+          value="${escAttr(rentalFilterState_.amenity)}"
+          oninput="filterRentalCards()"
+          placeholder="Amenity: pool, hot tub, theater…"
+        >
+
+        <select id="rentalReviewStatus" onchange="filterRentalCards()">
+          <option value="" ${rentalFilterState_.reviewStatus===''?'selected':''}>Any review status</option>
+          <option value="unreviewed" ${rentalFilterState_.reviewStatus==='unreviewed'?'selected':''}>Not reviewed by me</option>
+          <option value="reviewed" ${rentalFilterState_.reviewStatus==='reviewed'?'selected':''}>Reviewed by me</option>
+        </select>
+
+        <select id="rentalMyRating" onchange="filterRentalCards()">
+          <option value="0" ${rentalFilterState_.myRating==='0'?'selected':''}>Any of my ratings</option>
+          <option value="5" ${rentalFilterState_.myRating==='5'?'selected':''}>I rated 5</option>
+          <option value="4" ${rentalFilterState_.myRating==='4'?'selected':''}>I rated 4+</option>
+          <option value="3" ${rentalFilterState_.myRating==='3'?'selected':''}>I rated 3+</option>
+          <option value="2" ${rentalFilterState_.myRating==='2'?'selected':''}>I rated 2 or less</option>
+        </select>
+
+        <select id="rentalMinBedrooms" onchange="filterRentalCards()">
+          <option value="0" ${rentalFilterState_.minBedrooms==='0'?'selected':''}>Any bedrooms</option>
+          <option value="4" ${rentalFilterState_.minBedrooms==='4'?'selected':''}>4+ bedrooms</option>
+          <option value="6" ${rentalFilterState_.minBedrooms==='6'?'selected':''}>6+ bedrooms</option>
+          <option value="8" ${rentalFilterState_.minBedrooms==='8'?'selected':''}>8+ bedrooms</option>
+          <option value="10" ${rentalFilterState_.minBedrooms==='10'?'selected':''}>10+ bedrooms</option>
+        </select>
+
+        <select id="rentalMinReviews" onchange="filterRentalCards()">
+          <option value="0" ${rentalFilterState_.minReviews==='0'?'selected':''}>Any reviews</option>
+          <option value="10" ${rentalFilterState_.minReviews==='10'?'selected':''}>10+ reviews</option>
+          <option value="25" ${rentalFilterState_.minReviews==='25'?'selected':''}>25+ reviews</option>
+          <option value="50" ${rentalFilterState_.minReviews==='50'?'selected':''}>50+ reviews</option>
+          <option value="100" ${rentalFilterState_.minReviews==='100'?'selected':''}>100+ reviews</option>
+        </select>
+
+        <select id="rentalMinRating" onchange="filterRentalCards()">
+          <option value="0" ${rentalFilterState_.minRating==='0'?'selected':''}>Any rating</option>
+          <option value="4" ${rentalFilterState_.minRating==='4'?'selected':''}>4.0+ rating</option>
+          <option value="4.5" ${rentalFilterState_.minRating==='4.5'?'selected':''}>4.5+ rating</option>
+          <option value="4.8" ${rentalFilterState_.minRating==='4.8'?'selected':''}>4.8+ rating</option>
+        </select>
+
+        <input
+          id="rentalMaxTotal"
+          type="number"
+          min="0"
+          step="100"
+          oninput="filterRentalCards()"
+          value="${escAttr(rentalFilterState_.maxTotal)}"
+          placeholder="Max trip total"
+        >
+
+        <input
+          id="rentalMaxNightly"
+          type="number"
+          min="0"
+          step="25"
+          oninput="filterRentalCards()"
+          value="${escAttr(rentalFilterState_.maxNightly)}"
+          placeholder="Max nightly"
+        >
+
+        <select id="rentalSort" onchange="sortRentals()">
+          <option value="score" ${rentalFilterState_.sort==='score'?'selected':''}>Family score</option>
+          <option value="myrating" ${rentalFilterState_.sort==='myrating'?'selected':''}>My highest ratings</option>
+          <option value="reviewprogress" ${rentalFilterState_.sort==='reviewprogress'?'selected':''}>Most family reviews</option>
+          <option value="favorites" ${rentalFilterState_.sort==='favorites'?'selected':''}>Most favorites</option>
+          <option value="comments" ${rentalFilterState_.sort==='comments'?'selected':''}>Most comments</option>
+          <option value="price" ${rentalFilterState_.sort==='price'?'selected':''}>Lowest trip price</option>
+          <option value="nightly" ${rentalFilterState_.sort==='nightly'?'selected':''}>Lowest nightly</option>
+          <option value="reviews" ${rentalFilterState_.sort==='reviews'?'selected':''}>Most reviewed</option>
+          <option value="rating" ${rentalFilterState_.sort==='rating'?'selected':''}>Highest rating</option>
+          <option value="bedrooms" ${rentalFilterState_.sort==='bedrooms'?'selected':''}>Most bedrooms</option>
+          <option value="sleeps" ${rentalFilterState_.sort==='sleeps'?'selected':''}>Sleeps most</option>
+          <option value="newest" ${rentalFilterState_.sort==='newest'?'selected':''}>Newest</option>
+        </select>
+
+        <button class="ghost" type="button" onclick="resetRentalFilters()">
+          Clear filters
+        </button>
+      </div>
+
+      <div class="filter-summary">
+        <span id="rentalVisibleCount">${visibleRentalCabins_().length} rentals shown</span>
+        <span class="muted">
+          Browser extension captures now update an existing URL-imported cabin
+          instead of being rejected as a duplicate.
+        </span>
+      </div>
+      ${renderFinalVotingBanner_()}
+      ${isFinalVotingStage_()?'':renderTopPicks_()}
+      <div id="rentalGrid" class="rental-grid">
+        ${visibleRentalCabins_().map(cabinCard).join('') || '<div class="empty-state">No rentals available for this round.</div>'}
+      </div>
+      <div id="compareBar" class="compare-bar hidden">
+        <div class="compare-bar-copy">
+          <strong id="compareCount">0 rentals selected</strong>
+          <span>Select 2–3 cabins for a side-by-side comparison.</span>
+        </div>
+        <div class="compare-bar-actions">
+          <button class="ghost" type="button" onclick="clearRentalComparison_()">Clear</button>
+          <button type="button" class="compare-primary" onclick="openRentalComparison_()">Compare selected</button>
+        </div>
+      </div>
+    </div>
+  </section>`;
+}
+
+function importProgressText_(c){
+  const status = c.queue ? String(c.queue.Status||'') : '';
+  const labels = {
+    'Quick Queued':'Waiting for property import…',
+    'Quick Processing':'Importing photos, rooms, pricing, and reviews…',
+    'Quick Error':'Property import needs a retry.',
+    'Enrichment Queued':'Core card ready. Detailed enrichment is queued…',
+    'Enriching':'Enriching amenities, policies, and room details…',
+    'Enrichment Error':'Core card is ready, but detailed enrichment needs a retry.',
+    'Quota Waiting':'Apify usage limit reached. Photos were preserved; retry after the quota resets.'
+  };
+  return labels[status] || '';
+}
+
+
+const rentalComparisonIds_=new Set();
+
+const VOTE_REASON_OPTIONS_=[
+  ['Great pool','🏊'],
+  ['Awesome game room','🎮'],
+  ['Good for kids','👶'],
+  ['Great value','💰'],
+  ['Good location','📍'],
+  ['Spacious bedrooms','🛏️'],
+  ['Nice kitchen','🍳'],
+  ['Beautiful views','🌄'],
+  ['Amazing hot tub','🧖'],
+  ['Theater room','🎭']
+];
+
+function currentVotingRound_(){
+  return String(DATA.trip['Voting Round']||'Preliminary');
+}
+
+function currentRoundVotesForCabin_(cabinId){
+  const round=currentVotingRound_();
+
+  return (DATA.votes||[]).filter(function(vote){
+    return vote['Cabin ID']===cabinId &&
+      String(vote['Voting Round']||'Preliminary')===round;
+  });
+}
+
+function myVoteForCabin_(cabinId){
+  if(!currentTravelerId) return null;
+
+  return currentRoundVotesForCabin_(cabinId).find(function(vote){
+    return vote['Traveler ID']===currentTravelerId;
+  })||null;
+}
+
+function familyVoteSummary_(cabinId){
+  const eligible=(DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no';
+  });
+
+  // One review per traveler, even if older duplicate rows exist.
+  const latestByTraveler={};
+
+  currentRoundVotesForCabin_(cabinId).forEach(function(vote){
+    const travelerId=String(vote['Traveler ID']||'').trim();
+    if(!travelerId) return;
+
+    const current=latestByTraveler[travelerId];
+    const incomingTime=new Date(vote['Created At']||0).getTime()||0;
+    const currentTime=current
+      ? (new Date(current['Created At']||0).getTime()||0)
+      : -1;
+
+    if(!current||incomingTime>=currentTime){
+      latestByTraveler[travelerId]=vote;
+    }
+  });
+
+  const votes=Object.keys(latestByTraveler).map(function(travelerId){
+    return latestByTraveler[travelerId];
+  });
+
+  const scores=votes
+    .map(function(vote){return Number(vote.Score||0);})
+    .filter(function(score){return score>=1&&score<=5;});
+
+  return {
+    votes:votes,
+    reviewed:votes.length,
+    total:eligible.length,
+    percent:eligible.length
+      ? Math.round(votes.length/eligible.length*100)
+      : 0,
+    average:scores.length
+      ? scores.reduce(function(total,score){return total+score;},0)/scores.length
+      : 0
+  };
+}
+
+function familyReviewStats_(cabinId){
+  const summary=familyVoteSummary_(cabinId);
+  return {
+    reviewed:summary.reviewed,
+    total:summary.total,
+    percent:summary.percent
+  };
+}
+
+function starText_(score){
+  const value=Math.max(0,Math.min(5,Number(score||0)));
+  return '★'.repeat(value)+'☆'.repeat(5-value);
+}
+
+function voteReasons_(vote){
+  return String(vote&&vote.Reasons||'')
+    .split('|')
+    .map(function(value){return value.trim();})
+    .filter(Boolean);
+}
+
+function topFamilyReasons_(cabinId){
+  const counts={};
+
+  currentRoundVotesForCabin_(cabinId).forEach(function(vote){
+    voteReasons_(vote).forEach(function(reason){
+      counts[reason]=Number(counts[reason]||0)+1;
+    });
+  });
+
+  return Object.keys(counts)
+    .map(function(reason){return {reason:reason,count:counts[reason]};})
+    .sort(function(left,right){
+      return right.count-left.count ||
+        left.reason.localeCompare(right.reason);
+    })
+    .slice(0,3);
+}
+
+function reasonIcon_(reason){
+  const match=VOTE_REASON_OPTIONS_.find(function(option){
+    return option[0]===reason;
+  });
+  return match?match[1]:'✓';
+}
+
+function finalVotingTravelerProgress_(){
+  const finalists=finalistCabinIds_();
+
+  const myFinalVotes=(DATA.votes||[]).filter(function(vote){
+    return vote['Traveler ID']===currentTravelerId &&
+      String(vote['Voting Round']||'')==='Final' &&
+      finalists.indexOf(vote['Cabin ID'])>=0;
+  });
+
+  return {
+    rated:new Set(
+      myFinalVotes.map(function(vote){return vote['Cabin ID'];})
+    ).size,
+    hasFirstChoice:myFinalVotes.some(function(vote){
+      return String(vote['First Choice']||'').toLowerCase()==='yes';
+    })
+  };
+}
+
+function renderFinalVotingBanner_(){
+  if(!isFinalVotingStage_()) return '';
+
+  const progress=finalVotingTravelerProgress_();
+  const finalists=visibleRentalCabins_();
+
+  return `<section class="final-voting-banner">
+    <div>
+      <p class="eyebrow">${finalVotingIsClosed_()?'FINAL RESULTS':'FINAL ROUND'}</p>
+      <h3>${finalVotingIsClosed_()?'Final voting results':'Choose from the final three'}</h3>
+      <p class="muted">
+        ${
+          finalVotingIsClosed_()
+            ? 'Voting is closed. Family results are now visible.'
+            : `You have rated ${progress.rated} of ${finalists.length} finalists${
+                progress.hasFirstChoice
+                  ? ' and selected your #1 choice.'
+                  : '.'
+              }`
+        }
+      </p>
+    </div>
+    <button type="button" onclick="compareAllFinalists_()">
+      Compare all 3 finalists
+    </button>
+  </section>`;
+}
+
+function compareAllFinalists_(){
+  rentalComparisonIds_.clear();
+
+  visibleRentalCabins_().slice(0,3).forEach(function(cabin){
+    rentalComparisonIds_.add(cabin['Cabin ID']);
+  });
+
+  openRentalComparison_();
+}
+
+function rankedTopPicks_(){
+  return (DATA.cabins||[])
+    .map(function(cabin){
+      const summary=familyVoteSummary_(cabin['Cabin ID']);
+
+      return {
+        cabin:cabin,
+        summary:summary,
+        score:
+          summary.average*10+
+          Number(cabin.favoriteCount||0)*1.5+
+          Math.min(summary.reviewed,10)
+      };
+    })
+    .filter(function(item){
+      return item.summary.reviewed>0;
+    })
+    .sort(function(left,right){
+      return right.score-left.score ||
+        right.summary.reviewed-left.summary.reviewed ||
+        String(displayName(left.cabin)).localeCompare(
+          String(displayName(right.cabin))
+        );
+    })
+    .slice(0,3);
+}
+
+function topPickRankForCabin_(cabinId){
+  const index=rankedTopPicks_().findIndex(function(item){
+    return item.cabin['Cabin ID']===cabinId;
+  });
+
+  return index>=0 ? index+1 : 0;
+}
+
+function propertyIdentity_(cabin){
+  return String(
+    cabin['Provider Property ID'] ||
+    cabin['Cabin ID'] ||
+    ''
+  ).trim();
+}
+
+function renderTopPicks_(){
+  const ranked=rankedTopPicks_();
+
+  if(!ranked.length) return '';
+
+  return `<section class="top-picks">
+    <div>
+      <p class="eyebrow">FAMILY LEADERS</p>
+      <h3>Top picks right now</h3>
+      <small>Select a pick to jump to its exact card.</small>
+    </div>
+    <div class="top-pick-list">
+      ${ranked.map(function(item,index){
+        const cabin=item.cabin;
+        const summary=item.summary;
+        const identity=propertyIdentity_(cabin);
+
+        return `<button
+          type="button"
+          onclick="focusRentalCard_('${cabin['Cabin ID']}')"
+          title="Show this exact rental card"
+        >
+          <strong>#${index+1} ${esc(displayName(cabin))}</strong>
+          <span>${summary.average.toFixed(1)} family score · ${summary.reviewed}/${summary.total} reviewed</span>
+          <small>${identity ? 'Property ID: '+esc(identity) : ''}</small>
+        </button>`;
+      }).join('')}
+    </div>
+  </section>`;
+}
+
+function focusRentalCard_(cabinId){
+  const card=document.querySelector(
+    `.rental-card[data-cabin-id="${CSS.escape(cabinId)}"]`
+  );
+
+  if(!card){
+    toast('That rental is currently hidden by your filters.',true);
+    return;
+  }
+
+  card.scrollIntoView({behavior:'smooth',block:'center'});
+  card.classList.add('rental-card-highlight');
+
+  setTimeout(function(){
+    card.classList.remove('rental-card-highlight');
+  },1800);
+}
+
+function toggleRentalComparison_(cabinId,checked,inputElement){
+  if(checked){
+    if(rentalComparisonIds_.size>=3){
+      if(inputElement) inputElement.checked=false;
+      toast('Compare up to three rentals at a time.',true);
+      return;
+    }
+    rentalComparisonIds_.add(cabinId);
+  }else{
+    rentalComparisonIds_.delete(cabinId);
+  }
+  updateRentalComparisonBar_();
+}
+
+function updateRentalComparisonBar_(){
+  const bar=document.getElementById('compareBar');
+  const count=document.getElementById('compareCount');
+  if(!bar||!count) return;
+
+  count.textContent=
+    rentalComparisonIds_.size+' rental'+
+    (rentalComparisonIds_.size===1?'':'s')+
+    ' selected';
+
+  bar.classList.toggle('hidden',rentalComparisonIds_.size<2);
+}
+
+function clearRentalComparison_(){
+  rentalComparisonIds_.clear();
+  document.querySelectorAll('.compare-checkbox input').forEach(function(input){
+    input.checked=false;
+  });
+  updateRentalComparisonBar_();
+}
+
+function comparisonFeatureValue_(cabin,key){
+  const derived=deriveClientCabinFeatures_(cabin);
+  const detail=cabin.detail||{};
+  const myVote=myVoteForCabin_(cabin['Cabin ID']);
+  const summary=familyVoteSummary_(cabin['Cabin ID']);
+
+  const values={
+    total:Number(cabin['Total Rental Cost']||0)?money(cabin['Total Rental Cost']):'Pending',
+    includedExtras:includedBudgetExtrasTotal_()
+      ? money(includedBudgetExtrasTotal_())
+      : money(0),
+    combinedTotal:rentalCostBasis_(cabin)
+      ? money(rentalCostBasis_(cabin))
+      : 'Pending',
+    perAdult:perAdultTravelerCost_(cabin)
+      ? money(perAdultTravelerCost_(cabin))
+      : 'Pending',
+    perBedroom:perBedroomCost_(cabin)
+      ? money(perBedroomCost_(cabin))
+      : 'Pending',
+    bedroomOccupancy:bedroomOccupancyPricingText_(cabin)
+      || 'Rooms not assigned',
+    sharedBedroom2:perBedroomCost_(cabin)
+      ? money(perBedroomCost_(cabin)/2)+' each'
+      : 'Pending',
+    myAssignedCost:assignedTravelerCost_(cabin,currentTravelerId)
+      ? money(assignedTravelerCost_(cabin,currentTravelerId))
+      : (
+          assignedBedroomForTraveler_(cabin['Cabin ID'],currentTravelerId)
+            ? 'No adult lodging share'
+            : 'Room not assigned'
+        ),
+    cappedAdultCost:travelerAdjustedCost_(cabin,'adult',currentTravelerId)
+      ? money(travelerAdjustedCost_(cabin,'adult',currentTravelerId))
+      : 'Not applicable',
+    cappedBedroomCost:travelerAdjustedCost_(cabin,'bedroom',currentTravelerId)
+      ? money(travelerAdjustedCost_(cabin,'bedroom',currentTravelerId))
+      : 'Not assigned',
+    capCoverageAdult:cappedAdultSplit_(cabin).unresolved>.01
+      ? money(cappedAdultSplit_(cabin).unresolved)+' uncovered'
+      : 'Fully covered',
+    capCoverageBedroom:cappedBedroomSplit_(cabin).unresolved>.01
+      ? money(cappedBedroomSplit_(cabin).unresolved)+' uncovered'
+      : 'Fully covered',
+    nightly:Number(cabin['Nightly Rate']||0)?money(cabin['Nightly Rate']):'Pending',
+    sleeps:cabin.Sleeps||'?',
+    bedrooms:cabin.Bedrooms||'?',
+    bathrooms:cabin.Bathrooms||'?',
+    location:cabin.Location||'Pending',
+    rating:Number(cabin.Rating||0)?Number(cabin.Rating).toFixed(1)+' / 5':'Pending',
+    reviews:Number(cabin['Review Count']||0)?Number(cabin['Review Count'])+' reviews':'Pending',
+    familyScore:
+      isFinalVotingStage_()&&!finalVotingIsClosed_()
+        ? 'Hidden until voting closes'
+        : (summary.reviewed?summary.average.toFixed(1)+' / 5':'No family votes yet'),
+    familyReviews:
+      isFinalVotingStage_()&&!finalVotingIsClosed_()
+        ? 'Hidden until voting closes'
+        : summary.reviewed+'/'+summary.total+' reviewed',
+    myRating:myVote?Number(myVote.Score)+'/5':'Not reviewed',
+    favorites:Number(cabin.favoriteCount||0),
+    comments:(cabin.comments||[]).length,
+    pool:detail.Pool||derived.pool||'Not confirmed',
+    hotTub:detail['Hot Tub']||derived.hotTub||'Not confirmed',
+    theater:detail.Theater||derived.theater||'Not confirmed',
+    arcade:detail.Arcade||derived.arcade||'Not confirmed'
+  };
+
+  return values[key];
+}
+
+function comparisonBestClasses_(cabins,key){
+  const modes={
+    total:'min', combinedTotal:'min', perAdult:'min', perBedroom:'min', sharedBedroom2:'min',
+    myAssignedCost:'min', cappedAdultCost:'min', cappedBedroomCost:'min',
+    nightly:'min', sleeps:'max', bedrooms:'max',
+    bathrooms:'max', rating:'max', reviews:'max',
+    familyScore:'max', favorites:'max'
+  };
+
+  if(!modes[key]) return cabins.map(function(){return '';});
+
+  const numbers=cabins.map(function(cabin){
+    if(key==='familyScore'){
+      const summary=familyVoteSummary_(cabin['Cabin ID']);
+      return summary.reviewed?summary.average:null;
+    }
+
+    const map={
+      total:Number(cabin['Total Rental Cost']||0),
+      combinedTotal:rentalCostBasis_(cabin),
+      perAdult:perAdultTravelerCost_(cabin),
+      perBedroom:perBedroomCost_(cabin),
+      sharedBedroom2:perBedroomCost_(cabin)
+        ? perBedroomCost_(cabin)/2
+        : 0,
+      myAssignedCost:assignedTravelerCost_(cabin,currentTravelerId),
+      cappedAdultCost:travelerAdjustedCost_(cabin,'adult',currentTravelerId),
+      cappedBedroomCost:travelerAdjustedCost_(cabin,'bedroom',currentTravelerId),
+      nightly:Number(cabin['Nightly Rate']||0),
+      sleeps:Number(cabin.Sleeps||0),
+      bedrooms:Number(cabin.Bedrooms||0),
+      bathrooms:Number(cabin.Bathrooms||0),
+      rating:Number(cabin.Rating||0),
+      reviews:Number(cabin['Review Count']||0),
+      favorites:Number(cabin.favoriteCount||0)
+    };
+
+    return map[key]>0?map[key]:null;
+  });
+
+  const usable=numbers.filter(function(value){return value!==null;});
+  if(!usable.length) return cabins.map(function(){return '';});
+
+  const best=modes[key]==='min'
+    ? Math.min.apply(null,usable)
+    : Math.max.apply(null,usable);
+
+  return numbers.map(function(value){
+    return value===best?'compare-best':'';
+  });
+}
+
+function compareAmenityMatch_(value){
+  return String(value||'').trim() &&
+    String(value||'').toLowerCase()!=='not confirmed';
+}
+
+function openRentalComparison_(){
+  const cabins=Array.from(rentalComparisonIds_)
+    .map(function(id){
+      return DATA.cabins.find(function(cabin){
+        return cabin['Cabin ID']===id;
+      });
+    })
+    .filter(Boolean);
+
+  if(cabins.length<2){
+    toast('Select at least two rentals to compare.',true);
+    return;
+  }
+
+  const rows=[
+    {label:'Rental total',key:'total',group:'Price'},
+    {label:'Included budget extras',key:'includedExtras',group:'Price'},
+    {label:'Total incl. extras',key:'combinedTotal',group:'Price'},
+    {label:'Per adult traveler',key:'perAdult',group:'Price'},
+    {label:'Per bedroom',key:'perBedroom',group:'Price'},
+    {label:'Current bedroom assignments',key:'bedroomOccupancy',group:'Price'},
+    {label:'2 adults sharing a bedroom',key:'sharedBedroom2',group:'Price'},
+    {label:'My assigned-room cost',key:'myAssignedCost',group:'Price'},
+    {label:'My capped adult-split cost',key:'cappedAdultCost',group:'Price'},
+    {label:'Adult split coverage',key:'capCoverageAdult',group:'Price'},
+    {label:'My capped bedroom-split cost',key:'cappedBedroomCost',group:'Price'},
+    {label:'Bedroom split coverage',key:'capCoverageBedroom',group:'Price'},
+    {label:'Nightly rate',key:'nightly',group:'Price'},
+    {label:'Sleeps',key:'sleeps',group:'Capacity'},
+    {label:'Bedrooms',key:'bedrooms',group:'Capacity'},
+    {label:'Bathrooms',key:'bathrooms',group:'Capacity'},
+    {label:'Location',key:'location',group:'Property'},
+    {label:'Vrbo rating',key:'rating',group:'Reviews'},
+    {label:'Vrbo reviews',key:'reviews',group:'Reviews'},
+    {label:'Family score',key:'familyScore',group:'Family'},
+    {label:'Family reviewed',key:'familyReviews',group:'Family'},
+    {label:'My rating',key:'myRating',group:'Family'},
+    {label:'Favorites',key:'favorites',group:'Family'},
+    {label:'Comments',key:'comments',group:'Family'},
+    {label:'Pool',key:'pool',group:'Amenities'},
+    {label:'Hot tub',key:'hotTub',group:'Amenities'},
+    {label:'Theater',key:'theater',group:'Amenities'},
+    {label:'Arcade / game room',key:'arcade',group:'Amenities'}
+  ];
+
+  const groups=[];
+  rows.forEach(function(row){
+    if(groups.indexOf(row.group)<0) groups.push(row.group);
+  });
+
+  const headers=cabins.map(function(cabin){
+    const image=cabin['Image URL']||
+      (cabin.photos&&cabin.photos[0]&&cabin.photos[0]['Photo URL'])||'';
+
+    return `<div class="compare-cabin-head">
+      ${image?`<img src="${escAttr(image)}" alt="">`:''}
+      <strong>${esc(displayName(cabin))}</strong>
+      <span>${esc(propertyIdentity_(cabin))}</span>
+      ${
+        cabin['Original Rental URL']||cabin['Rental URL']
+          ? `<a href="${escAttr(cabin['Original Rental URL']||cabin['Rental URL'])}"
+               target="_blank" rel="noopener noreferrer">Open listing ↗</a>`
+          : ''
+      }
+    </div>`;
+  }).join('');
+
+  const body=groups.map(function(group){
+    const groupRows=rows.filter(function(row){return row.group===group;});
+
+    return `<section class="compare-section">
+      <h3>${esc(group)}</h3>
+      ${groupRows.map(function(row){
+        const best=comparisonBestClasses_(cabins,row.key);
+
+        return `<div class="compare-row">
+          <div class="compare-label">${esc(row.label)}</div>
+          ${cabins.map(function(cabin,index){
+            const value=comparisonFeatureValue_(cabin,row.key);
+            const yes=row.group==='Amenities'&&compareAmenityMatch_(value)
+              ?' compare-yes':'';
+
+            return `<div class="compare-value ${best[index]||''}${yes}">
+              ${esc(String(value))}
+            </div>`;
+          }).join('')}
+        </div>`;
+      }).join('')}
+    </section>`;
+  }).join('');
+
+  openModal(`<div class="comparison-modal comparison-modal-rich">
+    <div class="comparison-header">
+      <div>
+        <p class="eyebrow">SIDE-BY-SIDE</p>
+        <h2>Compare selected cabins</h2>
+        <p class="muted">Best numeric values are highlighted automatically.</p>
+      </div>
+    </div>
+    <div class="compare-grid compare-grid-${cabins.length}">
+      <div class="compare-spacer"></div>
+      ${headers}
+      ${body}
+    </div>
+  </div>`);
+}
+function canRemoveRentals_(){
+  const traveler=currentTraveler();
+  return Boolean(
+    traveler &&
+    /^justin(?:\s|$)/i.test(String(traveler.Name||'').trim())
+  );
+}
+
+function openRemoveRental_(cabinId){
+  if(!canRemoveRentals_()){
+    toast('Only the Justin traveler profile can remove rentals.',true);
+    return;
+  }
+
+  const cabin=(DATA.cabins||[]).find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  if(!cabin){
+    toast('Rental could not be found.',true);
+    return;
+  }
+
+  openModal(`<div class="remove-rental-confirmation">
+    <p class="eyebrow">REMOVE RENTAL</p>
+    <h2>Remove ${esc(displayName(cabin))}?</h2>
+    <p>
+      This removes the rental from the portal and cancels its pending imports.
+      Existing votes, comments, photos, and historical records are retained.
+    </p>
+    <div class="notice warning">
+      This option is available only while planning as Justin.
+    </div>
+    <div class="form-actions">
+      <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+      <button class="remove-rental-confirm" type="button"
+        onclick="confirmRemoveRental_('${cabinId}')">Remove rental</button>
+    </div>
+  </div>`);
+}
+
+function confirmRemoveRental_(cabinId){
+  if(!canRemoveRentals_()){
+    closeModal();
+    toast('Only the Justin traveler profile can remove rentals.',true);
+    return;
+  }
+
+  const index=(DATA.cabins||[]).findIndex(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  const previous=index>=0 ? DATA.cabins[index] : null;
+
+  if(index>=0){
+    DATA.cabins.splice(index,1);
+  }
+
+  rentalComparisonIds_.delete(cabinId);
+  closeModal();
+  render();
+  toast('Rental removed. Saving in the background…');
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      toast(result.message||'Rental removed.');
+    })
+    .withFailureHandler(function(error){
+      if(previous){
+        DATA.cabins.splice(
+          Math.min(index,DATA.cabins.length),
+          0,
+          previous
+        );
+        render();
+      }
+
+      toast(
+        'The rental could not be removed: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .removeRentalForOrganizer(cabinId,currentTravelerId);
+}
+
+function listingProviderLabel_(c){
+  const provider=String(c.Provider||'').trim();
+  const url=String(c['Original Rental URL']||c['Rental URL']||'').toLowerCase();
+
+  if(provider) return provider;
+  if(url.includes('vrbo.')) return 'Vrbo';
+  if(url.includes('airbnb.')) return 'Airbnb';
+  if(url.includes('booking.')) return 'Booking.com';
+  if(url.includes('expedia.')) return 'Expedia';
+  return 'original listing';
+}
+
+function cabinCard(c){
+  const amenities = lines(c.Amenities).slice(0,4);
+  const stage = c['Import Stage'] || (c.import && c.import.Status) || 'Manual';
+  const rawConfidence = Number(c['Import Confidence']);
+  const confidence = Number.isFinite(rawConfidence) ? Math.round(rawConfidence) : 0;
+  const image = c['Image URL'] || (c.photos && c.photos[0] && c.photos[0]['Photo URL']) || '';
+  const needsReview = stage === 'Needs Review' || (c.import && c.import.Status === 'Needs Review');
+
+  const isQueued = c.queue && [
+    'Quick Queued',
+    'Quick Processing',
+    'Quick Error',
+    'Enrichment Queued',
+    'Enriching',
+    'Enrichment Error',
+    'Quota Waiting'
+  ].indexOf(c.queue.Status) >= 0;
+
+  const search = [
+    displayName(c),
+    c.Location,
+    c.Provider,
+    amenities.join(' ')
+  ].join(' ').toLowerCase();
+
+  const allAmenities = lines(c.Amenities).join(' ').toLowerCase();
+  const myVote = myVoteForCabin_(c['Cabin ID']);
+  const familySummary = familyVoteSummary_(c['Cabin ID']);
+  const reviewStats = {
+    reviewed:familySummary.reviewed,
+    total:familySummary.total,
+    percent:familySummary.percent
+  };
+  const topReasons = topFamilyReasons_(c['Cabin ID']);
+  const favorite=isFavoriteByMe_(c['Cabin ID']);
+  const admin=isJustinCurrentTraveler_();
+
+  return `<article class="rental-card"
+    data-cabin-id="${escAttr(c['Cabin ID'])}"
+    data-search="${escAttr(search)}"
+    data-amenities="${escAttr(allAmenities)}"
+    data-score="${Number(c.averageScore||0)}"
+    data-total-price="${Number(c['Total Rental Cost']||0)}"
+    data-nightly-price="${Number(c['Nightly Rate']||0)}"
+    data-price="${Number(c['Total Rental Cost']||c['Nightly Rate']||0)}"
+    data-sleeps="${Number(c.Sleeps||0)}"
+    data-bedrooms="${Number(c.Bedrooms||0)}"
+    data-reviews="${Number(c['Review Count']||0)}"
+    data-rating="${Number(c.Rating||0)}"
+    data-my-rating="${myVote?Number(myVote.Score||0):0}"
+    data-reviewed="${myVote?'yes':'no'}"
+    data-review-progress="${reviewStats.percent}"
+    data-favorites="${Number(c.favoriteCount||0)}"
+    data-comments="${(c.comments||[]).length}"
+    data-created="${escAttr(c['Created At']||'')}">
+
+    <div class="rental-card-name">
+      <h3>${esc(displayName(c))}</h3>
+    </div>
+
+    <div class="rental-image">
+      ${
+        image
+          ? `<img src="${escAttr(image)}"
+              alt="${escAttr(displayName(c))}"
+              onerror="this.parentElement.classList.add('image-error');this.remove()">`
+          : '<div class="image-placeholder">Photo pending</div>'
+      }
+
+      <button
+        class="favorite-button ${favorite?'favorited':''}"
+        aria-label="${favorite?'Remove from favorites':'Add to favorites'}"
+        aria-pressed="${favorite?'true':'false'}"
+        onclick="toggleFavorite('${c['Cabin ID']}')"
+      >♥</button>
+
+      <label class="compare-checkbox" title="Add to comparison">
+        <input
+          type="checkbox"
+          onchange="toggleRentalComparison_('${c['Cabin ID']}',this.checked)"
+          ${rentalComparisonIds_.has(c['Cabin ID'])?'checked':''}
+        >
+        <span>Compare</span>
+      </label>
+
+      <span class="import-badge">${esc(stage)}</span>
+    </div>
+
+    <div class="rental-body">
+      <div class="card-meta rental-property-meta">
+        <span>${esc(c.Location||'Location pending')}</span>
+        <span>Sleeps ${c.Sleeps||'?'}</span>
+        <span>${c.Bedrooms||'?'} bed</span>
+        <span>${c.Bathrooms||'?'} bath</span>
+      </div>
+
+      <div class="pills rental-amenities">
+        ${amenities.map(function(a){
+          return `<span class="pill">${esc(a)}</span>`;
+        }).join('')}
+      </div>
+
+      <div class="rental-rating-line">
+        <span>${
+          Number(c.Rating||0)
+            ? '★ '+Number(c.Rating).toFixed(1)+' / 5 ('+
+              (c['Review Count']||0)+' reviews)'
+            : 'Rating pending'
+        }</span>
+        ${confidence?`<span>${confidence}% import confidence</span>`:''}
+      </div>
+
+      ${renderRentalPricingConsole_(c)}
+
+      <div class="collaborative-vote-summary">
+        <div class="${myVote?'my-rating reviewed':'my-rating unreviewed'}">
+          ${
+            myVote
+              ? `<strong>✓ Your rating: ${Number(myVote.Score)}/5</strong>
+                 <span>${starText_(myVote.Score)}</span>`
+              : `<strong>Not reviewed by you</strong>
+                 <span>Share your rating when ready.</span>`
+          }
+        </div>
+
+        ${
+          isFinalVotingStage_()&&!finalVotingIsClosed_()
+            ? `<div class="family-review-progress results-private">
+                <strong>Family results hidden</strong>
+                <span>Results appear after final voting closes.</span>
+              </div>`
+            : `<div class="family-review-progress">
+                <div>
+                  <strong>Family reviews</strong>
+                  <span>${reviewStats.reviewed} of ${reviewStats.total} completed</span>
+                </div>
+                <div class="review-progress-track">
+                  <span style="width:${reviewStats.percent}%"></span>
+                </div>
+              </div>`
+        }
+      </div>
+
+      ${
+        topReasons.length && !(isFinalVotingStage_()&&!finalVotingIsClosed_())
+          ? `<div class="top-reasons">
+              <strong>Why the family likes it</strong>
+              ${topReasons.map(function(item){
+                return `<span>${reasonIcon_(item.reason)} ${esc(item.reason)} · ${item.count}</span>`;
+              }).join('')}
+            </div>`
+          : ''
+      }
+
+      ${
+        isQueued
+          ? `<div class="notice import-progress">
+              <span class="progress-spinner" aria-hidden="true"></span>
+              <span>
+                <strong>${esc(c.queue.Status)}.</strong>
+                ${esc(c.queue['Last Error']||importProgressText_(c))}
+              </span>
+            </div>`
+          : ''
+      }
+
+      ${
+        needsReview
+          ? `<div class="notice">
+              <strong>Needs review.</strong>
+              ${esc((c.import&&c.import.Notes)||'Complete missing details.')}
+            </div>`
+          : ''
+      }
+
+      <div class="card-action-heading">Rental actions</div>
+
+      <div class="card-actions rental-user-actions">
+        <button
+          class="${myVote?'vote-primary voted':'vote-primary'}"
+          ${finalVotingIsClosed_()?'disabled':''}
+          onclick="openVote('${c['Cabin ID']}')"
+        >${
+          finalVotingIsClosed_()
+            ? (myVote?`Final rating · ${Number(myVote.Score)}/5`:'Voting closed')
+            : (myVote?`Edit rating · ${Number(myVote.Score)}/5`:'Vote 1–5')
+        }</button>
+
+        <button onclick="openCabinDetail('${c['Cabin ID']}')">
+          View details
+        </button>
+
+        ${
+          c['Original Rental URL']||c['Rental URL']
+            ? `<a class="button-link listing-button"
+                href="${escAttr(c['Original Rental URL']||c['Rental URL'])}"
+                target="_blank"
+                rel="noopener noreferrer">
+                View on ${esc(listingProviderLabel_(c))} ↗
+              </a>`
+            : ''
+        }
+
+        <button class="ghost"
+          onclick="openCabinBedroomPlanner_('${c['Cabin ID']}')">
+          Show Bedroom Planner
+        </button>
+      </div>
+
+      ${
+        admin
+          ? `<div class="card-actions rental-admin-actions">
+              <span class="admin-action-label">Justin tools</span>
+
+              <button class="ghost" onclick="enrichCabin('${c['Cabin ID']}')">${
+                c.queue && (/Error|Quota Waiting/.test(String(c.queue.Status||'')))
+                  ? 'Retry import'
+                  : 'Refresh details'
+              }</button>
+
+              <button class="ghost"
+                onclick="refreshCabinPhotosClient('${c['Cabin ID']}')">
+                Try photo import
+              </button>
+
+              <button class="ghost"
+                onclick="openCabinForm('${c['Cabin ID']}',${needsReview?'true':'false'})">
+                ${needsReview?'Review import':'Edit'}
+              </button>
+
+              <button class="remove-rental-button"
+                onclick="openRemoveRental_('${c['Cabin ID']}')">
+                Remove rental
+              </button>
+            </div>`
+          : ''
+      }
+    </div>
+  </article>`;
+}
+
+function filterRentalCards(saveState){
+  if(saveState!==false){
+    captureRentalFilterState_();
+  }
+  const getValue = function(id){
+    const element=document.getElementById(id);
+    return element ? element.value : '';
+  };
+
+  const search=getValue('rentalSearch').trim().toLowerCase();
+  const amenity=getValue('rentalAmenityFilter').trim().toLowerCase();
+  const reviewStatus=getValue('rentalReviewStatus');
+  const myRatingFilter=Number(getValue('rentalMyRating')||0);
+  const minBedrooms=Number(getValue('rentalMinBedrooms')||0);
+  const minReviews=Number(getValue('rentalMinReviews')||0);
+  const minRating=Number(getValue('rentalMinRating')||0);
+  const maxTotal=Number(getValue('rentalMaxTotal')||0);
+  const maxNightly=Number(getValue('rentalMaxNightly')||0);
+
+  let visible=0;
+
+  document.querySelectorAll('.rental-card').forEach(function(card){
+    const matchesSearch=
+      !search || String(card.dataset.search||'').includes(search);
+
+    const matchesAmenity=
+      !amenity || String(card.dataset.amenities||'').includes(amenity);
+
+    const reviewed=card.dataset.reviewed==='yes';
+    const myRating=Number(card.dataset.myRating||0);
+
+    const matchesReviewStatus=
+      !reviewStatus ||
+      (reviewStatus==='reviewed'&&reviewed) ||
+      (reviewStatus==='unreviewed'&&!reviewed);
+
+    const matchesMyRating=
+      !myRatingFilter ||
+      (myRatingFilter===5&&myRating===5) ||
+      (myRatingFilter===4&&myRating>=4) ||
+      (myRatingFilter===3&&myRating>=3) ||
+      (myRatingFilter===2&&myRating>0&&myRating<=2);
+
+    const matchesBedrooms=
+      Number(card.dataset.bedrooms||0) >= minBedrooms;
+
+    const matchesReviews=
+      Number(card.dataset.reviews||0) >= minReviews;
+
+    const matchesRating=
+      Number(card.dataset.rating||0) >= minRating;
+
+    const totalPrice=Number(card.dataset.totalPrice||0);
+    const nightlyPrice=Number(card.dataset.nightlyPrice||0);
+
+    const matchesTotal=
+      !maxTotal || (totalPrice > 0 && totalPrice <= maxTotal);
+
+    const matchesNightly=
+      !maxNightly || (nightlyPrice > 0 && nightlyPrice <= maxNightly);
+
+    const show=
+      matchesSearch &&
+      matchesAmenity &&
+      matchesReviewStatus &&
+      matchesMyRating &&
+      matchesBedrooms &&
+      matchesReviews &&
+      matchesRating &&
+      matchesTotal &&
+      matchesNightly;
+
+    card.classList.toggle('hidden',!show);
+    if(show) visible++;
+  });
+
+  const count=document.getElementById('rentalVisibleCount');
+  if(count){
+    count.textContent=
+      visible+' rental'+(visible===1?'':'s')+' shown';
+  }
+}
+
+function resetRentalFilters(){
+  Object.assign(rentalFilterState_,{
+    search:'',
+    amenity:'',
+    reviewStatus:'',
+    myRating:'0',
+    minBedrooms:'0',
+    minReviews:'0',
+    minRating:'0',
+    maxTotal:'',
+    maxNightly:'',
+    sort:'score'
+  });
+
+  saveRentalFilterState_();
+  restoreRentalFilterControls_();
+  filterRentalCards(false);
+  sortRentals(false);
+}
+
+function sortablePrice_(value){
+  const number=Number(value||0);
+  return number>0 ? number : Number.MAX_SAFE_INTEGER;
+}
+
+function sortRentals(saveState){
+  if(saveState!==false){
+    captureRentalFilterState_();
+  }
+
+  const sortElement=document.getElementById('rentalSort');
+  if(!sortElement) return;
+
+  const mode=sortElement.value;
+  const grid=document.getElementById('rentalGrid');
+  Array.from(grid.querySelectorAll('.rental-card')).sort(function(a,b){
+    if(mode==='myrating') return Number(b.dataset.myRating)-Number(a.dataset.myRating);
+    if(mode==='reviewprogress') return Number(b.dataset.reviewProgress)-Number(a.dataset.reviewProgress);
+    if(mode==='favorites') return Number(b.dataset.favorites)-Number(a.dataset.favorites);
+    if(mode==='comments') return Number(b.dataset.comments)-Number(a.dataset.comments);
+    if(mode==='price'){
+      return sortablePrice_(a.dataset.totalPrice)-sortablePrice_(b.dataset.totalPrice);
+    }
+    if(mode==='nightly'){
+      return sortablePrice_(a.dataset.nightlyPrice)-sortablePrice_(b.dataset.nightlyPrice);
+    }
+    if(mode==='reviews') return Number(b.dataset.reviews)-Number(a.dataset.reviews);
+    if(mode==='rating') return Number(b.dataset.rating)-Number(a.dataset.rating);
+    if(mode==='bedrooms') return Number(b.dataset.bedrooms)-Number(a.dataset.bedrooms);
+    if(mode==='sleeps') return Number(b.dataset.sleeps)-Number(a.dataset.sleeps);
+    if(mode==='newest') return String(b.dataset.created).localeCompare(String(a.dataset.created));
+    return Number(b.dataset.score)-Number(a.dataset.score);
+  }).forEach(function(card){grid.appendChild(card);});
+}
+
+function openRentalSubmit(){
+  openModal(`<h2>Add rental listing</h2>
+    <p class="muted">Paste the full link from your search results. Keep the dates and guest count in the URL so the enrichment step can look for date-specific pricing. The portal also saves a clean canonical property link for duplicate detection.</p>
+    <form onsubmit="submitRentalForm(event)" class="form-grid">
+      <label class="wide"><span>Rental URL</span><input id="rentalUrl" type="url" required placeholder="https://www.vrbo.com/..."></label>
+      <label><span>Submitted by</span><input id="rentalSubmitter" value="${esc(currentTraveler()?.Name||'')}"></label>
+      <div class="wide form-actions">
+        <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+        <button id="importButton">Queue cabin</button>
+      </div>
+    </form>`);
+}
+
+function submitRentalForm(e){
+  e.preventDefault();
+
+  const button=document.getElementById('importButton');
+  const rentalUrl=document.getElementById('rentalUrl').value;
+  const submitter=document.getElementById('rentalSubmitter').value;
+
+  button.disabled=true;
+  button.textContent='Checking duplicate…';
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      if(result && result.cabin){
+        DATA.cabins = DATA.cabins || [];
+        DATA.cabins.unshift(result.cabin);
+      }
+
+      closeModal();
+      hydrateHeader();
+      render();
+      toast('Cabin queued. You can submit another URL immediately.');
+      scheduleRentalPolling_();
+    })
+    .withFailureHandler(function(error){
+      button.disabled=false;
+      button.textContent='Queue cabin';
+      toast(
+        error&&error.message ? error.message : String(error),
+        true
+      );
+    })
+    .submitRental(rentalUrl,submitter);
+}
+
+function enrichCabin(cabinId){
+  toast('Enriching rental details…');
+  run('enrichCabinNow',[cabinId],'Rental enrichment completed.');
+}
+
+function refreshCabinPhotosClient(cabinId){
+  toast('Searching the listing for photos…');
+  run('refreshCabinPhotos',[cabinId],'Cabin photos refreshed.');
+}
+
+function openCabinForm(id,reviewMode){
+  const c=id?DATA.cabins.find(function(x){return x['Cabin ID']===id;}):{};
+  const detail=c.detail||{};
+  openModal(`<h2>${reviewMode?'Review imported rental':id?'Edit rental':'Add rental'}</h2>
+    ${reviewMode&&c.import?`<div class="notice">${esc(c.import.Notes||'Complete missing fields below.')}</div>`:''}
+    <form onsubmit="saveCabinForm(event,${reviewMode?'true':'false'})" class="form-grid">
+      <input id="cabinId" type="hidden" value="${esc(c['Cabin ID']||'')}">
+      ${field('cabinName','Property name',c['Cabin Name'],'text',true)}
+      ${field('cabinNickname','Short nickname',c.Nickname)}
+      ${field('cabinOriginalUrl','Original full rental URL',c['Original Rental URL']||c['Rental URL'],'url')}
+      ${field('cabinUrl','Canonical rental URL',c['Rental URL'],'url')}
+      ${field('cabinLocation','Location',c.Location)}
+      ${field('cabinSleeps','Sleeps',c.Sleeps,'number')}
+      ${field('cabinBedrooms','Bedrooms',c.Bedrooms,'number')}
+      ${field('cabinBathrooms','Bathrooms',c.Bathrooms,'number')}
+      ${field('cabinTotal','Total trip cost',c['Total Rental Cost'],'number')}
+      ${field('cabinNightly','Nightly rate',c['Nightly Rate'],'number')}
+      ${field('cabinRating','Rating',c.Rating,'number')}
+      ${field('cabinReviews','Review count',c['Review Count'],'number')}
+      ${field('cabinImage','Main image URL',c['Image URL'],'url')}
+      ${area('cabinPhotos','Additional photo URLs',c['Photo URLs'])}
+      ${area('cabinDescription','Description',c.Description)}
+      ${area('cabinAmenities','Amenities',c.Amenities)}
+      ${field('cabinPool','Pool',detail.Pool)}
+      ${field('cabinHotTub','Hot tub',detail['Hot Tub'])}
+      ${field('cabinTheater','Theater',detail.Theater)}
+      ${field('cabinArcade','Arcade / game room',detail.Arcade)}
+      ${area('cabinCancellation','Cancellation policy',c['Cancellation Policy'])}
+      ${area('cabinFees','Fees and taxes',c['Fees and Taxes'])}
+      ${area('cabinRules','House rules',c['House Rules'])}
+      ${field('cabinParking','Parking',c.Parking)}
+      ${field('cabinAccessibility','Accessibility',c.Accessibility)}
+      ${area('cabinNearby','Nearby highlights',c['Nearby Highlights'])}
+      <div class="wide form-actions">
+        <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+        <button>${reviewMode?'Save and mark imported':'Save rental'}</button>
+      </div>
+    </form>`);
+}
+
+function saveCabinForm(e,reviewMode){
+  e.preventDefault();
+
+  const v={
+    id:val('cabinId'),name:val('cabinName'),nickname:val('cabinNickname'),
+    originalUrl:val('cabinOriginalUrl'),url:val('cabinUrl'),
+    location:val('cabinLocation'),sleeps:val('cabinSleeps'),
+    bedrooms:val('cabinBedrooms'),bathrooms:val('cabinBathrooms'),
+    totalCost:val('cabinTotal'),nightlyRate:val('cabinNightly'),
+    rating:val('cabinRating'),reviewCount:val('cabinReviews'),
+    imageUrl:val('cabinImage'),photoUrls:val('cabinPhotos'),
+    description:val('cabinDescription'),amenities:val('cabinAmenities'),
+    pool:val('cabinPool'),hotTub:val('cabinHotTub'),
+    theater:val('cabinTheater'),arcade:val('cabinArcade'),
+    cancellationPolicy:val('cabinCancellation'),feesAndTaxes:val('cabinFees'),
+    houseRules:val('cabinRules'),parking:val('cabinParking'),
+    accessibility:val('cabinAccessibility'),nearbyHighlights:val('cabinNearby'),
+    submittedBy:(currentTraveler()||{}).Name||''
+  };
+
+  if(!v.name){
+    toast('Property name is required.',true);
+    return;
+  }
+
+  const cabinIndex=(DATA.cabins||[]).findIndex(function(cabin){
+    return cabin['Cabin ID']===v.id;
+  });
+
+  const previousCabin=cabinIndex>=0
+    ? Object.assign({},DATA.cabins[cabinIndex])
+    : null;
+
+  if(cabinIndex>=0){
+    DATA.cabins[cabinIndex]=Object.assign({},DATA.cabins[cabinIndex],{
+      'Cabin Name':v.name,
+      'Nickname':v.nickname,
+      'Original Rental URL':v.originalUrl||v.url,
+      'Rental URL':v.url,
+      'Location':v.location,
+      'Sleeps':Number(v.sleeps||0),
+      'Bedrooms':Number(v.bedrooms||0),
+      'Bathrooms':Number(v.bathrooms||0),
+      'Total Rental Cost':Number(v.totalCost||0),
+      'Nightly Rate':Number(v.nightlyRate||0),
+      'Rating':Number(v.rating||0),
+      'Review Count':Number(v.reviewCount||0),
+      'Image URL':v.imageUrl,
+      'Photo URLs':v.photoUrls,
+      'Description':v.description,
+      'Amenities':v.amenities,
+      'Cancellation Policy':v.cancellationPolicy,
+      'Fees and Taxes':v.feesAndTaxes,
+      'House Rules':v.houseRules,
+      'Parking':v.parking,
+      'Accessibility':v.accessibility,
+      'Nearby Highlights':v.nearbyHighlights,
+      'Import Stage':reviewMode?'Review Saving…':'Saving Edits…',
+      detail:Object.assign({},DATA.cabins[cabinIndex].detail||{},{
+        Pool:v.pool,
+        'Hot Tub':v.hotTub,
+        Theater:v.theater,
+        Arcade:v.arcade
+      })
+    });
+  }
+
+  closeModal();
+  render();
+  toast(
+    reviewMode
+      ? 'Review submitted. Saving in the background…'
+      : 'Edits submitted. Saving in the background…'
+  );
+  scheduleRentalPolling_();
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      if(result&&result.cabin){
+        const index=(DATA.cabins||[]).findIndex(function(cabin){
+          return cabin['Cabin ID']===result.cabin['Cabin ID'];
+        });
+
+        if(index>=0){
+          DATA.cabins[index]=Object.assign({},DATA.cabins[index],result.cabin);
+          render();
+        }
+      }
+      scheduleRentalPolling_();
+    })
+    .withFailureHandler(function(error){
+      if(cabinIndex>=0&&previousCabin){
+        DATA.cabins[cabinIndex]=previousCabin;
+        render();
+      }
+
+      toast(
+        'The edit could not be queued: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .queueCabinEdit(v,Boolean(reviewMode));
+}
+function deriveClientCabinFeatures_(c){
+  const values=lines(c.Amenities).concat([
+    c['Cabin Name']||'',
+    c.Description||''
+  ]);
+
+  function find(patterns){
+    for(const pattern of patterns){
+      const match=values.find(function(value){
+        return pattern.test(String(value||''));
+      });
+      if(match) return match;
+    }
+    return '';
+  }
+
+  return {
+    pool:find([/\bprivate\b.*\bpool\b/i,/\bindoor\b.*\bpool\b/i,/\bheated\b.*\bpool\b/i,/\bpool\b/i]),
+    hotTub:find([/\bhot tubs?\b/i,/\bspa\b/i,/\bjacuzzi\b/i]),
+    theater:find([/\bhome theater\b/i,/\bmovie theater\b/i,/\btheatre\b/i,/\bcinema\b/i]),
+    arcade:find([/\barcade\b/i,/\bgame room\b/i,/\bgames galore\b/i,/\bpool table\b/i,/\bfoosball\b/i,/\bair hockey\b/i])
+  };
+}
+
+function openCabinDetail(id){
+  const c=DATA.cabins.find(function(x){return x['Cabin ID']===id;});
+  const rooms=c.bedrooms.map(function(r){
+    return `<tr><td>${esc(r['Bedroom Name'])}</td><td>${esc(r['Bed Configuration'])}</td><td>${r.Sleeps||''}</td><td>${esc(r['Private Bathroom']||'')}</td></tr>`;
+  }).join('');
+  const comments=c.comments.map(function(x){
+    return `<p><strong>${esc(x.travelerName)}</strong><br>${esc(x.Comment)}</p>`;
+  }).join('');
+  const detail=c.detail||{};
+  const derived=deriveClientCabinFeatures_(c);
+  const photos=(c.photos||[]).slice(0,8).map(function(p){
+    return `<img class="detail-photo" src="${escAttr(p['Photo URL'])}" alt="">`;
+  }).join('');
+
+  openModal(`<h2>${esc(displayName(c))}</h2>
+    <p class="muted">${esc(c.Location||'')}</p>
+    ${photos?`<div class="detail-photo-grid">${photos}</div>`:''}
+    <p>${esc(c.Description||'No description yet.')}</p>
+    <div class="pills">${lines(c.Amenities).map(function(a){return `<span class="pill">${esc(a)}</span>`;}).join('')}</div>
+    <div class="detail-facts">
+      <p><strong>Sleeps</strong><br>${Number(c.Sleeps||0)||'Not confirmed'}</p>
+      <p><strong>Bedrooms</strong><br>${Number(c.Bedrooms||0)||'Not confirmed'}</p>
+      <p><strong>Bathrooms</strong><br>${Number(c.Bathrooms||0)||'Not confirmed'}</p>
+      <p><strong>Reviews</strong><br>${
+        Number(c.Rating||0)
+          ? esc(Number(c.Rating).toFixed(1)+' / 5 · '+Number(c['Review Count']||0)+' reviews')
+          : 'Not confirmed'
+      }</p>
+      <p><strong>Pool</strong><br>${esc(detail.Pool||derived.pool||'Not confirmed')}</p>
+      <p><strong>Hot tub</strong><br>${esc(detail['Hot Tub']||derived.hotTub||'Not confirmed')}</p>
+      <p><strong>Theater</strong><br>${esc(detail.Theater||derived.theater||'Not confirmed')}</p>
+      <p><strong>Arcade</strong><br>${esc(detail.Arcade||derived.arcade||'Not confirmed')}</p>
+    </div>
+    <h3>Bedroom layout</h3>
+    <div class="table-wrap"><table><thead><tr><th>Room</th><th>Beds</th><th>Sleeps</th><th>Bath</th></tr></thead><tbody>${rooms||'<tr><td colspan="4">No bedroom details yet.</td></tr>'}</tbody></table></div>
+    <h3>Comments</h3>${comments||'<p class="muted">No comments yet.</p>'}
+    <form onsubmit="saveCommentForm(event,'${id}')" class="form-grid">
+      <label class="wide"><span>Add comment</span><textarea id="commentText" required></textarea></label>
+      <div class="wide form-actions"><button>Post comment</button></div>
+    </form>
+    ${c['Original Rental URL']||c['Rental URL']?`<p><a target="_blank" href="${escAttr(c['Original Rental URL']||c['Rental URL'])}">Open original listing</a></p>`:''}`);
+}
+
+function saveCommentForm(e,cabinId){
+  e.preventDefault();
+  requireTraveler();
+
+  const comment=val('commentText').trim();
+
+  if(!comment){
+    toast('Enter a comment.',true);
+    return;
+  }
+
+  const cabin=(DATA.cabins||[]).find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  if(!cabin){
+    toast('Rental could not be found.',true);
+    return;
+  }
+
+  const traveler=currentTraveler();
+  const localId='LOCAL-COMMENT-'+Date.now();
+
+  const optimistic={
+    'Comment ID':localId,
+    'Cabin ID':cabinId,
+    'Traveler ID':currentTravelerId,
+    'Comment':comment,
+    'Created At':new Date().toISOString(),
+    travelerName:traveler?traveler.Name:'Traveler'
+  };
+
+  cabin.comments=(cabin.comments||[]).slice();
+  cabin.comments.push(optimistic);
+
+  closeModal();
+  render();
+  toast('Comment posted. Syncing in the background…');
+
+  google.script.run
+    .withSuccessHandler(function(saved){
+      const target=(DATA.cabins||[]).find(function(item){
+        return item['Cabin ID']===cabinId;
+      });
+
+      if(!target) return;
+
+      const index=(target.comments||[]).findIndex(function(item){
+        return item['Comment ID']===localId;
+      });
+
+      if(index>=0){
+        target.comments[index]=saved;
+      }else{
+        target.comments=(target.comments||[]).concat([saved]);
+      }
+
+      render();
+    })
+    .withFailureHandler(function(error){
+      const target=(DATA.cabins||[]).find(function(item){
+        return item['Cabin ID']===cabinId;
+      });
+
+      if(target){
+        target.comments=(target.comments||[]).filter(function(item){
+          return item['Comment ID']!==localId;
+        });
+      }
+
+      render();
+
+      toast(
+        'Comment could not be saved: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .saveComment({
+      cabinId:cabinId,
+      travelerId:currentTravelerId,
+      comment:comment
+    });
+}
+
+function openVote(cabinId){
+  requireTraveler();
+
+  const cabin=DATA.cabins.find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  const existing=myVoteForCabin_(cabinId);
+  const existingScore=existing?Number(existing.Score||0):0;
+  const existingReasons=voteReasons_(existing);
+  const isFinal=currentVotingRound_()==='Final';
+  const existingFirstChoice=
+    existing &&
+    String(existing['First Choice']||'').toLowerCase()==='yes';
+
+  openModal(`<div class="vote-dialog">
+    <p class="eyebrow">YOUR REVIEW</p>
+    <h2>${existing?'Update':'Rate'} ${esc(displayName(cabin||{}))}</h2>
+    <p class="vote-modal-help">
+      <strong>1 = least liked</strong> and <strong>5 = most liked</strong>.
+      ${
+        existing
+          ? `Your current rating is <strong>${existingScore}/5</strong>. Saving will update it—not create another review.`
+          : 'You can return and change your rating later.'
+      }
+    </p>
+
+    <form onsubmit="saveVoteForm(event,'${cabinId}')" class="form-grid vote-form">
+      <div class="wide rating-choice-grid">
+        ${[1,2,3,4,5].map(function(number){
+          return `<label class="rating-choice ${existingScore===number?'selected':''}">
+            <input
+              type="radio"
+              name="voteScoreRadio"
+              value="${number}"
+              ${existingScore===number?'checked':''}
+              required
+              onchange="updateVoteChoiceDisplay_(this)"
+            >
+            <strong>${number}</strong>
+            <span>${starText_(number)}</span>
+            <small>${
+              number===1?'Least liked':
+              number===2?'Not a favorite':
+              number===3?'Good option':
+              number===4?'Really like it':
+              'Most liked'
+            }</small>
+          </label>`;
+        }).join('')}
+      </div>
+
+      <fieldset class="wide vote-reasons-fieldset">
+        <legend>Why do you like it? <span>Choose up to three</span></legend>
+        <div class="vote-reason-grid">
+          ${VOTE_REASON_OPTIONS_.map(function(option){
+            return `<label>
+              <input
+                type="checkbox"
+                name="voteReason"
+                value="${escAttr(option[0])}"
+                ${existingReasons.indexOf(option[0])>=0?'checked':''}
+                onchange="limitVoteReasons_(this)"
+              >
+              <span>${option[1]} ${esc(option[0])}</span>
+            </label>`;
+          }).join('')}
+        </div>
+      </fieldset>
+
+      ${
+        isFinal
+          ? `<label class="wide final-first-choice">
+              <input
+                id="voteFirstChoice"
+                type="checkbox"
+                ${existingFirstChoice?'checked':''}
+              >
+              <span>
+                <strong>Make this my #1 choice</strong>
+                <small>
+                  You can have only one #1 choice. Selecting this replaces your previous #1.
+                </small>
+              </span>
+            </label>`
+          : ''
+      }
+
+      <label class="wide">
+        <span>Optional notes</span>
+        <textarea id="voteNotes">${esc(existing?existing.Notes||'':'')}</textarea>
+      </label>
+
+      <div class="wide form-actions vote-form-actions">
+        <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+        <button class="vote-primary">${existing?'Update rating':'Save rating'}</button>
+      </div>
+    </form>
+  </div>`);
+}
+
+function updateVoteChoiceDisplay_(input){
+  document.querySelectorAll('.rating-choice').forEach(function(label){
+    label.classList.toggle(
+      'selected',
+      Boolean(label.querySelector('input:checked'))
+    );
+  });
+}
+
+function limitVoteReasons_(changed){
+  const selected=Array.from(
+    document.querySelectorAll('input[name="voteReason"]:checked')
+  );
+
+  if(selected.length>3){
+    changed.checked=false;
+    toast('Choose up to three reasons.',true);
+  }
+}
+
+function saveVoteForm(e,cabinId){
+  e.preventDefault();
+  requireTraveler();
+
+  const scoreInput=document.querySelector(
+    'input[name="voteScoreRadio"]:checked'
+  );
+
+  if(!scoreInput){
+    toast('Choose a rating from 1 to 5.',true);
+    return;
+  }
+
+  const score=Number(scoreInput.value);
+  const reasons=Array.from(
+    document.querySelectorAll('input[name="voteReason"]:checked')
+  ).map(function(input){return input.value;});
+
+  const round=currentVotingRound_();
+  const previousVote=myVoteForCabin_(cabinId);
+
+  const optimisticVote={
+    'Vote ID':previousVote?previousVote['Vote ID']:'LOCAL-'+Date.now(),
+    'Cabin ID':cabinId,
+    'Traveler ID':currentTravelerId,
+    'Score':score,
+    'Notes':val('voteNotes'),
+    'Reasons':reasons.join('|'),
+    'First Choice':(
+      round==='Final' &&
+      document.getElementById('voteFirstChoice') &&
+      document.getElementById('voteFirstChoice').checked
+    )?'Yes':'',
+    'Voting Round':round,
+    'Created At':new Date().toISOString()
+  };
+
+  DATA.votes=(DATA.votes||[]).filter(function(vote){
+    return !(
+      vote['Cabin ID']===cabinId &&
+      vote['Traveler ID']===currentTravelerId &&
+      String(vote['Voting Round']||'Preliminary')===round
+    );
+  });
+  DATA.votes.push(optimisticVote);
+
+  const cabin=DATA.cabins.find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  if(cabin){
+    const votes=currentRoundVotesForCabin_(cabinId);
+    cabin.voteCount=votes.length;
+    cabin.averageScore=votes.length
+      ? votes.reduce(function(total,vote){
+          return total+Number(vote.Score||0);
+        },0)/votes.length
+      : 0;
+  }
+
+  closeModal();
+  render();
+  toast(previousVote?'Rating updated. Saving…':'Rating saved. Syncing…');
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      DATA.votes=(DATA.votes||[]).filter(function(vote){
+        return !(
+          vote['Cabin ID']===cabinId &&
+          vote['Traveler ID']===currentTravelerId &&
+          String(vote['Voting Round']||'Preliminary')===round
+        );
+      });
+      DATA.votes.push(result.vote);
+
+      if(cabin){
+        cabin.voteCount=result.voteCount;
+        cabin.averageScore=result.averageScore;
+      }
+
+      render();
+      toast(result.message||'Rating saved.');
+    })
+    .withFailureHandler(function(error){
+      DATA.votes=(DATA.votes||[]).filter(function(vote){
+        return !(
+          vote['Cabin ID']===cabinId &&
+          vote['Traveler ID']===currentTravelerId &&
+          String(vote['Voting Round']||'Preliminary')===round
+        );
+      });
+
+      if(previousVote) DATA.votes.push(previousVote);
+      render();
+
+      toast(
+        'Rating could not be saved: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .saveVoteFast({
+      cabinId:cabinId,
+      travelerId:currentTravelerId,
+      score:score,
+      notes:val('voteNotes'),
+      reasons:reasons,
+      firstChoice:(
+        round==='Final' &&
+        document.getElementById('voteFirstChoice') &&
+        document.getElementById('voteFirstChoice').checked
+      ),
+      round:round
+    });
+}
+
+function toggleFavorite(cabinId){
+  requireTraveler();
+  run('toggleFavorite',[cabinId,currentTravelerId],'Favorite updated.',false);
+}
+</script>

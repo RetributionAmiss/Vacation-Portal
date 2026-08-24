@@ -1,0 +1,46 @@
+<script>
+function run(name,args,message,close=true){
+  google.script.run.withSuccessHandler(data=>{DATA=data;if(close)closeModal();hydrateHeader();render();toast(message||'Saved.');})
+    .withFailureHandler(error=>toast(error&&error.message?error.message:String(error),true))[name].apply(null,args||[]);
+}
+
+function openModal(html){document.getElementById('modalContent').innerHTML=html;document.getElementById('modal').classList.remove('hidden');document.getElementById('modal').setAttribute('aria-hidden','false')}
+
+function closeModal(){
+  const modal=document.getElementById('modal');
+  const panel=modal.querySelector('.modal-panel');
+
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden','true');
+
+  if(panel){
+    panel.classList.remove('bedroom-planner-modal-panel');
+  }
+}
+
+function toast(text,error){const t=document.getElementById('toast');t.textContent=text;t.style.background=error?'#a84134':'#17372b';t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),4500)}
+
+function field(id,label,value,type='text',required=false){return `<label><span>${label}</span><input id="${id}" type="${type}" value="${escAttr(value||'')}" ${required?'required':''} ${type==='number'?'step="any"':''}></label>`}
+
+function area(id,label,value){return `<label class="wide"><span>${label}</span><textarea id="${id}" rows="3">${esc(value||'')}</textarea></label>`}
+
+function val(id){return document.getElementById(id)?.value||''}
+
+function lines(value){return String(value||'').split(/\r?\n|,\s*/).map(x=>x.trim()).filter(Boolean)}
+
+function displayName(c){return c.Nickname||c['Cabin Name']||'Unnamed rental'}
+
+function currentTraveler(){return DATA.travelers.find(t=>t['Traveler ID']===currentTravelerId)}
+
+function requireTraveler(){if(!currentTravelerId){toast('Select who you are planning as first.',true);throw new Error('Traveler required')}}
+
+function money(value){return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(Number(value||0))}
+
+function fmtDate(value){if(!value)return '';const d=new Date(value);return isNaN(d)?String(value):d.toLocaleDateString()}
+
+function dateInput(value){if(!value)return '';const d=new Date(value);return isNaN(d)?String(value).slice(0,10):d.toISOString().slice(0,10)}
+
+function esc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function escAttr(value){return esc(value).replace(/`/g,'&#96;')}
+</script>
