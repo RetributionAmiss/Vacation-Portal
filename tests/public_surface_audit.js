@@ -12,7 +12,12 @@ const forbiddenPublic=new Set([
   'getJustinVotingSummary',
   'processRentalEnrichmentQueue',
   'deletePlannerRecord',
-  'deletePlannerRecordFast'
+  'deletePlannerRecordFast',
+  'saveCabin',
+  'archiveCabin',
+  'reviewCabin',
+  'setCabinOriginalUrl',
+  'getRentalQueueHealth'
 ]);
 
 for(const file of files){
