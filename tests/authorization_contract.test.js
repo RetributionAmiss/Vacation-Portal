@@ -26,6 +26,7 @@ const organizerSummary=read('OrganizerSummary.gs');
 const rentalEdits=read('RentalEditQueue.gs');
 const rentalEngine=read('RentalImportEngine.gs');
 const rentalQueueAuth=read('RentalQueueAuthorization.gs');
+const rentals=read('Rentals.gs');
 const setup=read('Setup.gs');
 const cabinMaintenance=read('CabinMaintenance.gs');
 const repair=read('RentalProcessingRepair.gs');
@@ -69,6 +70,15 @@ assert.match(clientRentalAuth,/\.enrichCabinNow\([\s\S]*?organizerAuthorizationV
 assert.match(clientRentalAuth,/withOrganizerAuthorization_\([\s\S]*?\.refreshCabinPhotos\(/,'client photo refresh must acquire organizer authorization');
 assert.match(clientRentalAuth,/\.refreshCabinPhotos\([\s\S]*?organizerAuthorizationValues_\(/,'client photo refresh must send organizer session values');
 assert.match(clientRentalAuth,/\.queueCabinEdit\([\s\S]*?organizerAuthorizationValues_\(v\)/,'client rental edit must send organizer session values');
+
+// Old cabin-maintenance mutations are no longer public alternate paths. The
+// current web client uses queueCabinEdit/removeRentalForOrganizer instead.
+assert.doesNotMatch(rentals,/function saveCabin\s*\(/,'legacy saveCabin admin mutation must not remain public');
+assert.doesNotMatch(rentals,/function archiveCabin\s*\(/,'legacy archiveCabin admin mutation must not remain public');
+assert.doesNotMatch(rentals,/function reviewCabin\s*\(/,'legacy reviewCabin admin mutation must not remain public');
+assert.match(rentals,/function saveCabin_\s*\(/,'legacy saveCabin implementation may remain private for internal compatibility');
+assert.match(rentals,/function archiveCabin_\s*\(/,'legacy archiveCabin implementation may remain private for internal compatibility');
+assert.match(rentals,/function reviewCabin_\s*\(/,'legacy reviewCabin implementation may remain private for internal compatibility');
 
 assert.doesNotMatch(app,/function getJustinVotingSummary\s*\(/,'legacy Justin-ID voting summary endpoint must not be public');
 assert.doesNotMatch(app,/requestingTravelerId/,'legacy caller-supplied Justin summary identity must be removed');
