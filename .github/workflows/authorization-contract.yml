@@ -22,3 +22,5 @@ jobs:
         run: node tests/authorization_contract.test.js
       - name: Audit public Apps Script surface
         run: node tests/public_surface_audit.js
+      - name: Scan for committed secrets
+        run: node tests/secret_scan.js
