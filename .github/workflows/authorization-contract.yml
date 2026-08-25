@@ -20,3 +20,5 @@ jobs:
           node-version: '22'
       - name: Run authorization contract tests
         run: node tests/authorization_contract.test.js
+      - name: Audit public Apps Script surface
+        run: node tests/public_surface_audit.js
