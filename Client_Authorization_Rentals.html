@@ -1,0 +1,157 @@
+<script>
+function enrichCabin(cabinId){
+  withOrganizerAuthorization_(function(){
+    toast('Enriching rental details…');
+
+    google.script.run
+      .withSuccessHandler(function(data){
+        DATA=data;
+        hydrateHeader();
+        render();
+        toast('Rental enrichment completed.');
+      })
+      .withFailureHandler(function(error){
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+        toast(error&&error.message?error.message:String(error),true);
+      })
+      .enrichCabinNow(
+        cabinId,
+        organizerAuthorizationValues_({})
+      );
+  });
+}
+
+function refreshCabinPhotosClient(cabinId){
+  withOrganizerAuthorization_(function(){
+    toast('Searching the listing for photos…');
+
+    google.script.run
+      .withSuccessHandler(function(data){
+        DATA=data;
+        hydrateHeader();
+        render();
+        toast('Cabin photos refreshed.');
+      })
+      .withFailureHandler(function(error){
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+        toast(error&&error.message?error.message:String(error),true);
+      })
+      .refreshCabinPhotos(
+        cabinId,
+        organizerAuthorizationValues_({})
+      );
+  });
+}
+
+function saveCabinForm(e,reviewMode){
+  e.preventDefault();
+
+  const v={
+    id:val('cabinId'),name:val('cabinName'),nickname:val('cabinNickname'),
+    originalUrl:val('cabinOriginalUrl'),url:val('cabinUrl'),
+    location:val('cabinLocation'),sleeps:val('cabinSleeps'),
+    bedrooms:val('cabinBedrooms'),bathrooms:val('cabinBathrooms'),
+    totalCost:val('cabinTotal'),nightlyRate:val('cabinNightly'),
+    rating:val('cabinRating'),reviewCount:val('cabinReviews'),
+    imageUrl:val('cabinImage'),photoUrls:val('cabinPhotos'),
+    description:val('cabinDescription'),amenities:val('cabinAmenities'),
+    pool:val('cabinPool'),hotTub:val('cabinHotTub'),
+    theater:val('cabinTheater'),arcade:val('cabinArcade'),
+    cancellationPolicy:val('cabinCancellation'),feesAndTaxes:val('cabinFees'),
+    houseRules:val('cabinRules'),parking:val('cabinParking'),
+    accessibility:val('cabinAccessibility'),nearbyHighlights:val('cabinNearby'),
+    submittedBy:(currentTraveler()||{}).Name||''
+  };
+
+  if(!v.name){
+    toast('Property name is required.',true);
+    return;
+  }
+
+  withOrganizerAuthorization_(function(){
+    const cabinIndex=(DATA.cabins||[]).findIndex(function(cabin){
+      return cabin['Cabin ID']===v.id;
+    });
+
+    const previousCabin=cabinIndex>=0
+      ? Object.assign({},DATA.cabins[cabinIndex])
+      : null;
+
+    if(cabinIndex>=0){
+      DATA.cabins[cabinIndex]=Object.assign({},DATA.cabins[cabinIndex],{
+        'Cabin Name':v.name,
+        'Nickname':v.nickname,
+        'Original Rental URL':v.originalUrl||v.url,
+        'Rental URL':v.url,
+        'Location':v.location,
+        'Sleeps':Number(v.sleeps||0),
+        'Bedrooms':Number(v.bedrooms||0),
+        'Bathrooms':Number(v.bathrooms||0),
+        'Total Rental Cost':Number(v.totalCost||0),
+        'Nightly Rate':Number(v.nightlyRate||0),
+        'Rating':Number(v.rating||0),
+        'Review Count':Number(v.reviewCount||0),
+        'Image URL':v.imageUrl,
+        'Photo URLs':v.photoUrls,
+        'Description':v.description,
+        'Amenities':v.amenities,
+        'Cancellation Policy':v.cancellationPolicy,
+        'Fees and Taxes':v.feesAndTaxes,
+        'House Rules':v.houseRules,
+        'Parking':v.parking,
+        'Accessibility':v.accessibility,
+        'Nearby Highlights':v.nearbyHighlights,
+        'Import Stage':reviewMode?'Review Saving…':'Saving Edits…',
+        detail:Object.assign({},DATA.cabins[cabinIndex].detail||{},{
+          Pool:v.pool,
+          'Hot Tub':v.hotTub,
+          Theater:v.theater,
+          Arcade:v.arcade
+        })
+      });
+    }
+
+    closeModal();
+    render();
+    toast(
+      reviewMode
+        ? 'Review submitted. Saving in the background…'
+        : 'Edits submitted. Saving in the background…'
+    );
+    scheduleRentalPolling_();
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        if(result&&result.cabin){
+          const index=(DATA.cabins||[]).findIndex(function(cabin){
+            return cabin['Cabin ID']===result.cabin['Cabin ID'];
+          });
+
+          if(index>=0){
+            DATA.cabins[index]=Object.assign({},DATA.cabins[index],result.cabin);
+            render();
+          }
+        }
+        scheduleRentalPolling_();
+      })
+      .withFailureHandler(function(error){
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+
+        if(cabinIndex>=0&&previousCabin){
+          DATA.cabins[cabinIndex]=previousCabin;
+          render();
+        }
+
+        toast(
+          'The edit could not be queued: '+
+          (error&&error.message?error.message:String(error)),
+          true
+        );
+      })
+      .queueCabinEdit(
+        organizerAuthorizationValues_(v),
+        Boolean(reviewMode)
+      );
+  });
+}
+</script>
