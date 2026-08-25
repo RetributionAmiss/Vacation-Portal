@@ -7,7 +7,7 @@ const vm=require('vm');
 const root=path.resolve(__dirname,'..');
 const read=name=>fs.readFileSync(path.join(root,name),'utf8');
 
-function blockFor(source,name,length=900){
+function blockFor(source,name,length=1200){
   const start=source.indexOf('function '+name+'(');
   assert.ok(start>=0,name+' must exist');
   return source.slice(start,start+length);
@@ -24,10 +24,13 @@ const planning=read('Planning_Common.gs');
 const diagnostics=read('Diagnostics.gs');
 const organizerSummary=read('OrganizerSummary.gs');
 const rentalEdits=read('RentalEditQueue.gs');
+const rentalEngine=read('RentalImportEngine.gs');
+const rentalQueueAuth=read('RentalQueueAuthorization.gs');
 const setup=read('Setup.gs');
 const cabinMaintenance=read('CabinMaintenance.gs');
 const repair=read('RentalProcessingRepair.gs');
 const clientAuth=read('Client_Authorization.html');
+const clientRentalAuth=read('Client_Authorization_Rentals.html');
 const agents=read('AGENTS.md');
 
 // ---------------------------------------------------------------------------
@@ -53,6 +56,19 @@ assert.match(blockFor(archive,'resetPlanningPortalToGathering'),/assertOrganizer
 assert.match(blockFor(diagnostics,'runPortalDiagnostics'),/assertOrganizerFromValues_\(/,'web diagnostics must enforce organizer auth');
 assert.match(blockFor(organizerSummary,'getOrganizerVotingSummary'),/assertOrganizerFromValues_\(/,'organizer voting summary must enforce organizer auth');
 assert.match(blockFor(rentalEdits,'queueCabinEdit'),/assertOrganizerFromValues_\(/,'manual rental editing must enforce organizer auth');
+
+// Rental import/maintenance closure.
+assert.match(blockFor(rentalEngine,'refreshCabinPhotos'),/assertOrganizerFromValues_\(/,'refreshCabinPhotos must require organizer authorization');
+assert.match(blockFor(rentalEngine,'enrichCabinNow'),/assertOrganizerFromValues_\(/,'enrichCabinNow must require organizer authorization');
+assert.doesNotMatch(rentalEngine,/function processRentalEnrichmentQueue\s*\(/,'generic enrichment worker must not be a public Apps Script endpoint');
+assert.match(rentalEngine,/function processRentalEnrichmentQueue_\s*\(/,'private enrichment worker must remain available for time-driven trigger execution');
+assert.match(blockFor(rentalEngine,'retryFailedRentalImports'),/assertSpreadsheetAdminContext_\(/,'rental retry must require spreadsheet admin context');
+assert.match(rentalQueueAuth,/function processRentalEnrichmentQueueMenu\s*\([\s\S]*?assertSpreadsheetAdminContext_\([\s\S]*?processRentalEnrichmentQueue_\(/,'menu wrapper must gate the private enrichment worker with spreadsheet admin context');
+assert.match(clientRentalAuth,/withOrganizerAuthorization_\([\s\S]*?\.enrichCabinNow\(/,'client enrichment must acquire organizer authorization');
+assert.match(clientRentalAuth,/\.enrichCabinNow\([\s\S]*?organizerAuthorizationValues_\(/,'client enrichment must send organizer session values');
+assert.match(clientRentalAuth,/withOrganizerAuthorization_\([\s\S]*?\.refreshCabinPhotos\(/,'client photo refresh must acquire organizer authorization');
+assert.match(clientRentalAuth,/\.refreshCabinPhotos\([\s\S]*?organizerAuthorizationValues_\(/,'client photo refresh must send organizer session values');
+assert.match(clientRentalAuth,/\.queueCabinEdit\([\s\S]*?organizerAuthorizationValues_\(v\)/,'client rental edit must send organizer session values');
 
 assert.doesNotMatch(app,/function getJustinVotingSummary\s*\(/,'legacy Justin-ID voting summary endpoint must not be public');
 assert.doesNotMatch(app,/requestingTravelerId/,'legacy caller-supplied Justin summary identity must be removed');
@@ -93,6 +109,7 @@ const scriptProperties={
 };
 
 let uuidCounter=0;
+let boundTraveler='TRAV-A';
 const context={
   console,
   Date,
@@ -111,7 +128,7 @@ const context={
   PropertiesService:{getScriptProperties:()=>scriptProperties},
   SpreadsheetApp:{getUi:()=>({ButtonSet:{OK:'OK'}})},
   normalizePortalDeviceId_:value=>String(value||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,80),
-  getDeviceTravelerBinding_:deviceId=>deviceId==='DEVICE-A'?{travelerId:'TRAV-A'}:null
+  getDeviceTravelerBinding_:deviceId=>deviceId==='DEVICE-A'?{travelerId:boundTraveler}:null
 };
 vm.createContext(context);
 vm.runInContext(auth,context,{filename:'Authorization.gs'});
@@ -134,6 +151,13 @@ assert.throws(()=>context.assertOrganizer_(session.token,'DEVICE-B'),/different 
 assert.throws(()=>context.assertOrganizer_('malformed-token','DEVICE-A'),/ORGANIZER_AUTH_REQUIRED/,'malformed token must fail closed');
 assert.throws(()=>context.assertOrganizer_('','DEVICE-A'),/ORGANIZER_AUTH_REQUIRED/,'Device ID alone must not authorize');
 
+// Rebinding a device to Justin changes normal traveler identity only. It cannot
+// manufacture an organizer bearer token or make assertOrganizer_ accept the device.
+boundTraveler='TRAV-JUSTIN';
+assert.doesNotThrow(()=>context.assertTravelerSelf_('DEVICE-A','TRAV-JUSTIN'),'a rebound device can satisfy the documented normal-traveler self-service binding');
+assert.throws(()=>context.assertOrganizer_('','DEVICE-A'),/ORGANIZER_AUTH_REQUIRED/,'rebinding a device to Justin must not create organizer authorization');
+boundTraveler='TRAV-A';
+
 const tokenHash=context.authHexDigest_(session.token);
 const sessionKey='ORGANIZER_SESSION_'+tokenHash;
 const expired=JSON.parse(scriptProperties.getProperty(sessionKey));
@@ -150,4 +174,5 @@ assert.throws(()=>context.assertTravelerSelf_('DEVICE-A','TRAV-B'),/TRAVELER_AUT
 
 console.log('PASS static authorization contracts');
 console.log('PASS executable organizer-session behavior');
-console.log('NOTE traveler self-service device binding is tested for mismatch rejection, not as strong user authentication');
+console.log('PASS rental administration authorization contracts');
+console.log('NOTE traveler self-service device binding is tested for mismatch rejection and organizer-boundary isolation, not as strong user authentication');
