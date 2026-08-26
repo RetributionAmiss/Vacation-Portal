@@ -2,7 +2,7 @@ const PORTAL_SCHEMA_VERSION = '4.3.0';
 const SPREADSHEET_ID = '16FJTnkhexYLFRC2NaIK6izIeH5wfbdXgJvdISt7X06A';
 const APP_TITLE = 'Smoky Mountain Family Vacation Portal';
 const GEMINI_MODEL = 'gemini-3.6-flash';
-const IMPORT_TRIGGER_FUNCTION = 'processRentalEnrichmentQueue';
+const IMPORT_TRIGGER_FUNCTION = 'processRentalEnrichmentQueue_';
 const MAX_AI_HISTORY_CHARS = 45000;
 const DEFAULT_VRBO_APIFY_ACTOR = 'memo23~vrbo-scraper';
 

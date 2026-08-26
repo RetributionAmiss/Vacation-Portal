@@ -1,4 +1,5 @@
 function repairRentalProcessing() {
+  assertSpreadsheetAdminContext_();
   setupVacationPortalSilent_();
   ensureRentalEnrichmentTrigger_();
 
@@ -27,7 +28,7 @@ function repairRentalProcessing() {
     }
   });
 
-  const result = processRentalEnrichmentQueue();
+  const result = processRentalEnrichmentQueue_();
 
   safeUiAlert_(
     'Rental processing repaired',
@@ -41,7 +42,7 @@ function repairRentalProcessing() {
   return result;
 }
 
-function getRentalQueueHealth() {
+function getRentalQueueHealth_() {
   const extensionRows = readSheet_('Extension Capture Queue');
   const rentalRows = readSheet_('Rental Import Queue');
 

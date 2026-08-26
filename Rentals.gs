@@ -1,4 +1,4 @@
-function saveCabin(values) {
+function saveCabin_(values) {
   const id = values.id || uid_('CABIN');
   const now = new Date();
   const record = {
@@ -79,7 +79,7 @@ function saveCabin(values) {
   return getPortalData();
 }
 
-function archiveCabin(id) {
+function archiveCabin_(id) {
   updateById_('Cabins', 'Cabin ID', id, {
     'Active': 'No',
     'Updated At': new Date()
@@ -128,13 +128,13 @@ function deleteBedroom(id) {
   return getPortalData();
 }
 
-function reviewCabin(values) {
+function reviewCabin_(values) {
   const cabin = readSheet_('Cabins').find(function (row) {
     return row['Cabin ID'] === values.id;
   });
   if (!cabin) throw new Error('Cabin not found.');
 
-  saveCabin(values);
+  saveCabin_(values);
 
   const imports = readSheet_('Rental Import').filter(function (row) {
     return row['Cabin ID'] === values.id;

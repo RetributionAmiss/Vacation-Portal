@@ -1,0 +1,342 @@
+<script>
+const ORGANIZER_SESSION_STORAGE_KEY_='vacationOrganizerSessionV440a1';
+let organizerSession_=readOrganizerSession_();
+let organizerAuthPromptBusy_=false;
+let organizerAuthQueue_=[];
+
+function readOrganizerSession_(){
+  try{
+    const raw=localStorage.getItem(ORGANIZER_SESSION_STORAGE_KEY_);
+    if(!raw) return null;
+    const session=JSON.parse(raw);
+    if(!session||!session.token||!session.expiresAt) return null;
+    if(new Date(session.expiresAt).getTime()<=Date.now()){
+      localStorage.removeItem(ORGANIZER_SESSION_STORAGE_KEY_);
+      return null;
+    }
+    return session;
+  }catch(error){
+    return null;
+  }
+}
+
+function saveOrganizerSession_(session){
+  organizerSession_=session||null;
+  try{
+    if(session){
+      localStorage.setItem(ORGANIZER_SESSION_STORAGE_KEY_,JSON.stringify(session));
+    }else{
+      localStorage.removeItem(ORGANIZER_SESSION_STORAGE_KEY_);
+    }
+  }catch(error){}
+}
+
+function organizerAuthorizationValues_(values){
+  return Object.assign({},values||{}, {
+    organizerToken:organizerSession_ ? String(organizerSession_.token||'') : '',
+    organizerDeviceId:String(PWA_DEVICE_ID_||'')
+  });
+}
+
+function organizerAuthError_(error){
+  return /^ORGANIZER_AUTH_/i.test(
+    String(error&&error.message?error.message:error||'')
+  );
+}
+
+function withOrganizerAuthorization_(callback){
+  if(typeof callback!=='function') return;
+
+  if(organizerSession_ && new Date(organizerSession_.expiresAt).getTime()>Date.now()){
+    google.script.run
+      .withSuccessHandler(function(status){
+        if(status&&status.authorized){
+          callback();
+          return;
+        }
+        saveOrganizerSession_(null);
+        promptForOrganizerAuthorization_(callback,status);
+      })
+      .withFailureHandler(function(){
+        saveOrganizerSession_(null);
+        promptForOrganizerAuthorization_(callback,null);
+      })
+      .getOrganizerAuthorizationStatus(
+        organizerSession_.token,
+        String(PWA_DEVICE_ID_||'')
+      );
+    return;
+  }
+
+  promptForOrganizerAuthorization_(callback,null);
+}
+
+function promptForOrganizerAuthorization_(callback,status){
+  organizerAuthQueue_.push(callback);
+  if(organizerAuthPromptBusy_) return;
+  organizerAuthPromptBusy_=true;
+
+  openModal(`<div class="organizer-auth-dialog">
+    <p class="eyebrow">ORGANIZER AUTHORIZATION</p>
+    <h2>Unlock organizer tools</h2>
+    <p>
+      Enter the private organizer access key to use protected Justin-only actions
+      on this device.
+    </p>
+    ${status&&status.configured===false
+      ? `<div class="notice warning">
+          Organizer authorization has not been configured yet. Run
+          <strong>setOrganizerAccessKey</strong> once from the Apps Script editor.
+        </div>`
+      : ''}
+    <label>
+      <span>Organizer access key</span>
+      <input id="organizerAccessKey" type="password" autocomplete="current-password">
+    </label>
+    <div class="form-actions">
+      <button class="ghost" type="button" onclick="cancelOrganizerAuthorization_()">Cancel</button>
+      <button type="button" onclick="submitOrganizerAuthorization_()">Unlock</button>
+    </div>
+  </div>`);
+
+  setTimeout(function(){
+    const input=document.getElementById('organizerAccessKey');
+    if(input) input.focus();
+  },50);
+}
+
+function cancelOrganizerAuthorization_(){
+  organizerAuthQueue_=[];
+  organizerAuthPromptBusy_=false;
+  closeModal();
+}
+
+function submitOrganizerAuthorization_(){
+  const key=val('organizerAccessKey').trim();
+  if(!key){
+    toast('Enter the organizer access key.',true);
+    return;
+  }
+
+  const button=document.querySelector('.organizer-auth-dialog .form-actions button:last-child');
+  if(button){button.disabled=true;button.textContent='Checking…';}
+
+  google.script.run
+    .withSuccessHandler(function(session){
+      saveOrganizerSession_(session);
+      const queued=organizerAuthQueue_.slice();
+      organizerAuthQueue_=[];
+      organizerAuthPromptBusy_=false;
+      closeModal();
+      queued.forEach(function(fn){fn();});
+    })
+    .withFailureHandler(function(error){
+      if(button){button.disabled=false;button.textContent='Unlock';}
+      toast(error&&error.message?error.message:String(error),true);
+    })
+    .createOrganizerSession(key,String(PWA_DEVICE_ID_||''));
+}
+
+const ADMIN_RUN_FUNCTIONS_={
+  saveTripSettings:true,
+  saveFinalists:true,
+  startFinalVoting:true,
+  closeFinalVoting:true,
+  reopenFinalVoting:true,
+  restartPreliminaryVoting:true
+};
+
+function run(name,args,message,close=true){
+  const invoke=function(){
+    let finalArgs=(args||[]).slice();
+    if(ADMIN_RUN_FUNCTIONS_[name]){
+      finalArgs[0]=organizerAuthorizationValues_(finalArgs[0]||{});
+    }
+
+    google.script.run
+      .withSuccessHandler(function(data){
+        DATA=data;
+        if(close) closeModal();
+        hydrateHeader();
+        render();
+        toast(message||'Saved.');
+      })
+      .withFailureHandler(function(error){
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+        toast(error&&error.message?error.message:String(error),true);
+      })[name].apply(null,finalArgs);
+  };
+
+  if(ADMIN_RUN_FUNCTIONS_[name]) withOrganizerAuthorization_(invoke);
+  else invoke();
+}
+
+function loadJustinVotingSummary_(force){
+  const container=document.getElementById('justinVotingSummary');
+  if(!container||justinVotingSummaryLoading_) return;
+
+  withOrganizerAuthorization_(function(){
+    justinVotingSummaryLoading_=true;
+    if(force){
+      container.innerHTML='<div class="voting-summary-loading">Refreshing voting summary…</div>';
+    }
+
+    google.script.run
+      .withSuccessHandler(function(summary){
+        justinVotingSummaryLoading_=false;
+        const target=document.getElementById('justinVotingSummary');
+        if(target) target.innerHTML=renderJustinVotingSummary_(summary||{});
+      })
+      .withFailureHandler(function(error){
+        justinVotingSummaryLoading_=false;
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+        const target=document.getElementById('justinVotingSummary');
+        if(target){
+          target.innerHTML='<div class="notice"><strong>Voting summary could not load.</strong><br>'+esc(error&&error.message?error.message:String(error))+'</div>';
+        }
+      })
+      .getOrganizerVotingSummary(organizerAuthorizationValues_({}));
+  });
+}
+
+function startFinalVotingClient_(){
+  const ids=selectedFinalistIds_();
+  if(ids.length!==3){toast('Select exactly three finalists.',true);return;}
+
+  withOrganizerAuthorization_(function(){
+    google.script.run
+      .withSuccessHandler(function(){
+        google.script.run
+          .withSuccessHandler(function(data){
+            DATA=data;render();toast('Final voting is now open.');
+          })
+          .withFailureHandler(function(error){toast(error&&error.message?error.message:String(error),true);})
+          .startFinalVoting(organizerAuthorizationValues_({}));
+      })
+      .withFailureHandler(function(error){toast(error&&error.message?error.message:String(error),true);})
+      .saveFinalists(organizerAuthorizationValues_({cabinIds:ids}));
+  });
+}
+
+function resetPlanningPortalToGatheringClient_(){
+  const sections=Array.from(document.querySelectorAll('input[name="gatheringResetSection"]:checked'))
+    .map(function(input){return input.value;});
+
+  withOrganizerAuthorization_(function(){
+    const button=document.querySelector('#modalContent .remove-rental-button');
+    if(button){button.disabled=true;button.textContent='Archiving & resetting…';}
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        DATA=result.data;currentView='dashboard';closeModal();hydrateHeader();render();
+        const cleared=result.clearedSections||[];
+        toast(cleared.length
+          ? 'Portal reset to Gathering. Cleared: '+cleared.join(', ')+'.'
+          : 'Portal reset to Gathering. Planning sections were preserved.');
+      })
+      .withFailureHandler(function(error){
+        if(button){button.disabled=false;button.textContent='Archive & reset selected';}
+        toast(error&&error.message?error.message:String(error),true);
+      })
+      .resetPlanningPortalToGathering(
+        organizerAuthorizationValues_({sections:sections})
+      );
+  });
+}
+
+function restartPreliminaryVotingClient_(){
+  closeModal();
+  withOrganizerAuthorization_(function(){
+    google.script.run
+      .withSuccessHandler(function(data){
+        DATA=data;navigate('rentals');render();
+        toast('Preliminary voting restarted. All rentals are open for a fresh vote.');
+      })
+      .withFailureHandler(function(error){toast(error&&error.message?error.message:String(error),true);})
+      .restartPreliminaryVoting(organizerAuthorizationValues_({}));
+  });
+}
+
+function showPushSetupStatus_(){
+  withOrganizerAuthorization_(function(){
+    google.script.run
+      .withSuccessHandler(function(status){
+        const lines=[
+          status.appIdConfigured?'✓ OneSignal App ID configured':'✕ OneSignal App ID missing',
+          status.apiKeyConfigured?'✓ OneSignal API key configured':'✕ OneSignal API key missing',
+          status.pwaUrl?'✓ PWA URL configured':'✕ PWA URL missing'
+        ];
+        openModal(`<div class="push-status-dialog">
+          <p class="eyebrow">PUSH NOTIFICATIONS</p><h2>Notification setup</h2>
+          <div class="push-status-list">${lines.map(function(line){return `<div>${esc(line)}</div>`;}).join('')}</div>
+          <div class="form-actions"><button type="button" onclick="closeModal()">Done</button></div>
+        </div>`);
+      })
+      .withFailureHandler(function(error){toast(error&&error.message?error.message:String(error),true);})
+      .getOneSignalStatus(organizerAuthorizationValues_({}));
+  });
+}
+
+function sendPushNotificationClient_(){
+  const audience=val('pushAudience');
+  const title=val('pushTitle').trim();
+  const message=val('pushMessage').trim();
+  const travelerIds=Array.from(document.querySelectorAll('input[name="pushTraveler"]:checked'))
+    .map(function(input){return input.value;});
+
+  if(!message){toast('Enter a notification message.',true);return;}
+  if(audience==='selected'&&!travelerIds.length){toast('Choose at least one traveler.',true);return;}
+
+  withOrganizerAuthorization_(function(){
+    google.script.run
+      .withSuccessHandler(function(result){
+        toast(result.message||'Notification sent.');
+        const messageBox=document.getElementById('pushMessage');
+        if(messageBox) messageBox.value='';
+      })
+      .withFailureHandler(function(error){toast(error&&error.message?error.message:String(error),true);})
+      .sendPortalPushNotification(organizerAuthorizationValues_({
+        audience:audience,travelerIds:travelerIds,title:title,message:message
+      }));
+  });
+}
+
+function confirmRemoveRental_(cabinId){
+  if(!canRemoveRentals_()){
+    closeModal();toast('Only the Justin traveler profile can remove rentals.',true);return;
+  }
+
+  withOrganizerAuthorization_(function(){
+    const index=(DATA.cabins||[]).findIndex(function(item){return item['Cabin ID']===cabinId;});
+    const previous=index>=0?DATA.cabins[index]:null;
+    if(index>=0) DATA.cabins.splice(index,1);
+    rentalComparisonIds_.delete(cabinId);closeModal();render();
+    toast('Rental removed. Saving in the background…');
+
+    google.script.run
+      .withSuccessHandler(function(result){toast(result.message||'Rental removed.');})
+      .withFailureHandler(function(error){
+        if(previous){DATA.cabins.splice(Math.min(index,DATA.cabins.length),0,previous);render();}
+        toast('The rental could not be removed: '+(error&&error.message?error.message:String(error)),true);
+      })
+      .removeRentalForOrganizer(cabinId,organizerAuthorizationValues_({}));
+  });
+}
+
+function openDiagnostics(){
+  withOrganizerAuthorization_(function(){
+    openModal('<h2>Portal diagnostics</h2><p class="muted">Checking the spreadsheet, sheets, and Gemini configuration…</p><div id="diagnosticResults" class="diagnostic-list"></div>');
+    google.script.run
+      .withSuccessHandler(function(result){
+        const root=document.getElementById('diagnosticResults');
+        root.innerHTML=result.checks.map(function(check){
+          return '<div class="diagnostic-row '+check.status+'"><strong>'+esc(check.name)+'</strong><span>'+esc(check.detail)+'</span></div>';
+        }).join('');
+      })
+      .withFailureHandler(function(error){
+        document.getElementById('diagnosticResults').innerHTML='<div class="notice">'+esc(error&&error.message?error.message:String(error))+'</div>';
+      })
+      .runPortalDiagnostics(organizerAuthorizationValues_({}));
+  });
+}
+</script>

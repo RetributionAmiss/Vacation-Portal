@@ -13,6 +13,8 @@ function setApifyApiToken() {
 }
 
 function testApifyConnection() {
+  assertSpreadsheetAdminContext_();
+
   const token = PropertiesService.getScriptProperties().getProperty('APIFY_API_TOKEN');
   if (!token) throw new Error('Apify API token is not configured.');
 
@@ -269,7 +271,6 @@ function collectApifyRentalData_(items) {
       result.description;
 
     addPhoto_(item.photos || item.images || item.imageUrls || item.coverPhoto);
-
     addAmenity_(item.amenities);
 
     if (Array.isArray(item.bedroomDetails)) {
@@ -354,8 +355,6 @@ function collectApifyRentalData_(items) {
     if (typeof value !== 'object') {
       const text = String(value || '').trim();
 
-      // Many Apify Actors place the complete property response in a
-      // Raw / Raw JSON string. Parse and walk it instead of treating it as text.
       if (
         /^(raw|rawjson|raw json|data|payload|response)$/.test(lowerKey) &&
         /^[\[{]/.test(text)
@@ -363,9 +362,7 @@ function collectApifyRentalData_(items) {
         try {
           walk_(JSON.parse(text), lowerKey, depth + 1, keyPath);
           return;
-        } catch (error) {
-          // Continue with ordinary scalar handling if it is not valid JSON.
-        }
+        } catch (error) {}
       }
 
       if (!result.propertyName && /^(name|title|headline|propertyname|listingname)$/.test(lowerKey)) result.propertyName = text;

@@ -31,8 +31,6 @@ function submitRental(url, submittedBy) {
       providerInfo.provider + ' property ' +
       (providerInfo.propertyId || expediaPropertyId || '');
 
-    // Create the placeholder card immediately. All network scraping and
-    // Gemini work happens later in the background queue.
     appendObject_('Cabins', {
       'Cabin ID': cabinId,
       'Provider': providerInfo.provider,
@@ -110,8 +108,6 @@ function submitRental(url, submittedBy) {
 
     ensureRentalEnrichmentTrigger_();
 
-    // Do not call getPortalData() here. Reading every portal sheet made
-    // URL submission feel slow. Return only the new placeholder card.
     return {
       queued: true,
       cabin: {
@@ -241,7 +237,10 @@ function findDuplicateRental_(providerInfo, expediaPropertyId) {
   return null;
 }
 
-function refreshCabinPhotos(cabinId) {
+function refreshCabinPhotos(cabinId, authorization) {
+  authorization = authorization || {};
+  assertOrganizerFromValues_(authorization);
+
   const cabin = readSheet_('Cabins').find(function (row) {
     return row['Cabin ID'] === cabinId;
   });
@@ -284,7 +283,10 @@ function refreshCabinPhotos(cabinId) {
   return getPortalData();
 }
 
-function enrichCabinNow(cabinId) {
+function enrichCabinNow(cabinId, authorization) {
+  authorization = authorization || {};
+  assertOrganizerFromValues_(authorization);
+
   const queue = readSheet_('Rental Import Queue').slice().reverse().find(function (row) {
     return row['Cabin ID'] === cabinId &&
       [
@@ -343,7 +345,7 @@ function enrichCabinNow(cabinId) {
   return getPortalData();
 }
 
-function processRentalEnrichmentQueue() {
+function processRentalEnrichmentQueue_() {
   setupVacationPortalSilent_();
 
   const editResult = processRentalEditQueue_();
@@ -391,9 +393,6 @@ function processRentalEnrichmentQueue() {
       Number(row.Attempts || 0) < 3;
   }).length;
 
-  // Keep the one-minute worker installed. It services both URL imports and
-  // traveler extension submissions, so no trigger creation is required while
-  // a traveler is waiting for the Add button to return.
   return {
     editsProcessed: editResult.processed,
     editsFailed: editResult.failed,
@@ -704,8 +703,6 @@ function processRentalEnrichmentPhase_(queueRow) {
       'Updated At': new Date()
     });
 
-    // Keep the usable core card instead of replacing its status with a
-    // generic failure.
     updateById_('Cabins', 'Cabin ID', cabinId, {
       'Import Stage': 'Core Ready — Enrichment Error',
       'Updated At': new Date()
@@ -877,8 +874,6 @@ function applyEnrichedRental_(cabinId, data) {
     'Updated At': new Date()
   });
 
-  // Never erase populated child tables because an enrichment source returned
-  // an empty array.
   if (incomingPhotos.length) {
     replaceCabinPhotos_(cabinId, finalPhotos, 'AI Enrichment');
   }
@@ -1111,6 +1106,8 @@ function removeRentalEnrichmentTriggers_() {
 }
 
 function retryFailedRentalImports() {
+  assertSpreadsheetAdminContext_();
+
   const failed = readSheet_('Rental Import Queue').filter(function (row) {
     return ['Quick Error', 'Enrichment Error', 'Quota Waiting'].indexOf(String(row.Status || '')) >= 0 &&
       Number(row.Attempts || 0) < 3;

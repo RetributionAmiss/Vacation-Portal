@@ -247,7 +247,7 @@ Queue stages:
 
 - `Quick Queued`
 - `Quick Processing`
-- `Core Card Ready`
+- `Quick Error`
 - `Enrichment Queued`
 - `Enriching`
 - `Imported` or `Needs Review`
@@ -438,7 +438,7 @@ retried from **Vacation Portal → Retry failed rental edits**.
 
 ## V2.9.4 — immediate-close save dialogs
 
-- rental edit and review dialogs close immediately after client-side validation
+- rental edit and review dialogs close immediately after Save
 - cards update optimistically before the server queue response returns
 - durable queue writes continue after the traveler is back in the portal
 - a compact background-saving indicator replaces the blocking dialog
@@ -1240,7 +1240,7 @@ Browser/device linked.
 - the permanent profile is written to local storage, PWA host storage, and the
   server-backed Device ID mapping automatically
 - host/server persistence is retried at 250ms, 900ms, and 2200ms to survive
-  mobile iframe/load timing
+  mobile iframe timing
 - Make default on this device uses the same automatic commit path
 - editing your own saved traveler later automatically refreshes the stored
   device profile, but editing is no longer necessary to establish it
@@ -1276,3 +1276,21 @@ Browser/device linked.
 - reason choices use compact two-column cards (one column on very narrow phones)
 - Cancel / Save Rating no longer use the generic sticky footer that covered content
 - final-round #1 choice checkbox is also explicitly sized for mobile
+
+
+## V4.4.0-alpha1 — server-side authorization stabilization
+
+- replaces caller-supplied Justin Traveler ID/name authorization with server-issued organizer sessions
+- organizer access key is stored only as a salted SHA-256 hash in Script Properties
+- organizer session tokens expire after 12 hours and are stored server-side only by hash
+- protects Trip Settings, finalist/final-voting administration, preliminary restart,
+  selective Gathering reset, rental removal, push administration, portal diagnostics,
+  organizer voting summary, traveler administration, and manual rental edit queueing
+- removes the legacy public `getJustinVotingSummary(requestingTravelerId)` endpoint
+- makes generic planner deletion helpers private and exposes a fixed allow-listed delete API
+- adds spreadsheet-admin context guards to setup/repair/configuration functions audited so far
+- adds `AGENTS.md`, `docs/AUTHORIZATION.md`, and automated authorization contract tests
+
+PR #1 intentionally remains Draft. The completion audit found remaining blockers in legacy
+rental enrichment endpoints and a separate traveler self-service trust-model limitation.
+See `docs/AUTHORIZATION.md` for the full public-method classification and current blockers.

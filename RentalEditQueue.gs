@@ -2,6 +2,8 @@ function queueCabinEdit(values, reviewMode) {
   setupVacationPortalSilent_();
 
   values = values || {};
+  assertOrganizerFromValues_(values);
+
   const cabinId = String(values.id || '').trim();
   const name = String(values.name || '').trim();
 
@@ -25,7 +27,6 @@ function queueCabinEdit(values, reviewMode) {
     );
   }
 
-  // One durable append is the only spreadsheet write the traveler waits for.
   sheet.appendRow([
     queueId,
     cabinId,
@@ -303,6 +304,8 @@ function applyQueuedCabinEdit_(values, reviewMode) {
 }
 
 function retryFailedRentalEdits() {
+  assertSpreadsheetAdminContext_();
+
   const failed = readSheet_('Rental Edit Queue').filter(function (row) {
     return ['Error', 'Failed'].indexOf(String(row.Status || '')) >= 0;
   });
