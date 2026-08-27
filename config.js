@@ -1,6 +1,6 @@
 window.VACATION_PORTAL_CONFIG = {
   // Internal Apps Script backend. Travelers should always use the GitHub Pages URL.
-  portalUrl: 'https://script.google.com/macros/s/AKfycbxH2RA7kV1L0-zQ8OdA58u10mUxF0WbQh3WnzyPrQ3IvcoODNdkbQA82X1rS4Q_8JPSnw/exec',
+  portalUrl: 'https://script.google.com/macros/s/AKfycbxIr1vqhJ8hpb4g-WK1WGIUbvOHOTnwOwjLUEMSzKFJBbWs5pnAtqKZawzZNrH-8b40/exec',
 
   appName: 'Family Vacation Portal',
   shortName: 'Family Trip',
