@@ -1,5 +1,5 @@
 function doGet(e) {
-  const template = HtmlService.createTemplateFromFile('Index');
+  const template = HtmlService.createTemplateFromFile('AppsScriptIndex');
 
   template.pwaDeviceId = normalizePortalDeviceId_(
     e && e.parameter ? e.parameter.deviceId : ''
