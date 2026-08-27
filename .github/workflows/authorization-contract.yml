@@ -24,3 +24,5 @@ jobs:
         run: node tests/public_surface_audit.js
       - name: Scan for committed secrets
         run: node tests/secret_scan.js
+      - name: Verify deployment boundary
+        run: node tests/deployment_boundary.test.js
