@@ -1084,9 +1084,41 @@ function logRentalImport_(importId, cabinId, stage, status, message, httpStatus)
   });
 }
 
+function getRentalEnrichmentTriggerDisposition_(handlerName) {
+  const handler = String(handlerName || '');
+
+  if (handler === IMPORT_TRIGGER_FUNCTION) {
+    return 'keep';
+  }
+
+  if (handler === 'processRentalEnrichmentQueue') {
+    return 'delete';
+  }
+
+  return 'ignore';
+}
+
 function ensureRentalEnrichmentTrigger_() {
-  const exists = ScriptApp.getProjectTriggers().some(function (trigger) {
-    return trigger.getHandlerFunction() === IMPORT_TRIGGER_FUNCTION;
+  let exists = false;
+
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    const disposition = getRentalEnrichmentTriggerDisposition_(
+      trigger.getHandlerFunction()
+    );
+
+    if (disposition === 'keep') {
+      if (exists) {
+        ScriptApp.deleteTrigger(trigger);
+        return;
+      }
+
+      exists = true;
+      return;
+    }
+
+    if (disposition === 'delete') {
+      ScriptApp.deleteTrigger(trigger);
+    }
   });
 
   if (!exists) {
@@ -1099,10 +1131,54 @@ function ensureRentalEnrichmentTrigger_() {
 
 function removeRentalEnrichmentTriggers_() {
   ScriptApp.getProjectTriggers().forEach(function (trigger) {
-    if (trigger.getHandlerFunction() === IMPORT_TRIGGER_FUNCTION) {
+    const disposition = getRentalEnrichmentTriggerDisposition_(
+      trigger.getHandlerFunction()
+    );
+
+    if (disposition !== 'ignore') {
       ScriptApp.deleteTrigger(trigger);
     }
   });
+}
+
+function testRentalEnrichmentTriggerDisposition_() {
+  const cases = [
+    {
+      handler: IMPORT_TRIGGER_FUNCTION,
+      expected: 'keep'
+    },
+    {
+      handler: 'processRentalEnrichmentQueue',
+      expected: 'delete'
+    },
+    {
+      handler: 'unrelatedProjectTrigger',
+      expected: 'ignore'
+    }
+  ];
+
+  cases.forEach(function (testCase) {
+    const actual = getRentalEnrichmentTriggerDisposition_(
+      testCase.handler
+    );
+
+    if (actual !== testCase.expected) {
+      throw new Error(
+        'Rental trigger regression: ' +
+        testCase.handler +
+        ' expected ' +
+        testCase.expected +
+        ' but got ' +
+        actual +
+        '.'
+      );
+    }
+  });
+
+  return {
+    passed: true,
+    casesChecked: cases.length
+  };
 }
 
 function retryFailedRentalImports() {
