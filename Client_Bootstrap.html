@@ -261,6 +261,17 @@ function markDeviceProfileSaveVerified_(){
   if(status){
     status.textContent='Profile saved. Finishing up…';
   }
+
+  // If the three-second countdown already finished and the UI is showing
+  // the late-confirmation state, immediately transition it to success.
+  const result=document.getElementById('deviceSaveResult');
+  if(
+    !deviceProfileSaveCountdownTimer_ &&
+    result &&
+    result.classList.contains('error')
+  ){
+    finishDeviceProfileSavingModal_();
+  }
 }
 
 function finishDeviceProfileSavingModal_(){
