@@ -51,6 +51,17 @@ for(const file of files){
   });
 }
 
+const diagnostics=fs.readFileSync(path.join(root,'Diagnostics.gs'),'utf8');
+const setupDiagnosticsBlock=diagnostics.match(/function\s+runSetupDiagnostics\s*\(\)\s*\{[\s\S]*?\n\}/);
+const portalDiagnosticsBlock=diagnostics.match(/function\s+runPortalDiagnostics\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+
+if(!setupDiagnosticsBlock || /setupVacationPortalSilent_\s*\(/.test(setupDiagnosticsBlock[0])){
+  suspicious.push('Diagnostics.gs: runSetupDiagnostics diagnostics must be read-only');
+}
+if(!portalDiagnosticsBlock || /setupVacationPortalSilent_\s*\(/.test(portalDiagnosticsBlock[0])){
+  suspicious.push('Diagnostics.gs: runPortalDiagnostics diagnostics must be read-only');
+}
+
 console.log('PUBLIC APPS SCRIPT SURFACE');
 for(const item of publicFunctions){
   console.log(`${item.file} :: ${item.name}(${item.params.join(', ')})`);
@@ -65,6 +76,6 @@ if(suspicious.length){
   console.log('\nNo forbidden/generic public-surface flags detected.');
 }
 
-if(suspicious.some(item=>/forbidden public|generic mutation parameter/.test(item))){
+if(suspicious.some(item=>/forbidden public|generic mutation parameter|diagnostics must be read-only/.test(item))){
   process.exitCode=1;
 }
