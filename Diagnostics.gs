@@ -84,16 +84,14 @@ function getSystemHealth_() {
 }
 
 function runSetupDiagnostics() {
-  // Spreadsheet-menu entry point. The UI call deliberately prevents this
-  // maintenance endpoint from being silently invoked through google.script.run.
+  // Spreadsheet-menu entry point. Keep diagnostics read-only: setup/repair
+  // belongs to the explicit setupVacationPortal maintenance action.
   SpreadsheetApp.getUi();
-  setupVacationPortalSilent_();
   return getSystemHealth_();
 }
 
 function runPortalDiagnostics(values) {
   values = values || {};
   assertOrganizerFromValues_(values);
-  setupVacationPortalSilent_();
   return getSystemHealth_();
 }
