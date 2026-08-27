@@ -382,7 +382,7 @@
     window.OneSignalDeferred=window.OneSignalDeferred||[];
   </script>
   <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
-  <script src="./config.js?v=V4.4.0-alpha1"></script>
+  <script src="./config.js?v=V4.4.0-alpha2"></script>
   <script>
     (function(){
       function syncAppViewportHeight(){
@@ -469,7 +469,7 @@
           );
           portalDeviceUrl.searchParams.set(
             'pwaHostRelease',
-            'V4.3.25'
+            String(config.release||'')
           );
           url=portalDeviceUrl.toString();
         }
@@ -506,7 +506,7 @@
 
           portalLaunchUrl.searchParams.set(
             'pwaHostRelease',
-            'V4.3.24'
+            String(config.release||'')
           );
 
           url=portalLaunchUrl.toString();
