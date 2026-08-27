@@ -2,7 +2,7 @@
 
 ## Production baseline
 
-The production baseline entering stabilization is V4.3.30. V4.4.0 changes must be incremental, reviewable, and preserve existing user-facing behavior unless a behavior must change to close a security or data-integrity issue.
+The current production baseline is V4.4.0 Alpha1 on `main`. V4.4.0 Alpha2 work must occur on a named development branch and must be verified against a test Apps Script deployment before production changes.
 
 ## Authorization invariants
 
@@ -28,3 +28,17 @@ Never commit organizer access keys, OneSignal API keys, Gemini API keys, Apify t
 - Prefer focused branches and pull requests.
 - Add regression tests for security boundaries and high-risk calculations before refactoring them.
 - Do not merge stabilization branches directly to `main`; use a pull request and manual verification.
+
+
+## Deployment targets and file separation
+
+Every deployment instruction must explicitly identify the **version**, **GitHub branch**, and **target environment** (TEST Apps Script, PRODUCTION Apps Script, or GitHub Pages/PWA) before any file is changed or pushed.
+
+- `main` is the source of the currently approved production release. Do not develop directly on `main`.
+- Apps Script runtime files are the `.gs` files plus the capital-I `Index.html`, `Styles.html`, and `Client_*.html` includes.
+- GitHub Pages/PWA host files include the lowercase `index.html`, `config.js`, `manifest.webmanifest`, `service-worker.js`, icons, and push-worker assets.
+- Never deploy the lowercase GitHub Pages `index.html` to Apps Script as `Index.html`.
+- Windows uses a case-insensitive filesystem, so a working tree containing both `Index.html` and `index.html` is unsafe for direct clasp deployment.
+- Do not run `clasp push --force` against production from a mixed repository checkout containing both PWA and Apps Script host files.
+- Production Script Properties are project-specific. Test/Alpha Script Properties do not configure production.
+- Organizer access keys must be configured in the target Apps Script project using the authorized setup flow; never copy plaintext keys or assume a test-project configuration applies to production.

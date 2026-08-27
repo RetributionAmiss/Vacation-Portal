@@ -1,0 +1,21 @@
+# V4.4.0 Alpha2 deployment boundary
+# clasp runs from the repository root, but only Apps Script runtime files
+# are allowed into an Apps Script project.
+**/*
+
+!**/*.gs
+!appsscript.json
+!Portal_Index.html
+!Styles.html
+!Client_*.html
+
+# PWA/GitHub Pages files intentionally remain ignored:
+# index.html
+# config.js
+# manifest.webmanifest
+# service-worker.js
+# app-icon-*.png
+# push/**
+# tests/**
+# docs/**
+# .github/**
