@@ -1,11 +1,29 @@
-function getPaymentData() {
+const PAYMENT_SHARES_HEADERS_ = [
+  'Share ID', 'Cabin ID', 'Traveler ID', 'Split Basis', 'Source Total',
+  'Calculated Share', 'Adjusted Share', 'Notes', 'Created At', 'Updated At'
+];
+
+const BOOKING_PLAN_HEADERS_V2_ = [
+  'Booking Plan ID', 'Cabin ID', 'Booking Traveler IDs', 'Agency Name',
+  'Booking Total', 'Split Basis', 'Notes', 'Created At', 'Updated At'
+];
+
+function ensurePaymentSheets_() {
   setupVacationPortalSilent_();
+  const ss = getSpreadsheet_();
+  ensureSheet_(ss, 'Booking Plans', BOOKING_PLAN_HEADERS_V2_);
+  ensureSheet_(ss, 'Payment Shares', PAYMENT_SHARES_HEADERS_);
+}
+
+function getPaymentData() {
+  ensurePaymentSheets_();
   return buildPaymentData_();
 }
 
 function buildPaymentData_() {
   return {
     plans: readSheet_('Booking Plans'),
+    shares: readSheet_('Payment Shares'),
     schedule: readSheet_('Payment Schedule'),
     payments: readSheet_('Payments'),
     serverTime: new Date().toISOString()
@@ -63,9 +81,107 @@ function bookingTravelerIds_(cabinId) {
     : [];
 }
 
-function saveBookingPlan(values) {
-  setupVacationPortalSilent_();
+function normalizePaymentSplitBasis_(value) {
+  return String(value || '').toLowerCase() === 'bedroom' ? 'Bedroom' : 'Adult';
+}
+
+function paymentShareRowsForCabin_(cabinId) {
+  return readSheet_('Payment Shares').filter(function(row) {
+    return row['Cabin ID'] === cabinId;
+  });
+}
+
+function replacePaymentShareRows_(cabinId, rows) {
+  const sheet = getSpreadsheet_().getSheetByName('Payment Shares');
+  const grid = sheet.getDataRange().getValues();
+  const headers = grid[0].map(function(value) { return String(value || '').trim(); });
+  const cabinIndex = headers.indexOf('Cabin ID');
+
+  const retained = grid.slice(1).filter(function(row) {
+    return String(row[cabinIndex] || '') !== cabinId;
+  });
+
+  const inserted = rows.map(function(record) {
+    return headers.map(function(header) {
+      return record[header] !== undefined ? record[header] : '';
+    });
+  });
+
+  const output = [headers].concat(retained, inserted);
+  sheet.clearContents();
+  sheet.getRange(1, 1, output.length, headers.length).setValues(output);
+}
+
+function normalizePaymentShareRows_(cabinId, values) {
+  const travelerMap = paymentTravelerMap_();
+  const now = new Date();
+  const basis = normalizePaymentSplitBasis_(values.splitBasis);
+  const sourceTotal = Math.max(0, Number(values.sourceTotal || 0));
+  const seen = {};
+
+  return (Array.isArray(values.shares) ? values.shares : []).map(function(item) {
+    item = item || {};
+    const travelerId = String(item.travelerId || '').trim();
+    const traveler = travelerMap[travelerId];
+
+    if (!traveler || String(traveler['Traveler Type'] || 'Adult') !== 'Adult') {
+      throw new Error('Traveler shares can only be assigned to active adult travelers.');
+    }
+    if (seen[travelerId]) {
+      throw new Error('Each traveler can only have one expected booking share.');
+    }
+    seen[travelerId] = true;
+
+    const calculated = Math.max(0, Number(item.calculatedShare || 0));
+    const adjusted = Math.max(0, Number(item.adjustedShare || 0));
+
+    if (!isFinite(calculated) || !isFinite(adjusted)) {
+      throw new Error('Traveler share amounts must be valid numbers.');
+    }
+
+    return {
+      'Share ID': uid_('SHARE'),
+      'Cabin ID': cabinId,
+      'Traveler ID': travelerId,
+      'Split Basis': basis,
+      'Source Total': sourceTotal,
+      'Calculated Share': calculated,
+      'Adjusted Share': adjusted,
+      'Notes': String(item.notes || '').trim(),
+      'Created At': now,
+      'Updated At': now
+    };
+  });
+}
+
+function savePaymentShares(values) {
+  ensurePaymentSheets_();
   values = values || {};
+  assertOrganizerFromValues_(values);
+
+  const cabin = paymentCabin_(values.cabinId);
+  const rows = normalizePaymentShareRows_(cabin['Cabin ID'], values);
+  if (!rows.length) {
+    throw new Error('Add at least one adult traveler share before saving.');
+  }
+
+  replacePaymentShareRows_(cabin['Cabin ID'], rows);
+
+  const plan = bookingPlanForCabin_(cabin['Cabin ID']);
+  if (plan) {
+    updateById_('Booking Plans', 'Booking Plan ID', plan['Booking Plan ID'], {
+      'Split Basis': normalizePaymentSplitBasis_(values.splitBasis),
+      'Updated At': new Date()
+    });
+  }
+
+  return buildPaymentData_();
+}
+
+function saveBookingPlan(values) {
+  ensurePaymentSheets_();
+  values = values || {};
+  assertOrganizerFromValues_(values);
 
   const cabin = paymentCabin_(values.cabinId);
   const travelerMap = paymentTravelerMap_();
@@ -88,11 +204,13 @@ function saveBookingPlan(values) {
 
   const existing = bookingPlanForCabin_(cabin['Cabin ID']);
   const now = new Date();
+  const splitBasis = normalizePaymentSplitBasis_(values.splitBasis);
   const record = {
     'Cabin ID': cabin['Cabin ID'],
     'Booking Traveler IDs': bookingTravelerIds.join(','),
     'Agency Name': String(values.agencyName || cabin.Provider || '').trim(),
     'Booking Total': bookingTotal,
+    'Split Basis': splitBasis,
     'Notes': String(values.notes || '').trim(),
     'Updated At': now
   };
@@ -108,6 +226,17 @@ function saveBookingPlan(values) {
     record['Booking Plan ID'] = uid_('BOOK');
     record['Created At'] = now;
     appendObject_('Booking Plans', record);
+  }
+
+  if (Array.isArray(values.shares) && values.shares.length) {
+    replacePaymentShareRows_(
+      cabin['Cabin ID'],
+      normalizePaymentShareRows_(cabin['Cabin ID'], {
+        splitBasis: splitBasis,
+        sourceTotal: bookingTotal,
+        shares: values.shares
+      })
+    );
   }
 
   return buildPaymentData_();
@@ -157,8 +286,9 @@ function normalizePaymentRecipient_(cabinId, values) {
 }
 
 function savePaymentScheduleItem(values) {
-  setupVacationPortalSilent_();
+  ensurePaymentSheets_();
   values = values || {};
+  assertOrganizerFromValues_(values);
 
   const cabin = paymentCabin_(values.cabinId);
   const amount = Number(values.amountDue || 0);
@@ -203,9 +333,12 @@ function savePaymentScheduleItem(values) {
   return buildPaymentData_();
 }
 
-function deletePaymentScheduleItem(id) {
-  setupVacationPortalSilent_();
-  const record = paymentScheduleRecord_(id);
+function deletePaymentScheduleItem(values) {
+  ensurePaymentSheets_();
+  values = values && typeof values === 'object' ? values : {id: values};
+  assertOrganizerFromValues_(values);
+
+  const record = paymentScheduleRecord_(values.id);
   if (!record) throw new Error('That scheduled payment could not be found.');
 
   const linked = readSheet_('Payments').some(function(payment) {
@@ -228,8 +361,33 @@ function bookingPaymentRecord_(id) {
   }) || null;
 }
 
+function paymentWriteMode_(values, existing, requestedPayerId) {
+  values = values || {};
+  const organizerToken = String(values.organizerToken || '').trim();
+
+  if (organizerToken) {
+    assertOrganizerFromValues_(values);
+    return 'Organizer';
+  }
+
+  const payerId = existing
+    ? String(existing['Paid By Traveler ID'] || '').trim()
+    : String(requestedPayerId || '').trim();
+
+  assertTravelerSelf_(values.deviceId, payerId);
+
+  if (
+    existing &&
+    String(requestedPayerId || '').trim() !== payerId
+  ) {
+    throw new Error('TRAVELER_AUTH_REQUIRED: You cannot change who made an existing payment.');
+  }
+
+  return 'Traveler';
+}
+
 function saveBookingPayment(values) {
-  setupVacationPortalSilent_();
+  ensurePaymentSheets_();
   values = values || {};
 
   const cabin = paymentCabin_(values.cabinId);
@@ -238,6 +396,14 @@ function saveBookingPayment(values) {
   if (!paidByTravelerId || !travelerMap[paidByTravelerId]) {
     throw new Error('Choose the traveler who made this payment.');
   }
+
+  const id = String(values.id || '').trim();
+  const existing = id ? bookingPaymentRecord_(id) : null;
+  if (id && (!existing || existing['Cabin ID'] !== cabin['Cabin ID'])) {
+    throw new Error('That payment record could not be found.');
+  }
+
+  const writeMode = paymentWriteMode_(values, existing, paidByTravelerId);
 
   const amount = Number(values.amount || 0);
   if (!(amount > 0)) throw new Error('Payment amount must be greater than zero.');
@@ -248,6 +414,15 @@ function saveBookingPayment(values) {
     throw new Error('The selected installment could not be found for this rental.');
   }
 
+  if (
+    writeMode === 'Traveler' &&
+    schedule &&
+    String(schedule['Expected Payer Traveler ID'] || '').trim() &&
+    String(schedule['Expected Payer Traveler ID'] || '').trim() !== paidByTravelerId
+  ) {
+    throw new Error('This installment is assigned to another traveler.');
+  }
+
   const recipient = schedule
     ? {
         type: String(schedule['Recipient Type'] || 'Agency'),
@@ -255,12 +430,6 @@ function saveBookingPayment(values) {
         name: String(schedule['Recipient Name'] || '')
       }
     : normalizePaymentRecipient_(cabin['Cabin ID'], values);
-
-  const id = String(values.id || '').trim();
-  const existing = id ? bookingPaymentRecord_(id) : null;
-  if (id && (!existing || existing['Cabin ID'] !== cabin['Cabin ID'])) {
-    throw new Error('That payment record could not be found.');
-  }
 
   const now = new Date();
   const record = {
@@ -287,10 +456,14 @@ function saveBookingPayment(values) {
   return buildPaymentData_();
 }
 
-function deleteBookingPayment(id) {
-  setupVacationPortalSilent_();
-  const record = bookingPaymentRecord_(id);
+function deleteBookingPayment(values) {
+  ensurePaymentSheets_();
+  values = values && typeof values === 'object' ? values : {id: values};
+
+  const record = bookingPaymentRecord_(values.id);
   if (!record) throw new Error('That payment record could not be found.');
+
+  paymentWriteMode_(values, record, record['Paid By Traveler ID']);
   deleteById_('Payments', 'Payment ID', record['Payment ID']);
   return buildPaymentData_();
 }
