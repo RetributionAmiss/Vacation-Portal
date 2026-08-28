@@ -1,4 +1,4 @@
-const PORTAL_SCHEMA_VERSION = '4.4.0';
+const PORTAL_SCHEMA_VERSION = '4.4.1';
 const SPREADSHEET_ID = '16FJTnkhexYLFRC2NaIK6izIeH5wfbdXgJvdISt7X06A';
 const APP_TITLE = 'Smoky Mountain Family Vacation Portal';
 const GEMINI_MODEL = 'gemini-3.6-flash';
@@ -55,6 +55,20 @@ const SCHEMAS = {
     'Budget ID', 'Category', 'Description', 'Amount',
     'Include in Rental Split', 'Paid By', 'Split Between',
     'Due Date', 'Status', 'Notes'
+  ],
+  'Booking Plans': [
+    'Booking Plan ID', 'Cabin ID', 'Booking Traveler IDs', 'Agency Name',
+    'Booking Total', 'Notes', 'Created At', 'Updated At'
+  ],
+  'Payment Schedule': [
+    'Schedule ID', 'Cabin ID', 'Label', 'Due Date', 'Amount Due',
+    'Expected Payer Traveler ID', 'Recipient Type', 'Recipient Traveler ID',
+    'Recipient Name', 'Notes', 'Created At', 'Updated At'
+  ],
+  Payments: [
+    'Payment ID', 'Cabin ID', 'Schedule ID', 'Paid By Traveler ID',
+    'Paid To Type', 'Paid To Traveler ID', 'Paid To Name', 'Amount',
+    'Payment Date', 'Notes', 'Created At', 'Updated At'
   ],
   Meals: [
     'Meal ID', 'Date', 'Meal', 'Menu',
