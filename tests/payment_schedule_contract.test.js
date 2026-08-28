@@ -15,6 +15,8 @@ const client = read('Client_Payments.html');
 const integration = read('Client_Payments_Integration.html');
 const sharesClient = read('Client_Payments_Shares.html');
 const selfClient = read('Client_Payments_SelfService.html');
+const optimisticClient = read('Client_Payments_Optimistic.html');
+const optimisticReconcileClient = read('Client_Payments_Optimistic_Reconcile.html');
 const styles = read('Styles_Payments.html');
 const stylesV2 = read('Styles_Payments_V2.html');
 const archive = read('Archive.gs');
@@ -89,11 +91,20 @@ assert(
     index.includes("include('Client_Payments')") &&
     index.includes("include('Client_Payments_Integration')") &&
     index.includes("include('Client_Payments_Shares')") &&
-    index.includes("include('Client_Payments_SelfService')"),
+    index.includes("include('Client_Payments_SelfService')") &&
+    index.includes("include('Client_Payments_Optimistic')") &&
+    index.includes("include('Client_Payments_Optimistic_Reconcile')"),
   'Payments and its refinement layers must be reachable and loaded after the stable portal UI.'
 );
 
-[client, integration, sharesClient, selfClient].forEach((source, indexNumber) => {
+[
+  client,
+  integration,
+  sharesClient,
+  selfClient,
+  optimisticClient,
+  optimisticReconcileClient
+].forEach((source, indexNumber) => {
   const js = source
     .replace(/^\s*<script>\s*/, '')
     .replace(/\s*<\/script>\s*$/, '');
@@ -122,6 +133,25 @@ assert(
     selfClient.includes('paymentFullAmountFor_') &&
     selfClient.includes("payload.deviceId=String(PWA_DEVICE_ID_||'')"),
   'Traveler self-service must provide manual and pay-in-full payment entry tied to device identity.'
+);
+
+assert(
+  optimisticClient.includes("if(method==='saveBookingPayment')") &&
+    optimisticClient.includes("paymentOptimisticReplaceById_('payments','Payment ID',id,row)") &&
+    optimisticClient.includes("if(method==='savePaymentShares')") &&
+    optimisticClient.includes("if(method==='savePaymentScheduleItem')") &&
+    optimisticClient.includes('paymentOptimisticRender_();') &&
+    optimisticClient.indexOf('paymentOptimisticRender_();') < optimisticClient.indexOf('paymentOptimisticPump_();'),
+  'Payment state must be mutated and rendered locally before the background sheet write begins.'
+);
+
+assert(
+  optimisticReconcileClient.includes('paymentOptimisticQueue_.running') &&
+    optimisticReconcileClient.includes('paymentOptimisticRebaseAfterSuccess_') &&
+    optimisticReconcileClient.includes('queued.rollback=paymentOptimisticApply_') &&
+    optimisticReconcileClient.includes('for(let index=failedJobs.length-1;index>=0;index--)') &&
+    optimisticReconcileClient.includes('loadPaymentData_(true)'),
+  'Optimistic payment saves must serialize background writes, rebase queued changes, and roll back on failure.'
 );
 
 assert(
@@ -155,4 +185,4 @@ assert(
   'Payment planning data and adjusted share targets must be included in vacation archive/reset handling.'
 );
 
-console.log('PASS payment schedule, traveler shares, and self-service payment contracts');
+console.log('PASS payment schedule, traveler shares, self-service, and optimistic update contracts');
