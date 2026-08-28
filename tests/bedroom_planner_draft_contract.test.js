@@ -11,6 +11,7 @@ function read(relativePath) {
 const index = read('AppsScriptIndex.html');
 const styles = read('Styles_Bedroom_Draft.html');
 const client = read('Client_Bedroom_Draft.html');
+const rooms = read('Rooms.gs');
 
 assert(
   index.includes("include('Styles_Bedroom_Draft')") &&
@@ -24,44 +25,65 @@ const source = client
 new Function(source);
 
 [
+  'renderRooms=function()',
+  'renderNativeBedroomPlanner_',
+  'nativeBedroomDropZone_',
+  'nativeBedroomTravelerChip_',
+  'moveBedroomTraveler_',
+  'nativeBedroomDrop_',
   'bedroomPlannerDraftOriginalSignature_',
   'syncBedroomPlannerDraftDirty_',
-  "roomAssignmentDraft_[travelerId]=bedroomId||''",
-  "Save bedroom layout",
-  'requestBedroomPlannerExit_',
-  'saveBedroomPlannerDraftAndExit_',
-  'discardBedroomPlannerDraftAndExit_',
-  'resumeBedroomPlanner_',
+  'Save bedroom layout',
+  'Clear Travelers',
+  'Remove all Bedrooms',
+  'showBedroomPlannerExitPrompt_',
+  'Save &amp; continue',
+  "navigate=function(view)",
+  "changeRoomPlannerCabin=function(cabinId)",
   "window.addEventListener('beforeunload'"
 ].forEach((signature) => {
-  assert(client.includes(signature), `Missing bedroom planner draft behavior: ${signature}`);
+  assert(client.includes(signature), `Missing native bedroom planner behavior: ${signature}`);
 });
 
 assert(
-  client.includes('saveBulkRoomAssignmentsBeforeBedroomDraft_') &&
-    !client.includes('.saveRoomAssignmentsBatch('),
-  'Draft movement code must delegate to the existing explicit batch save and must not save directly on each move.'
+  !client.includes("openBulkRoomAssignmentPlanner_('${cabinId}')") &&
+    !client.includes('Assign travelers'),
+  'The Room Planner must not require the separate Assign travelers window.'
 );
 
 assert(
-  client.includes('removeRoomAssignment=function(id)') &&
-    client.includes("roomAssignmentDraft_[assignment['Traveler ID']]=''"),
-  'Removing a traveler from a room must stage the change in the bedroom draft instead of saving immediately.'
+  client.includes("roomAssignmentDraft_[travelerId]=String(bedroomId||'')") &&
+    client.includes('render();'),
+  'Traveler moves must update the local room draft immediately.'
 );
 
 assert(
-  client.includes("closeModal=function()") &&
-    client.includes("navigate=function(view)") &&
-    client.includes('Save &amp; exit'),
-  'Closing or navigating away with bedroom draft changes must show an explicit save/discard decision.'
+  client.includes('.saveRoomAssignmentsBatch(cabinId,payload)') &&
+    !client.includes('.saveAssignment(') &&
+    !client.includes('.removeAssignment('),
+  'Traveler moves must persist only through the explicit whole-layout save, never per move.'
 );
 
 assert(
-  styles.includes('.bedroom-draft-status') &&
-    styles.includes('.bedroom-exit-confirm') &&
-    styles.includes('.bulk-room-planner-footer') &&
+  client.includes('withBedroomDraftAssignments_') &&
+    client.includes('renderTravelerCostSummary_(cabinId)'),
+  'Room cost summaries must render from the unsaved bedroom draft.'
+);
+
+assert(
+  rooms.includes('function removeAllBedrooms(cabinId)') &&
+    rooms.includes('clearRoomAssignmentsForCabin_(cabinId)') &&
+    rooms.includes("replaceCabinBedrooms_(cabinId, [])") &&
+    rooms.includes("'Bedrooms': 0"),
+  'Remove all Bedrooms must clear bedroom cards, traveler assignments, and the cabin bedroom count together.'
+);
+
+assert(
+  styles.includes('.bedroom-native-toolbar') &&
+    styles.includes('.native-bedroom-traveler') &&
+    styles.includes('.native-bedroom-savebar') &&
     styles.includes('position:sticky'),
-  'Bedroom planner must visibly show draft state and keep save/exit controls reachable.'
+  'Native Room Planner controls must stay compact and keep save state/actions reachable.'
 );
 
-console.log('PASS bedroom planner draft contracts');
+console.log('PASS bedroom planner native draft contracts');
