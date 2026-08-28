@@ -30,3 +30,5 @@ jobs:
         run: node tests/ui_phase2_contract.test.js
       - name: Run unified background save contracts
         run: node tests/background_save_contract.test.js
+      - name: Run rating/ranking voting mode contracts
+        run: node tests/voting_mode_contract.test.js
