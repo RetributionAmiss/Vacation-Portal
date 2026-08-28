@@ -26,3 +26,5 @@ jobs:
         run: node tests/secret_scan.js
       - name: Run UI foundation contract tests
         run: node tests/ui_foundation_contract.test.js
+      - name: Run UI phase 2 compact-card contracts
+        run: node tests/ui_phase2_contract.test.js
