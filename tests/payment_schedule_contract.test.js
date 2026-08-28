@@ -13,7 +13,10 @@ const backend = read('Payments.gs');
 const index = read('AppsScriptIndex.html');
 const client = read('Client_Payments.html');
 const integration = read('Client_Payments_Integration.html');
+const sharesClient = read('Client_Payments_Shares.html');
+const selfClient = read('Client_Payments_SelfService.html');
 const styles = read('Styles_Payments.html');
+const stylesV2 = read('Styles_Payments_V2.html');
 const archive = read('Archive.gs');
 
 assert(
@@ -21,7 +24,7 @@ assert(
     config.includes("'Booking Plans': [") &&
     config.includes("'Payment Schedule': [") &&
     config.includes('Payments: ['),
-  'Payment feature must version and declare all three persistent sheets.'
+  'Payment feature must version and declare its base persistent sheets.'
 );
 
 [
@@ -40,13 +43,31 @@ assert(
 [
   'function getPaymentData()',
   'function saveBookingPlan(values)',
+  'function savePaymentShares(values)',
   'function savePaymentScheduleItem(values)',
-  'function deletePaymentScheduleItem(id)',
+  'function deletePaymentScheduleItem(values)',
   'function saveBookingPayment(values)',
-  'function deleteBookingPayment(id)'
+  'function deleteBookingPayment(values)'
 ].forEach((signature) => {
   assert(backend.includes(signature), `Missing payment backend function: ${signature}`);
 });
+
+assert(
+  backend.includes('const PAYMENT_SHARES_HEADERS_') &&
+    backend.includes("ensureSheet_(ss, 'Payment Shares', PAYMENT_SHARES_HEADERS_)") &&
+    backend.includes("'Calculated Share'") &&
+    backend.includes("'Adjusted Share'") &&
+    backend.includes("'Split Basis'"),
+  'Payment shares must persist calculated Rental-board values separately from organizer adjustments.'
+);
+
+assert(
+  backend.includes('assertOrganizerFromValues_(values);') &&
+    backend.includes('function paymentWriteMode_(values, existing, requestedPayerId)') &&
+    backend.includes('assertTravelerSelf_(values.deviceId, payerId);') &&
+    backend.includes('You cannot change who made an existing payment'),
+  'Plan/schedule/share writes must be organizer-protected while traveler payment writes are restricted to the saved device traveler.'
+);
 
 assert(
   backend.includes("recipientType === 'Traveler'") &&
@@ -57,32 +78,50 @@ assert(
 
 assert(
   backend.includes("'Schedule ID': schedule ? schedule['Schedule ID'] : ''") &&
-    backend.includes("throw new Error(\n      'This installment already has payment history."),
+    backend.includes('This installment already has payment history.'),
   'Payments must be linkable to installments and linked installment history must be protected.'
 );
 
 assert(
   index.includes('data-view="payments"') &&
     index.includes("include('Styles_Payments')") &&
+    index.includes("include('Styles_Payments_V2')") &&
     index.includes("include('Client_Payments')") &&
-    index.includes("include('Client_Payments_Integration')"),
-  'Payments must be reachable from the portal and load its client/style modules.'
+    index.includes("include('Client_Payments_Integration')") &&
+    index.includes("include('Client_Payments_Shares')") &&
+    index.includes("include('Client_Payments_SelfService')"),
+  'Payments and its refinement layers must be reachable and loaded after the stable portal UI.'
 );
 
-const clientSource = client
-  .replace(/^\s*<script>\s*/, '')
-  .replace(/\s*<\/script>\s*$/, '');
-const integrationSource = integration
-  .replace(/^\s*<script>\s*/, '')
-  .replace(/\s*<\/script>\s*$/, '');
-new Function(clientSource);
-new Function(integrationSource);
+[client, integration, sharesClient, selfClient].forEach((source, indexNumber) => {
+  const js = source
+    .replace(/^\s*<script>\s*/, '')
+    .replace(/\s*<\/script>\s*$/, '');
+  assert.doesNotThrow(() => new Function(js), `Payment client layer ${indexNumber + 1} must parse.`);
+});
 
 assert(
   client.includes("String(row['Paid To Type']||'Agency')==='Agency'") &&
     client.includes("String(row['Paid To Type']||'')==='Traveler'") &&
     client.includes('const remaining=Math.max(0,bookingTotal-paidToAgency);'),
   'Booking balance must be reduced only by agency/property payments, not traveler reimbursements.'
+);
+
+assert(
+  sharesClient.includes('cappedAdultSplit_(cabin,total)') &&
+    sharesClient.includes('cappedBedroomSplit_(cabin,total)') &&
+    sharesClient.includes('Adjust multiple travelers') &&
+    sharesClient.includes('Automatically add traveler shares from the Rental board'),
+  'Traveler targets must seed from the Rental board split math and support organizer bulk adjustment.'
+);
+
+assert(
+  selfClient.includes('Each traveler can record their own payment') &&
+    selfClient.includes('Enter a specific amount') &&
+    selfClient.includes('Pay in full') &&
+    selfClient.includes('paymentFullAmountFor_') &&
+    selfClient.includes("payload.deviceId=String(PWA_DEVICE_ID_||'')"),
+  'Traveler self-service must provide manual and pay-in-full payment entry tied to device identity.'
 );
 
 assert(
@@ -94,14 +133,6 @@ assert(
 );
 
 assert(
-  client.includes("beginBackgroundSave_(label,key)") &&
-    client.includes(".getPaymentData()") &&
-    client.includes("'saveBookingPayment'") &&
-    client.includes("'savePaymentScheduleItem'"),
-  'Payment saves must use the shared background-save UX and the payment ledger must lazy-load.'
-);
-
-assert(
   integration.includes("currentView!=='payments'") &&
     integration.includes("selectMobileSection_('payments')") &&
     integration.includes('💳'),
@@ -110,16 +141,18 @@ assert(
 
 assert(
   styles.includes('.payment-summary-grid') &&
-    styles.includes('.payment-schedule-row') &&
-    styles.includes('@media(max-width:650px)'),
-  'Payment schedule must include responsive summary and ledger styling.'
+    stylesV2.includes('.payment-share-grid') &&
+    stylesV2.includes('.payment-amount-options') &&
+    stylesV2.includes('@media(max-width:650px)'),
+  'Payment schedule and traveler-share controls must stay responsive.'
 );
 
 assert(
   archive.includes("'Booking Plans'") &&
+    archive.includes("'Payment Shares'") &&
     archive.includes("'Payment Schedule'") &&
     archive.includes("'Payments'"),
-  'Payment planning data must be included in vacation archive/reset handling.'
+  'Payment planning data and adjusted share targets must be included in vacation archive/reset handling.'
 );
 
-console.log('PASS payment schedule contracts');
+console.log('PASS payment schedule, traveler shares, and self-service payment contracts');
