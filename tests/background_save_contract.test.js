@@ -13,6 +13,16 @@ const index = read('AppsScriptIndex.html');
 const client = read('Client_Background_Save.html');
 const styles = read('Styles_Background_Save.html');
 
+const clientScript = client
+  .replace(/^\s*<script>\s*/, '')
+  .replace(/\s*<\/script>\s*$/, '');
+
+try {
+  new Function(clientScript);
+} catch (error) {
+  throw new Error(`Client_Background_Save.html does not parse: ${error.message}`);
+}
+
 assert(
   index.includes("include('Styles_Background_Save')") &&
     index.includes("include('Client_Background_Save')"),
