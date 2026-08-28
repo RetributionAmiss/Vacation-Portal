@@ -4,6 +4,7 @@ function getOrganizerVotingSummary(values) {
 
   const trip = getSettings_('Trip');
   const round = String(trip['Voting Round'] || 'Preliminary');
+  const method = normalizeVotingMethod_(trip['Voting Method']);
   const stage = String(trip['Portal Stage'] || '');
   const travelers = normalizeTravelerRows_(readSheet_('Travelers'))
     .filter(function(row) {
@@ -78,30 +79,49 @@ function getOrganizerVotingSummary(values) {
       .filter(function(vote) {
         return String(vote['Traveler ID'] || '') === travelerId;
       });
-    const ranked = travelerVotes.map(function(vote) {
+
+    const top3 = travelerVotes.map(function(vote) {
       const cabinId = String(vote['Cabin ID'] || '');
       const cabin = cabinById[cabinId];
       return {
         cabinId: cabinId,
-        name: cabin ? cabinName_(cabin) + ' · ' + cabinId : cabinId,
+        nickname: cabin ? cabinName_(cabin) : cabinId,
         score: Number(vote.Score || 0),
-        firstChoice: String(vote['First Choice'] || '').toLowerCase() === 'yes'
+        rank: Number(vote.Rank || 0)
       };
     }).filter(function(item) {
-      return item.cabinId && item.score >= 1 && item.score <= 5;
+      if (!item.cabinId) return false;
+      return method === 'Ranking'
+        ? item.rank >= 1 && item.rank <= eligibleCabins.length
+        : item.score >= 1 && item.score <= 5;
     }).sort(function(left, right) {
-      return Number(right.firstChoice) - Number(left.firstChoice) ||
-        right.score - left.score || left.name.localeCompare(right.name);
+      if (method === 'Ranking') {
+        return left.rank - right.rank ||
+          left.nickname.localeCompare(right.nickname);
+      }
+
+      return right.score - left.score ||
+        left.nickname.localeCompare(right.nickname);
     }).slice(0, 3);
+
+    const validVoteCount = travelerVotes.filter(function(vote) {
+      if (method === 'Ranking') {
+        const rank = Number(vote.Rank || 0);
+        return rank >= 1 && rank <= eligibleCabins.length;
+      }
+
+      const score = Number(vote.Score || 0);
+      return score >= 1 && score <= 5;
+    }).length;
 
     const deviceInfo = devicesByTraveler[travelerId] || {linked: 0, installed: 0};
     return {
       travelerId: travelerId,
       travelerName: String(traveler.Name || 'Traveler'),
       family: String(traveler.Group || traveler.Family || ''),
-      votedCount: travelerVotes.length,
+      votedCount: validVoteCount,
       eligibleRentalCount: eligibleCabins.length,
-      top3: ranked,
+      top3: top3,
       appInstalled: deviceInfo.installed > 0,
       installedDeviceCount: deviceInfo.installed,
       linkedDeviceCount: deviceInfo.linked
@@ -112,6 +132,7 @@ function getOrganizerVotingSummary(values) {
 
   return {
     round: round,
+    method: method,
     stage: stage,
     eligibleRentalCount: eligibleCabins.length,
     rows: rows,
