@@ -1,0 +1,95 @@
+<style>
+/* ==========================================================
+   V4.4.0 UI FOUNDATION
+   A small visual layer for navigation and Organizer controls.
+   ========================================================== */
+
+:root{
+  --ui-nav-radius:16px;
+  --ui-control-radius:12px;
+  --ui-organizer-border:rgba(176,124,12,.28);
+  --ui-organizer-bg:rgba(244,196,71,.08);
+  --ui-organizer-ink:#76510f;
+}
+
+.main-nav{
+  top:8px!important;
+  margin:10px 0 16px!important;
+  padding:8px!important;
+  border:1px solid rgba(35,76,60,.12)!important;
+  border-radius:var(--ui-nav-radius)!important;
+  background:rgba(255,253,248,.94)!important;
+  box-shadow:0 7px 22px rgba(20,45,35,.08)!important;
+  overflow-x:auto;
+}
+
+.main-nav button{
+  border-radius:var(--ui-control-radius)!important;
+}
+
+.rental-admin-actions{
+  margin:10px 0 12px!important;
+  padding:12px!important;
+  border:1px solid var(--ui-organizer-border)!important;
+  border-left:4px solid var(--gold)!important;
+  border-radius:14px!important;
+  background:linear-gradient(135deg,var(--ui-organizer-bg),rgba(255,255,255,.74))!important;
+}
+
+.rental-admin-actions .admin-action-label{
+  flex:1 0 100%;
+  width:100%;
+  margin:0 0 2px!important;
+  padding:0 0 7px;
+  border-bottom:1px solid rgba(176,124,12,.18);
+  color:var(--ui-organizer-ink)!important;
+  font-size:10px!important;
+  letter-spacing:.065em!important;
+}
+
+.voting-admin-summary-panel,
+.push-admin-panel,
+.finalist-control-panel{
+  padding:16px!important;
+  border:1px solid var(--ui-organizer-border)!important;
+  border-left:4px solid var(--gold)!important;
+  border-radius:15px!important;
+  background:linear-gradient(135deg,rgba(244,196,71,.055),rgba(255,255,255,.88))!important;
+}
+
+.traveler-top-three li span{
+  font-weight:800;
+}
+
+@media(max-width:650px){
+  .mobile-simple-nav{
+    top:8px!important;
+    margin:8px 0 12px!important;
+    padding:8px!important;
+    border:1px solid rgba(35,76,60,.12)!important;
+    border-radius:14px!important;
+    background:rgba(255,253,248,.96)!important;
+    box-shadow:0 6px 18px rgba(20,45,35,.08)!important;
+    overflow:hidden;
+  }
+
+  .mobile-simple-nav button{
+    border-radius:11px!important;
+  }
+
+  .rental-admin-actions{
+    padding:11px!important;
+  }
+
+  .rental-admin-actions .admin-action-label{
+    grid-column:1/-1;
+    font-size:12px!important;
+  }
+
+  .voting-admin-summary-panel,
+  .push-admin-panel,
+  .finalist-control-panel{
+    padding:13px!important;
+  }
+}
+</style>
