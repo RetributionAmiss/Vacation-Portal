@@ -1,0 +1,300 @@
+<script>
+const renderBulkRoomAssignmentPlannerBeforeBedroomDraft_=renderBulkRoomAssignmentPlanner_;
+const saveBulkRoomAssignmentsBeforeBedroomDraft_=saveBulkRoomAssignments_;
+const closeModalBeforeBedroomDraft_=closeModal;
+const navigateBeforeBedroomDraft_=navigate;
+
+let bedroomPlannerDraftCabinId_='';
+let bedroomPlannerDraftOriginalSignature_='';
+let bedroomPlannerDraftDirty_=false;
+let bedroomPlannerExitPromptVisible_=false;
+let bedroomPlannerPendingExitView_='';
+let bedroomPlannerBypassExitGuard_=false;
+
+function bedroomPlannerDraftSignature_(){
+  return Object.keys(roomAssignmentDraft_||{})
+    .sort()
+    .map(function(travelerId){
+      return travelerId+'='+String(roomAssignmentDraft_[travelerId]||'');
+    })
+    .join('|');
+}
+
+function resetBedroomPlannerDraftState_(){
+  bedroomPlannerDraftCabinId_='';
+  bedroomPlannerDraftOriginalSignature_='';
+  bedroomPlannerDraftDirty_=false;
+  bedroomPlannerExitPromptVisible_=false;
+  bedroomPlannerPendingExitView_='';
+  roomAssignmentDraft_=null;
+}
+
+function syncBedroomPlannerDraftDirty_(){
+  bedroomPlannerDraftDirty_=
+    Boolean(bedroomPlannerDraftCabinId_) &&
+    bedroomPlannerDraftSignature_()!==bedroomPlannerDraftOriginalSignature_;
+}
+
+renderBulkRoomAssignmentPlanner_=function(cabinId){
+  let html=renderBulkRoomAssignmentPlannerBeforeBedroomDraft_(cabinId);
+
+  html=html.replace(
+    'Drag names between rooms or use Add multiple. Nothing is saved until you choose Save room assignments.',
+    'Move travelers as many times as you need. Changes stay in this draft until you choose Save bedroom layout.'
+  );
+
+  html=html.replace(
+    '<div class="bulk-room-planner-footer">',
+    `<div class="bedroom-draft-status ${bedroomPlannerDraftDirty_?'dirty':'clean'}" role="status" aria-live="polite">
+      <span class="bedroom-draft-dot" aria-hidden="true"></span>
+      <span>${
+        bedroomPlannerDraftDirty_
+          ? 'Unsaved bedroom changes — keep arranging or save when ready.'
+          : 'Bedroom layout matches the saved assignments.'
+      }</span>
+    </div>
+    <div class="bulk-room-planner-footer">`
+  );
+
+  html=html.replace(
+    /<button class="ghost" type="button" onclick="closeModal\(\)">Cancel<\/button>/,
+    '<button class="ghost" type="button" onclick="requestBedroomPlannerExit_()">Done</button>'
+  );
+
+  html=html.replace(/Save room assignments/g,'Save bedroom layout');
+  return html;
+};
+
+openBulkRoomAssignmentPlanner_=function(cabinId){
+  const cabin=roomPlannerCabin_(cabinId);
+  if(!cabin || !(cabin.bedrooms||[]).length){
+    toast('Add bedrooms before assigning travelers.',true);
+    return;
+  }
+
+  roomAssignmentDraft_=buildRoomAssignmentDraft_(cabinId);
+  bedroomPlannerDraftCabinId_=cabinId;
+  bedroomPlannerDraftOriginalSignature_=bedroomPlannerDraftSignature_();
+  bedroomPlannerDraftDirty_=false;
+  bedroomPlannerExitPromptVisible_=false;
+  bedroomPlannerPendingExitView_='';
+
+  openBedroomPlannerModal_(renderBulkRoomAssignmentPlanner_(cabinId));
+};
+
+roomAssignmentDrop_=function(event,bedroomId,cabinId){
+  event.preventDefault();
+  event.currentTarget.classList.remove('drag-over');
+
+  const travelerId=event.dataTransfer.getData('text/plain');
+  if(!travelerId || !roomAssignmentDraft_ || roomAssignmentDraft_[travelerId]===undefined){
+    return;
+  }
+
+  roomAssignmentDraft_[travelerId]=bedroomId||'';
+  syncBedroomPlannerDraftDirty_();
+  refreshBulkRoomAssignmentPlanner_(cabinId);
+};
+
+const applyMultiAssignRoomBeforeBedroomDraft_=applyMultiAssignRoom_;
+applyMultiAssignRoom_=function(cabinId,bedroomId){
+  applyMultiAssignRoomBeforeBedroomDraft_(cabinId,bedroomId);
+  syncBedroomPlannerDraftDirty_();
+  refreshBulkRoomAssignmentPlanner_(cabinId);
+};
+
+removeRoomAssignment=function(id){
+  const assignment=(DATA.assignments||[]).find(function(item){
+    return item['Assignment ID']===id;
+  });
+  if(!assignment) return;
+
+  openBulkRoomAssignmentPlanner_(assignment['Cabin ID']);
+
+  if(
+    roomAssignmentDraft_ &&
+    roomAssignmentDraft_[assignment['Traveler ID']]!==undefined
+  ){
+    roomAssignmentDraft_[assignment['Traveler ID']]='';
+    syncBedroomPlannerDraftDirty_();
+    refreshBulkRoomAssignmentPlanner_(assignment['Cabin ID']);
+  }
+};
+
+function replaceBedroomPlannerModalContent_(html){
+  const content=document.getElementById('modalContent');
+  const panel=document.querySelector('#modal .modal-panel');
+  if(!content) return;
+
+  content.innerHTML=html;
+
+  if(panel){
+    panel.classList.add('bedroom-planner-modal-panel');
+    panel.scrollTop=0;
+  }
+
+  if(typeof labelOpenModal_==='function') labelOpenModal_();
+
+  setTimeout(function(){
+    const target=content.querySelector('[autofocus],button,input,select,textarea');
+    if(target&&typeof target.focus==='function') target.focus();
+  },0);
+}
+
+function showBedroomPlannerExitPrompt_(view){
+  bedroomPlannerPendingExitView_=String(view||'');
+  bedroomPlannerExitPromptVisible_=true;
+
+  replaceBedroomPlannerModalContent_(`
+    <div class="bedroom-exit-confirm">
+      <p class="eyebrow">UNSAVED BEDROOM LAYOUT</p>
+      <h2>Save this bedroom layout before leaving?</h2>
+      <p class="muted">
+        Your traveler moves are only in this draft right now. You can keep editing,
+        discard the draft, or save the current layout before you exit.
+      </p>
+      <div class="bedroom-exit-summary">
+        <strong>Current draft has unsaved changes.</strong>
+        <span>No bedroom assignments have been written to the trip sheet yet.</span>
+      </div>
+      <div class="bedroom-exit-actions">
+        <button class="ghost" type="button" autofocus onclick="resumeBedroomPlanner_()">
+          Keep editing
+        </button>
+        <button class="ghost bedroom-discard-button" type="button" onclick="discardBedroomPlannerDraftAndExit_()">
+          Discard changes
+        </button>
+        <button type="button" onclick="saveBedroomPlannerDraftAndExit_()">
+          Save &amp; exit
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+function requestBedroomPlannerExit_(view){
+  if(!bedroomPlannerDraftCabinId_){
+    closeModalBeforeBedroomDraft_();
+    if(view) navigateBeforeBedroomDraft_(view);
+    return;
+  }
+
+  syncBedroomPlannerDraftDirty_();
+
+  if(!bedroomPlannerDraftDirty_){
+    const targetView=String(view||'');
+    resetBedroomPlannerDraftState_();
+    closeModalBeforeBedroomDraft_();
+    if(targetView){
+      setTimeout(function(){navigateBeforeBedroomDraft_(targetView);},0);
+    }
+    return;
+  }
+
+  showBedroomPlannerExitPrompt_(view);
+}
+
+function resumeBedroomPlanner_(){
+  const cabinId=bedroomPlannerDraftCabinId_;
+  bedroomPlannerExitPromptVisible_=false;
+  bedroomPlannerPendingExitView_='';
+
+  if(!cabinId){
+    closeModalBeforeBedroomDraft_();
+    return;
+  }
+
+  replaceBedroomPlannerModalContent_(renderBulkRoomAssignmentPlanner_(cabinId));
+}
+
+function discardBedroomPlannerDraftAndExit_(){
+  const targetView=bedroomPlannerPendingExitView_;
+
+  bedroomPlannerBypassExitGuard_=true;
+  resetBedroomPlannerDraftState_();
+  closeModalBeforeBedroomDraft_();
+  bedroomPlannerBypassExitGuard_=false;
+
+  if(targetView){
+    setTimeout(function(){navigateBeforeBedroomDraft_(targetView);},0);
+  }
+}
+
+function commitBedroomPlannerDraft_(cabinId,targetView){
+  if(!cabinId) return;
+
+  bedroomPlannerDraftDirty_=false;
+  bedroomPlannerExitPromptVisible_=false;
+  bedroomPlannerBypassExitGuard_=true;
+
+  saveBulkRoomAssignmentsBeforeBedroomDraft_(cabinId);
+
+  bedroomPlannerBypassExitGuard_=false;
+  resetBedroomPlannerDraftState_();
+
+  if(targetView){
+    setTimeout(function(){navigateBeforeBedroomDraft_(targetView);},20);
+  }
+}
+
+saveBulkRoomAssignments_=function(cabinId){
+  commitBedroomPlannerDraft_(cabinId,'');
+};
+
+function saveBedroomPlannerDraftAndExit_(){
+  commitBedroomPlannerDraft_(
+    bedroomPlannerDraftCabinId_,
+    bedroomPlannerPendingExitView_
+  );
+}
+
+closeModal=function(){
+  if(bedroomPlannerBypassExitGuard_){
+    closeModalBeforeBedroomDraft_();
+    return;
+  }
+
+  if(bedroomPlannerDraftCabinId_){
+    syncBedroomPlannerDraftDirty_();
+
+    if(bedroomPlannerDraftDirty_){
+      if(!bedroomPlannerExitPromptVisible_){
+        showBedroomPlannerExitPrompt_('');
+      }
+      return;
+    }
+
+    resetBedroomPlannerDraftState_();
+  }
+
+  closeModalBeforeBedroomDraft_();
+};
+
+navigate=function(view){
+  if(bedroomPlannerDraftCabinId_){
+    syncBedroomPlannerDraftDirty_();
+
+    if(bedroomPlannerDraftDirty_){
+      requestBedroomPlannerExit_(view);
+      return;
+    }
+
+    resetBedroomPlannerDraftState_();
+    const modal=document.getElementById('modal');
+    if(modal&&!modal.classList.contains('hidden')){
+      closeModalBeforeBedroomDraft_();
+    }
+  }
+
+  navigateBeforeBedroomDraft_(view);
+};
+
+window.addEventListener('beforeunload',function(event){
+  if(!bedroomPlannerDraftCabinId_) return;
+  syncBedroomPlannerDraftDirty_();
+  if(!bedroomPlannerDraftDirty_) return;
+
+  event.preventDefault();
+  event.returnValue='';
+});
+</script>
