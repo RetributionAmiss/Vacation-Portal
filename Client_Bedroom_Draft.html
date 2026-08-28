@@ -1,15 +1,13 @@
 <script>
-const renderBulkRoomAssignmentPlannerBeforeBedroomDraft_=renderBulkRoomAssignmentPlanner_;
-const saveBulkRoomAssignmentsBeforeBedroomDraft_=saveBulkRoomAssignments_;
-const closeModalBeforeBedroomDraft_=closeModal;
+const renderRoomsBeforeBedroomDraft_=renderRooms;
+const changeRoomPlannerCabinBeforeBedroomDraft_=changeRoomPlannerCabin;
 const navigateBeforeBedroomDraft_=navigate;
 
 let bedroomPlannerDraftCabinId_='';
 let bedroomPlannerDraftOriginalSignature_='';
 let bedroomPlannerDraftDirty_=false;
-let bedroomPlannerExitPromptVisible_=false;
-let bedroomPlannerPendingExitView_='';
-let bedroomPlannerBypassExitGuard_=false;
+let bedroomPlannerPendingAction_=null;
+let bedroomPlannerSaveInFlight_=false;
 
 function bedroomPlannerDraftSignature_(){
   return Object.keys(roomAssignmentDraft_||{})
@@ -24,8 +22,8 @@ function resetBedroomPlannerDraftState_(){
   bedroomPlannerDraftCabinId_='';
   bedroomPlannerDraftOriginalSignature_='';
   bedroomPlannerDraftDirty_=false;
-  bedroomPlannerExitPromptVisible_=false;
-  bedroomPlannerPendingExitView_='';
+  bedroomPlannerPendingAction_=null;
+  bedroomPlannerSaveInFlight_=false;
   roomAssignmentDraft_=null;
 }
 
@@ -35,259 +33,647 @@ function syncBedroomPlannerDraftDirty_(){
     bedroomPlannerDraftSignature_()!==bedroomPlannerDraftOriginalSignature_;
 }
 
-renderBulkRoomAssignmentPlanner_=function(cabinId){
-  let html=renderBulkRoomAssignmentPlannerBeforeBedroomDraft_(cabinId);
-
-  html=html.replace(
-    'Drag names between rooms or use Add multiple. Nothing is saved until you choose Save room assignments.',
-    'Move travelers as many times as you need. Changes stay in this draft until you choose Save bedroom layout.'
-  );
-
-  html=html.replace(
-    '<div class="bulk-room-planner-footer">',
-    `<div class="bedroom-draft-status ${bedroomPlannerDraftDirty_?'dirty':'clean'}" role="status" aria-live="polite">
-      <span class="bedroom-draft-dot" aria-hidden="true"></span>
-      <span>${
-        bedroomPlannerDraftDirty_
-          ? 'Unsaved bedroom changes — keep arranging or save when ready.'
-          : 'Bedroom layout matches the saved assignments.'
-      }</span>
-    </div>
-    <div class="bulk-room-planner-footer">`
-  );
-
-  html=html.replace(
-    /<button class="ghost" type="button" onclick="closeModal\(\)">Cancel<\/button>/,
-    '<button class="ghost" type="button" onclick="requestBedroomPlannerExit_()">Done</button>'
-  );
-
-  html=html.replace(/Save room assignments/g,'Save bedroom layout');
-  return html;
-};
-
-openBulkRoomAssignmentPlanner_=function(cabinId){
+function ensureBedroomPlannerDraft_(cabinId){
   const cabin=roomPlannerCabin_(cabinId);
-  if(!cabin || !(cabin.bedrooms||[]).length){
-    toast('Add bedrooms before assigning travelers.',true);
+  if(!cabin) return;
+
+  if(bedroomPlannerDraftCabinId_!==cabinId || !roomAssignmentDraft_){
+    roomAssignmentDraft_=buildRoomAssignmentDraft_(cabinId);
+    bedroomPlannerDraftCabinId_=cabinId;
+    bedroomPlannerDraftOriginalSignature_=bedroomPlannerDraftSignature_();
+    bedroomPlannerDraftDirty_=false;
+    bedroomPlannerSaveInFlight_=false;
     return;
   }
 
-  roomAssignmentDraft_=buildRoomAssignmentDraft_(cabinId);
-  bedroomPlannerDraftCabinId_=cabinId;
-  bedroomPlannerDraftOriginalSignature_=bedroomPlannerDraftSignature_();
-  bedroomPlannerDraftDirty_=false;
-  bedroomPlannerExitPromptVisible_=false;
-  bedroomPlannerPendingExitView_='';
+  const validBedroomIds={};
+  (cabin.bedrooms||[]).forEach(function(room){
+    validBedroomIds[room['Bedroom ID']]=true;
+  });
 
-  openBedroomPlannerModal_(renderBulkRoomAssignmentPlanner_(cabinId));
+  Object.keys(roomAssignmentDraft_).forEach(function(travelerId){
+    const bedroomId=String(roomAssignmentDraft_[travelerId]||'');
+    if(bedroomId && !validBedroomIds[bedroomId]){
+      roomAssignmentDraft_[travelerId]='';
+    }
+  });
+
+  (DATA.travelers||[]).forEach(function(traveler){
+    if(String(traveler.Active||'Yes').toLowerCase()==='no') return;
+    const travelerId=traveler['Traveler ID'];
+    if(roomAssignmentDraft_[travelerId]===undefined){
+      roomAssignmentDraft_[travelerId]='';
+    }
+  });
+
+  syncBedroomPlannerDraftDirty_();
+}
+
+function bedroomDraftAssignmentRows_(cabinId){
+  return Object.keys(roomAssignmentDraft_||{})
+    .filter(function(travelerId){
+      return roomAssignmentDraft_[travelerId];
+    })
+    .map(function(travelerId,index){
+      return {
+        'Assignment ID':'DRAFT-'+cabinId+'-'+index,
+        'Cabin ID':cabinId,
+        'Bedroom ID':roomAssignmentDraft_[travelerId],
+        'Traveler ID':travelerId,
+        'Created At':''
+      };
+    });
+}
+
+function withBedroomDraftAssignments_(cabinId,callback){
+  const original=(DATA.assignments||[]).slice();
+  DATA.assignments=original
+    .filter(function(assignment){
+      return assignment['Cabin ID']!==cabinId;
+    })
+    .concat(bedroomDraftAssignmentRows_(cabinId));
+
+  try{
+    return callback();
+  }finally{
+    DATA.assignments=original;
+  }
+}
+
+function bedroomMoveOptions_(cabin,travelerId){
+  const current=String(roomAssignmentDraft_[travelerId]||'');
+  const options=[
+    `<option value="" ${!current?'selected':''}>Unassigned</option>`
+  ];
+
+  (cabin.bedrooms||[]).forEach(function(room){
+    const roomId=room['Bedroom ID'];
+    options.push(
+      `<option value="${escAttr(roomId)}" ${current===roomId?'selected':''}>${esc(room['Bedroom Name']||'Bedroom')}</option>`
+    );
+  });
+
+  return options.join('');
+}
+
+function nativeBedroomTravelerChip_(traveler,cabin){
+  const travelerId=traveler['Traveler ID'];
+
+  return `<div class="native-bedroom-traveler">
+    <div
+      class="native-bedroom-drag-handle"
+      draggable="true"
+      data-traveler-id="${escAttr(travelerId)}"
+      ondragstart="roomTravelerDragStart_(event)"
+      title="Drag to another bedroom"
+    >
+      <span class="traveler-drag-avatar">${esc(initials_(traveler.Name||'?'))}</span>
+      <span class="traveler-drag-copy">
+        <strong>${esc(traveler.Name||'Traveler')}</strong>
+        <small>
+          ${esc(traveler['Traveler Type']||'Adult')}
+          ${
+            String(traveler['Willing to Share Room']||'No')==='Yes'
+              ? ' · ✓ Share room'
+              : ''
+          }
+        </small>
+      </span>
+    </div>
+    <label class="native-bedroom-move">
+      <span>Move to</span>
+      <select
+        aria-label="Move ${escAttr(traveler.Name||'traveler')} to bedroom"
+        onchange="moveBedroomTraveler_('${escAttr(travelerId)}',this.value,'${escAttr(cabin['Cabin ID'])}')"
+      >
+        ${bedroomMoveOptions_(cabin,travelerId)}
+      </select>
+    </label>
+  </div>`;
+}
+
+function nativeBedroomDropZone_(cabin,room){
+  const roomId=room?room['Bedroom ID']:'';
+  const travelers=(DATA.travelers||[])
+    .filter(function(traveler){
+      return String(traveler.Active||'Yes').toLowerCase()!=='no' &&
+        String(roomAssignmentDraft_[traveler['Traveler ID']]||'')===String(roomId||'');
+    })
+    .slice()
+    .sort(function(a,b){
+      return String(a.Name||'').localeCompare(String(b.Name||''));
+    });
+
+  if(!room){
+    return `<section
+      class="native-bedroom-unassigned"
+      ondragover="roomAssignmentDragOver_(event)"
+      ondragleave="this.classList.remove('drag-over')"
+      ondrop="nativeBedroomDrop_(event,'','${escAttr(cabin['Cabin ID'])}')"
+    >
+      <div class="native-bedroom-zone-heading">
+        <div>
+          <p class="eyebrow">UNASSIGNED</p>
+          <h3>Travelers without a room</h3>
+        </div>
+        <span>${travelers.length} traveler${travelers.length===1?'':'s'}</span>
+      </div>
+      <div class="native-bedroom-traveler-list">
+        ${travelers.map(function(traveler){
+          return nativeBedroomTravelerChip_(traveler,cabin);
+        }).join('') || '<div class="room-drop-empty">Everyone has a bedroom.</div>'}
+      </div>
+    </section>`;
+  }
+
+  const share=roomCostShare_({'Cabin ID':cabin['Cabin ID']});
+  const adultCount=travelers.filter(function(traveler){
+    return String(traveler['Traveler Type']||'Adult')==='Adult';
+  }).length;
+
+  return `<section
+    class="room native-bedroom-room"
+    ondragover="roomAssignmentDragOver_(event)"
+    ondragleave="this.classList.remove('drag-over')"
+    ondrop="nativeBedroomDrop_(event,'${escAttr(roomId)}','${escAttr(cabin['Cabin ID'])}')"
+  >
+    <div class="room-card-heading">
+      <div>
+        <h3>${esc(room['Bedroom Name'])}</h3>
+        ${room.Floor?`<span class="room-floor">${esc(room.Floor)}</span>`:''}
+      </div>
+      <button class="ghost room-edit-button"
+        onclick="openRoomForm('${escAttr(room['Cabin ID'])}','${escAttr(roomId)}')">
+        Edit
+      </button>
+    </div>
+
+    <p class="muted">
+      ${esc(room['Bed Configuration']||'Layout not yet confirmed')}
+      • Sleeps ${room.Sleeps||'?'}
+    </p>
+
+    ${
+      share
+        ? `<div class="room-cost-share">
+            <strong>${money(share)}</strong>
+            <span>bedroom share</span>
+            ${
+              adultCount
+                ? `<small>${adultCount} paying adult${adultCount===1?'':'s'} · ${money(share/adultCount)} each</small>`
+                : '<small>No paying adults assigned yet.</small>'
+            }
+          </div>`
+        : ''
+    }
+
+    ${
+      room['Private Bathroom']==='Yes'
+        ? '<span class="room-feature-badge">Private bathroom</span>'
+        : ''
+    }
+
+    <div class="native-bedroom-traveler-list">
+      ${travelers.map(function(traveler){
+        return nativeBedroomTravelerChip_(traveler,cabin);
+      }).join('') || '<div class="room-drop-empty">Drop travelers here or use a Move to selector.</div>'}
+    </div>
+  </section>`;
+}
+
+function renderNativeBedroomPlanner_(cabin){
+  const cabinId=cabin['Cabin ID'];
+  ensureBedroomPlannerDraft_(cabinId);
+
+  return `
+    <div class="bedroom-native-toolbar">
+      <div class="bedroom-draft-status ${bedroomPlannerDraftDirty_?'dirty':'clean'}" role="status" aria-live="polite">
+        <span class="bedroom-draft-dot" aria-hidden="true"></span>
+        <span>${
+          bedroomPlannerDraftDirty_
+            ? 'Unsaved bedroom changes — arrange freely, then save when ready.'
+            : 'Bedroom layout matches the saved assignments.'
+        }</span>
+      </div>
+      <button
+        class="primary bedroom-save-layout-button"
+        type="button"
+        ${bedroomPlannerDraftDirty_&&!bedroomPlannerSaveInFlight_?'':'disabled'}
+        onclick="saveBedroomPlannerLayout_('${escAttr(cabinId)}')"
+      >
+        ${bedroomPlannerSaveInFlight_?'Saving…':'Save bedroom layout'}
+      </button>
+    </div>
+
+    <p class="muted bedroom-native-help">
+      Move travelers directly here. Drag between rooms on desktop, or use each traveler’s Move to selector on any device.
+      Nothing is written to the trip sheet until you choose Save bedroom layout.
+    </p>
+
+    ${nativeBedroomDropZone_(cabin,null)}
+
+    <div class="room-board native-bedroom-board">
+      ${(cabin.bedrooms||[]).map(function(room){
+        return nativeBedroomDropZone_(cabin,room);
+      }).join('') ||
+        '<div class="empty">No room details yet. Use Add bedroom to build the layout.</div>'}
+    </div>
+
+    ${withBedroomDraftAssignments_(cabinId,function(){
+      return renderTravelerCostSummary_(cabinId);
+    })}
+
+    <div class="native-bedroom-savebar">
+      <span>
+        ${
+          bedroomPlannerDraftDirty_
+            ? 'Current traveler placement is not saved yet.'
+            : 'Current traveler placement is saved.'
+        }
+      </span>
+      <button
+        type="button"
+        ${bedroomPlannerDraftDirty_&&!bedroomPlannerSaveInFlight_?'':'disabled'}
+        onclick="saveBedroomPlannerLayout_('${escAttr(cabinId)}')"
+      >
+        ${bedroomPlannerSaveInFlight_?'Saving…':'Save bedroom layout'}
+      </button>
+    </div>
+  `;
+}
+
+renderRooms=function(){
+  const availableCabins=
+    typeof visibleRentalCabins_==='function'
+      ? visibleRentalCabins_()
+      : (DATA.cabins||[]);
+
+  if(!availableCabins.length){
+    return '<div class="empty">No currently visible rentals are available for room planning.</div>';
+  }
+
+  const selectedId=DATA.trip['Selected Cabin ID'];
+  const cabin=
+    availableCabins.find(function(item){
+      return item['Cabin ID']===selectedId;
+    }) ||
+    availableCabins[0];
+
+  const cabinId=cabin['Cabin ID'];
+  ensureBedroomPlannerDraft_(cabinId);
+
+  const options=availableCabins.map(function(item){
+    return `<option
+      value="${escAttr(item['Cabin ID'])}"
+      ${item['Cabin ID']===cabinId?'selected':''}
+    >${esc(displayName(item))} — ${Number(item.Bedrooms||0)} BR / ${Number(item.Bathrooms||0)} BA</option>`;
+  }).join('');
+
+  const rooms=cabin.bedrooms||[];
+
+  return `<section class="view">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">PHASE 4</p>
+          <h2>Room planner</h2>
+        </div>
+        <div class="room-planner-actions native-bedroom-actions">
+          <button class="ghost" type="button"
+            onclick="openPasteBedroomLayout('${escAttr(cabinId)}')">
+            Paste bedroom layout
+          </button>
+          <button class="ghost" type="button"
+            onclick="openRoomForm('${escAttr(cabinId)}')">
+            Add bedroom
+          </button>
+          <button class="ghost" type="button"
+            ${Object.keys(roomAssignmentDraft_||{}).some(function(id){return roomAssignmentDraft_[id];})?'':'disabled'}
+            onclick="clearBedroomTravelers_('${escAttr(cabinId)}')">
+            Clear Travelers
+          </button>
+          <button class="remove-rental-button" type="button"
+            ${rooms.length?'':'disabled'}
+            onclick="confirmRemoveAllBedrooms_('${escAttr(cabinId)}')">
+            Remove all Bedrooms
+          </button>
+        </div>
+      </div>
+
+      <div class="room-planner-selector">
+        <label>
+          <span>Property to plan</span>
+          <select
+            id="roomPlannerCabin"
+            onchange="changeRoomPlannerCabin(this.value)"
+          >${options}</select>
+        </label>
+
+        <div class="room-planner-summary">
+          <strong>${esc(displayName(cabin))}</strong>
+          <span>
+            Sleeps ${Number(cabin.Sleeps||0) || '?'} ·
+            ${Number(cabin.Bedrooms||0) || '?'} bedrooms ·
+            ${Number(cabin.Bathrooms||0) || '?'} bathrooms
+          </span>
+        </div>
+      </div>
+
+      ${renderNativeBedroomPlanner_(cabin)}
+    </div>
+  </section>`;
 };
 
-roomAssignmentDrop_=function(event,bedroomId,cabinId){
+function moveBedroomTraveler_(travelerId,bedroomId,cabinId){
+  ensureBedroomPlannerDraft_(cabinId);
+  if(!roomAssignmentDraft_ || roomAssignmentDraft_[travelerId]===undefined) return;
+
+  roomAssignmentDraft_[travelerId]=String(bedroomId||'');
+  syncBedroomPlannerDraftDirty_();
+  render();
+}
+
+function nativeBedroomDrop_(event,bedroomId,cabinId){
   event.preventDefault();
   event.currentTarget.classList.remove('drag-over');
 
   const travelerId=event.dataTransfer.getData('text/plain');
-  if(!travelerId || !roomAssignmentDraft_ || roomAssignmentDraft_[travelerId]===undefined){
+  if(!travelerId) return;
+
+  moveBedroomTraveler_(travelerId,bedroomId,cabinId);
+}
+
+function clearBedroomTravelers_(cabinId){
+  ensureBedroomPlannerDraft_(cabinId);
+
+  Object.keys(roomAssignmentDraft_||{}).forEach(function(travelerId){
+    roomAssignmentDraft_[travelerId]='';
+  });
+
+  syncBedroomPlannerDraftDirty_();
+  render();
+  toast('Travelers cleared in this draft. Save bedroom layout to make it permanent.');
+}
+
+function bedroomPlannerPayload_(){
+  return Object.keys(roomAssignmentDraft_||{})
+    .filter(function(travelerId){
+      return roomAssignmentDraft_[travelerId];
+    })
+    .map(function(travelerId){
+      return {
+        travelerId:travelerId,
+        bedroomId:roomAssignmentDraft_[travelerId]
+      };
+    });
+}
+
+function optimisticBedroomAssignments_(cabinId,payload){
+  return (DATA.assignments||[])
+    .filter(function(assignment){
+      return assignment['Cabin ID']!==cabinId;
+    })
+    .concat(
+      payload.map(function(item,index){
+        return {
+          'Assignment ID':'LOCAL-'+Date.now()+'-'+index,
+          'Cabin ID':cabinId,
+          'Bedroom ID':item.bedroomId,
+          'Traveler ID':item.travelerId,
+          'Created At':new Date().toISOString()
+        };
+      })
+    );
+}
+
+function saveBedroomPlannerLayout_(cabinId,afterAction){
+  ensureBedroomPlannerDraft_(cabinId);
+  syncBedroomPlannerDraftDirty_();
+
+  if(!bedroomPlannerDraftDirty_){
+    if(afterAction) performBedroomPlannerAction_(afterAction);
+    else toast('Bedroom layout is already saved.');
     return;
   }
 
-  roomAssignmentDraft_[travelerId]=bedroomId||'';
-  syncBedroomPlannerDraftDirty_();
-  refreshBulkRoomAssignmentPlanner_(cabinId);
-};
-
-const applyMultiAssignRoomBeforeBedroomDraft_=applyMultiAssignRoom_;
-applyMultiAssignRoom_=function(cabinId,bedroomId){
-  applyMultiAssignRoomBeforeBedroomDraft_(cabinId,bedroomId);
-  syncBedroomPlannerDraftDirty_();
-  refreshBulkRoomAssignmentPlanner_(cabinId);
-};
-
-removeRoomAssignment=function(id){
-  const assignment=(DATA.assignments||[]).find(function(item){
-    return item['Assignment ID']===id;
-  });
-  if(!assignment) return;
-
-  openBulkRoomAssignmentPlanner_(assignment['Cabin ID']);
-
-  if(
-    roomAssignmentDraft_ &&
-    roomAssignmentDraft_[assignment['Traveler ID']]!==undefined
-  ){
-    roomAssignmentDraft_[assignment['Traveler ID']]='';
-    syncBedroomPlannerDraftDirty_();
-    refreshBulkRoomAssignmentPlanner_(assignment['Cabin ID']);
-  }
-};
-
-function replaceBedroomPlannerModalContent_(html){
-  const content=document.getElementById('modalContent');
-  const panel=document.querySelector('#modal .modal-panel');
-  if(!content) return;
-
-  content.innerHTML=html;
-
-  if(panel){
-    panel.classList.add('bedroom-planner-modal-panel');
-    panel.scrollTop=0;
+  if(bedroomPlannerSaveInFlight_){
+    toast('A bedroom layout save is already running. Keep arranging while it finishes.',true);
+    return;
   }
 
-  if(typeof labelOpenModal_==='function') labelOpenModal_();
+  const payload=bedroomPlannerPayload_();
+  const submittedSignature=bedroomPlannerDraftSignature_();
+  const previousOriginalSignature=bedroomPlannerDraftOriginalSignature_;
+  const previousAssignments=(DATA.assignments||[]).slice();
+  const saveKey='room-assignments:'+cabinId;
+  const saveId=beginBackgroundSave_('Bedroom layout',saveKey);
 
-  setTimeout(function(){
-    const target=content.querySelector('[autofocus],button,input,select,textarea');
-    if(target&&typeof target.focus==='function') target.focus();
-  },0);
+  bedroomPlannerSaveInFlight_=true;
+  bedroomPlannerDraftOriginalSignature_=submittedSignature;
+  DATA.assignments=optimisticBedroomAssignments_(cabinId,payload);
+  syncBedroomPlannerDraftDirty_();
+  render();
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA=data;
+
+        if(bedroomPlannerDraftCabinId_===cabinId){
+          bedroomPlannerDraftOriginalSignature_=submittedSignature;
+          bedroomPlannerSaveInFlight_=false;
+          syncBedroomPlannerDraftDirty_();
+          render();
+        }
+      }
+
+      completeBackgroundSave_(saveId,'Bedroom layout saved');
+    })
+    .withFailureHandler(function(error){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA.assignments=previousAssignments;
+
+        if(bedroomPlannerDraftCabinId_===cabinId){
+          bedroomPlannerDraftOriginalSignature_=previousOriginalSignature;
+          bedroomPlannerSaveInFlight_=false;
+          syncBedroomPlannerDraftDirty_();
+          render();
+        }
+      }
+
+      failBackgroundSave_(saveId,error,'Bedroom layout could not be saved');
+      toast('Bedroom layout could not be saved: '+backgroundSaveMessage_(error),true);
+    })
+    .saveRoomAssignmentsBatch(cabinId,payload);
+
+  if(afterAction){
+    performBedroomPlannerAction_(afterAction);
+  }
 }
 
-function showBedroomPlannerExitPrompt_(view){
-  bedroomPlannerPendingExitView_=String(view||'');
-  bedroomPlannerExitPromptVisible_=true;
+function showBedroomPlannerExitPrompt_(action){
+  bedroomPlannerPendingAction_=action||null;
 
-  replaceBedroomPlannerModalContent_(`
+  openModal(`
     <div class="bedroom-exit-confirm">
       <p class="eyebrow">UNSAVED BEDROOM LAYOUT</p>
       <h2>Save this bedroom layout before leaving?</h2>
       <p class="muted">
-        Your traveler moves are only in this draft right now. You can keep editing,
-        discard the draft, or save the current layout before you exit.
+        Traveler moves on the Room Planner are still only in your local draft.
+        Save the current layout, discard it, or keep arranging rooms.
       </p>
-      <div class="bedroom-exit-summary">
-        <strong>Current draft has unsaved changes.</strong>
-        <span>No bedroom assignments have been written to the trip sheet yet.</span>
-      </div>
       <div class="bedroom-exit-actions">
         <button class="ghost" type="button" autofocus onclick="resumeBedroomPlanner_()">
           Keep editing
         </button>
-        <button class="ghost bedroom-discard-button" type="button" onclick="discardBedroomPlannerDraftAndExit_()">
+        <button class="ghost bedroom-discard-button" type="button" onclick="discardBedroomPlannerDraftAndContinue_()">
           Discard changes
         </button>
-        <button type="button" onclick="saveBedroomPlannerDraftAndExit_()">
-          Save &amp; exit
+        <button type="button" ${bedroomPlannerSaveInFlight_?'disabled':''} onclick="saveBedroomPlannerDraftAndContinue_()">
+          ${bedroomPlannerSaveInFlight_?'Saving current layout…':'Save &amp; continue'}
         </button>
       </div>
     </div>
   `);
 }
 
-function requestBedroomPlannerExit_(view){
+function requestBedroomPlannerAction_(action){
   if(!bedroomPlannerDraftCabinId_){
-    closeModalBeforeBedroomDraft_();
-    if(view) navigateBeforeBedroomDraft_(view);
+    performBedroomPlannerAction_(action);
     return;
   }
 
   syncBedroomPlannerDraftDirty_();
 
   if(!bedroomPlannerDraftDirty_){
-    const targetView=String(view||'');
-    resetBedroomPlannerDraftState_();
-    closeModalBeforeBedroomDraft_();
-    if(targetView){
-      setTimeout(function(){navigateBeforeBedroomDraft_(targetView);},0);
-    }
+    performBedroomPlannerAction_(action);
     return;
   }
 
-  showBedroomPlannerExitPrompt_(view);
+  showBedroomPlannerExitPrompt_(action);
 }
 
 function resumeBedroomPlanner_(){
+  bedroomPlannerPendingAction_=null;
+  closeModal();
+}
+
+function discardBedroomPlannerDraftAndContinue_(){
+  const action=bedroomPlannerPendingAction_;
+  closeModal();
+  resetBedroomPlannerDraftState_();
+  performBedroomPlannerAction_(action);
+}
+
+function saveBedroomPlannerDraftAndContinue_(){
+  const action=bedroomPlannerPendingAction_;
   const cabinId=bedroomPlannerDraftCabinId_;
-  bedroomPlannerExitPromptVisible_=false;
-  bedroomPlannerPendingExitView_='';
-
-  if(!cabinId){
-    closeModalBeforeBedroomDraft_();
-    return;
-  }
-
-  replaceBedroomPlannerModalContent_(renderBulkRoomAssignmentPlanner_(cabinId));
+  closeModal();
+  saveBedroomPlannerLayout_(cabinId,action);
 }
 
-function discardBedroomPlannerDraftAndExit_(){
-  const targetView=bedroomPlannerPendingExitView_;
+function performBedroomPlannerAction_(action){
+  action=action||{};
 
-  bedroomPlannerBypassExitGuard_=true;
-  resetBedroomPlannerDraftState_();
-  closeModalBeforeBedroomDraft_();
-  bedroomPlannerBypassExitGuard_=false;
-
-  if(targetView){
-    setTimeout(function(){navigateBeforeBedroomDraft_(targetView);},0);
-  }
-}
-
-function commitBedroomPlannerDraft_(cabinId,targetView){
-  if(!cabinId) return;
-
-  bedroomPlannerDraftDirty_=false;
-  bedroomPlannerExitPromptVisible_=false;
-  bedroomPlannerBypassExitGuard_=true;
-
-  saveBulkRoomAssignmentsBeforeBedroomDraft_(cabinId);
-
-  bedroomPlannerBypassExitGuard_=false;
-  resetBedroomPlannerDraftState_();
-
-  if(targetView){
-    setTimeout(function(){navigateBeforeBedroomDraft_(targetView);},20);
-  }
-}
-
-saveBulkRoomAssignments_=function(cabinId){
-  commitBedroomPlannerDraft_(cabinId,'');
-};
-
-function saveBedroomPlannerDraftAndExit_(){
-  commitBedroomPlannerDraft_(
-    bedroomPlannerDraftCabinId_,
-    bedroomPlannerPendingExitView_
-  );
-}
-
-closeModal=function(){
-  if(bedroomPlannerBypassExitGuard_){
-    closeModalBeforeBedroomDraft_();
-    return;
-  }
-
-  if(bedroomPlannerDraftCabinId_){
-    syncBedroomPlannerDraftDirty_();
-
-    if(bedroomPlannerDraftDirty_){
-      if(!bedroomPlannerExitPromptVisible_){
-        showBedroomPlannerExitPrompt_('');
-      }
-      return;
-    }
-
+  if(action.type==='navigate'){
     resetBedroomPlannerDraftState_();
+    navigateBeforeBedroomDraft_(action.view);
+    return;
   }
 
-  closeModalBeforeBedroomDraft_();
-};
+  if(action.type==='cabin'){
+    resetBedroomPlannerDraftState_();
+    changeRoomPlannerCabinBeforeBedroomDraft_(action.cabinId);
+  }
+}
 
 navigate=function(view){
-  if(bedroomPlannerDraftCabinId_){
-    syncBedroomPlannerDraftDirty_();
-
-    if(bedroomPlannerDraftDirty_){
-      requestBedroomPlannerExit_(view);
-      return;
-    }
-
-    resetBedroomPlannerDraftState_();
-    const modal=document.getElementById('modal');
-    if(modal&&!modal.classList.contains('hidden')){
-      closeModalBeforeBedroomDraft_();
-    }
+  if(
+    currentView==='rooms' &&
+    bedroomPlannerDraftCabinId_ &&
+    view!=='rooms'
+  ){
+    requestBedroomPlannerAction_({
+      type:'navigate',
+      view:view
+    });
+    return;
   }
 
   navigateBeforeBedroomDraft_(view);
 };
+
+changeRoomPlannerCabin=function(cabinId){
+  if(
+    bedroomPlannerDraftCabinId_ &&
+    String(cabinId||'')!==String(bedroomPlannerDraftCabinId_||'')
+  ){
+    requestBedroomPlannerAction_({
+      type:'cabin',
+      cabinId:cabinId
+    });
+    return;
+  }
+
+  changeRoomPlannerCabinBeforeBedroomDraft_(cabinId);
+};
+
+function confirmRemoveAllBedrooms_(cabinId){
+  const cabin=roomPlannerCabin_(cabinId);
+  if(!cabin || !(cabin.bedrooms||[]).length) return;
+
+  openModal(`
+    <div class="bedroom-exit-confirm">
+      <p class="eyebrow">REMOVE BEDROOMS</p>
+      <h2>Remove all bedrooms from ${esc(displayName(cabin))}?</h2>
+      <p class="muted">
+        This removes every bedroom card and clears all traveler room assignments for this rental.
+        This action is saved immediately and cannot be undone automatically.
+      </p>
+      ${
+        bedroomPlannerDraftDirty_
+          ? '<div class="bedroom-exit-summary"><strong>Unsaved traveler moves will also be discarded.</strong></div>'
+          : ''
+      }
+      <div class="bedroom-exit-actions">
+        <button class="ghost" type="button" autofocus onclick="closeModal()">Cancel</button>
+        <button class="remove-rental-button" type="button"
+          onclick="removeAllBedroomsForCabin_('${escAttr(cabinId)}')">
+          Remove all Bedrooms
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+function removeAllBedroomsForCabin_(cabinId){
+  const button=document.querySelector('#modal .remove-rental-button');
+  if(button){
+    button.disabled=true;
+    button.textContent='Removing…';
+  }
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      DATA=data;
+      resetBedroomPlannerDraftState_();
+      closeModal();
+      render();
+      toast('All bedrooms and traveler room assignments were removed.');
+    })
+    .withFailureHandler(function(error){
+      if(button){
+        button.disabled=false;
+        button.textContent='Remove all Bedrooms';
+      }
+      toast(
+        'Bedrooms could not be removed: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+    })
+    .removeAllBedrooms(cabinId);
+}
 
 window.addEventListener('beforeunload',function(event){
   if(!bedroomPlannerDraftCabinId_) return;
