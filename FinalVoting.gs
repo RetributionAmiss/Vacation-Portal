@@ -1,3 +1,13 @@
+function normalizeVotingMethod_(value) {
+  return /^rank/i.test(String(value || '').trim())
+    ? 'Ranking'
+    : 'Rating';
+}
+
+function getVotingMethod_() {
+  return normalizeVotingMethod_(getSettings_('Trip')['Voting Method']);
+}
+
 function getFinalistCabinIds_() {
   return String(getSettings_('Trip')['Finalist Cabin IDs'] || '')
     .split('|')
@@ -8,6 +18,31 @@ function getFinalistCabinIds_() {
 function saveTripSettings(values) {
   values = values || {};
   assertOrganizerFromValues_(values);
+
+  if (values['Voting Method'] !== undefined) {
+    const currentMethod = getVotingMethod_();
+    const nextMethod = normalizeVotingMethod_(values['Voting Method']);
+
+    if (currentMethod !== nextMethod) {
+      const round = String(
+        getSettings_('Trip')['Voting Round'] || 'Preliminary'
+      );
+      const roundHasVotes = readSheet_('Votes').some(function (vote) {
+        return String(vote['Voting Round'] || 'Preliminary') === round;
+      });
+
+      if (roundHasVotes) {
+        throw new Error(
+          'Voting method cannot be changed after votes have been cast in this round. ' +
+          'Restart preliminary voting or begin a fresh round before switching methods.'
+        );
+      }
+
+      setSetting_('Trip', 'Voting Method', nextMethod);
+    } else if (!String(getSettings_('Trip')['Voting Method'] || '').trim()) {
+      setSetting_('Trip', 'Voting Method', currentMethod);
+    }
+  }
 
   [
     'Trip Name',
