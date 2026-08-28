@@ -32,3 +32,5 @@ jobs:
         run: node tests/background_save_contract.test.js
       - name: Run rating/ranking voting mode contracts
         run: node tests/voting_mode_contract.test.js
+      - name: Run final UI polish and accessibility contracts
+        run: node tests/ui_polish_contract.test.js

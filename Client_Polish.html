@@ -1,0 +1,213 @@
+<script>
+const openModalBeforePolish_=openModal;
+const closeModalBeforePolish_=closeModal;
+const renderBeforePolish_=render;
+let modalReturnFocus_=null;
+
+function modalFocusableElements_(){
+  const modal=document.getElementById('modal');
+  if(!modal||modal.classList.contains('hidden')) return [];
+
+  return Array.from(modal.querySelectorAll(
+    'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+  )).filter(function(element){
+    const style=window.getComputedStyle(element);
+    return style.display!=='none'&&style.visibility!=='hidden';
+  });
+}
+
+function labelOpenModal_(){
+  const modal=document.getElementById('modal');
+  const panel=modal?modal.querySelector('.modal-panel'):null;
+  if(!modal||!panel) return;
+
+  panel.setAttribute('role','dialog');
+  panel.setAttribute('aria-modal','true');
+  panel.setAttribute('tabindex','-1');
+
+  const closeButton=panel.querySelector('.modal-close');
+  if(closeButton&&!closeButton.getAttribute('aria-label')){
+    closeButton.setAttribute('aria-label','Close dialog');
+  }
+
+  const title=panel.querySelector('#modalContent h1,#modalContent h2,#modalContent h3');
+  if(title){
+    if(!title.id) title.id='portalModalTitle';
+    panel.setAttribute('aria-labelledby',title.id);
+  }else{
+    panel.removeAttribute('aria-labelledby');
+    panel.setAttribute('aria-label','Portal dialog');
+  }
+}
+
+openModal=function(html){
+  modalReturnFocus_=
+    document.activeElement&&typeof document.activeElement.focus==='function'
+      ? document.activeElement
+      : null;
+
+  openModalBeforePolish_(html);
+  labelOpenModal_();
+
+  setTimeout(function(){
+    const panel=document.querySelector('#modal .modal-panel');
+    const preferred=document.querySelector(
+      '#modal [autofocus],#modal input:not([type="hidden"]):not([disabled]),#modal select:not([disabled]),#modal textarea:not([disabled])'
+    );
+    const focusables=modalFocusableElements_();
+    const target=preferred||focusables[0]||panel;
+    if(target&&typeof target.focus==='function') target.focus();
+  },0);
+};
+
+closeModal=function(){
+  const target=modalReturnFocus_;
+  modalReturnFocus_=null;
+  closeModalBeforePolish_();
+
+  setTimeout(function(){
+    if(target&&document.contains(target)&&typeof target.focus==='function'){
+      target.focus();
+    }
+  },0);
+};
+
+document.addEventListener('keydown',function(event){
+  const modal=document.getElementById('modal');
+  if(!modal||modal.classList.contains('hidden')) return;
+
+  if(event.key==='Escape'){
+    const closeButton=modal.querySelector('.modal-close');
+    const closeAllowed=closeButton&&window.getComputedStyle(closeButton).display!=='none';
+    if(closeAllowed){
+      event.preventDefault();
+      closeModal();
+    }
+    return;
+  }
+
+  if(event.key!=='Tab') return;
+
+  const focusables=modalFocusableElements_();
+  if(!focusables.length){
+    event.preventDefault();
+    const panel=modal.querySelector('.modal-panel');
+    if(panel) panel.focus();
+    return;
+  }
+
+  const first=focusables[0];
+  const last=focusables[focusables.length-1];
+
+  if(event.shiftKey&&document.activeElement===first){
+    event.preventDefault();
+    last.focus();
+  }else if(!event.shiftKey&&document.activeElement===last){
+    event.preventDefault();
+    first.focus();
+  }
+});
+
+const EMPTY_STATE_COPY_={
+  meals:{
+    icon:'🍽️',
+    title:'No meals planned yet',
+    copy:'Add the first meal so everyone can see what is being served and who is helping.',
+    planner:'Meals',
+    action:'Add a meal'
+  },
+  groceries:{
+    icon:'🛒',
+    title:'The grocery list is empty',
+    copy:'Add the first grocery item and assign who is buying or bringing it.',
+    planner:'Grocery List',
+    action:'Add an item'
+  },
+  itinerary:{
+    icon:'📍',
+    title:'No activities scheduled yet',
+    copy:'Add the first activity so the trip schedule starts taking shape.',
+    planner:'Itinerary',
+    action:'Add an activity'
+  },
+  budget:{
+    icon:'💵',
+    title:'No budget items yet',
+    copy:'Add the first shared cost to start tracking the trip budget.',
+    planner:'Budget',
+    action:'Add a budget item'
+  }
+};
+
+function polishEmptyState_(){
+  const config=EMPTY_STATE_COPY_[String(currentView||'')];
+  if(!config) return;
+
+  document.querySelectorAll('#viewRoot .empty-state').forEach(function(element){
+    if(element.dataset.polishedEmpty==='1') return;
+    if(String(element.textContent||'').trim()!=='No items yet.') return;
+
+    element.dataset.polishedEmpty='1';
+    element.innerHTML=`
+      <div class="contextual-empty">
+        <span class="contextual-empty-icon" aria-hidden="true">${config.icon}</span>
+        <strong>${esc(config.title)}</strong>
+        <span>${esc(config.copy)}</span>
+        <button type="button" onclick="openPlannerForm('${escAttr(config.planner)}')">
+          ${esc(config.action)}
+        </button>
+      </div>`;
+  });
+}
+
+function polishSortableHeaders_(){
+  document.querySelectorAll('#viewRoot .sortable-header').forEach(function(header){
+    header.setAttribute('role','button');
+    header.setAttribute('tabindex','0');
+
+    if(header.dataset.keyboardReady==='1') return;
+    header.dataset.keyboardReady='1';
+
+    header.addEventListener('keydown',function(event){
+      if(event.key!=='Enter'&&event.key!==' ') return;
+      event.preventDefault();
+      header.click();
+    });
+  });
+}
+
+function polishNavigationState_(){
+  document.querySelectorAll('#mainNav button[data-view]').forEach(function(button){
+    if(button.classList.contains('active')) button.setAttribute('aria-current','page');
+    else button.removeAttribute('aria-current');
+  });
+}
+
+function applyUiPolish_(){
+  polishNavigationState_();
+  polishSortableHeaders_();
+  polishEmptyState_();
+}
+
+render=function(){
+  const result=renderBeforePolish_.apply(this,arguments);
+  applyUiPolish_();
+  return result;
+};
+
+(function initializeUiPolish_(){
+  const loading=document.getElementById('loadingScreen');
+  if(loading){
+    loading.setAttribute('role','status');
+    loading.setAttribute('aria-live','polite');
+  }
+
+  const toastElement=document.getElementById('toast');
+  if(toastElement){
+    toastElement.setAttribute('role','status');
+    toastElement.setAttribute('aria-live','polite');
+  }
+
+  applyUiPolish_();
+})();
+</script>
