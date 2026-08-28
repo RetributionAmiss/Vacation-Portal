@@ -1,0 +1,119 @@
+<style>
+:root{
+  --ui-focus-ring:#2f6f58;
+  --ui-focus-halo:rgba(47,111,88,.2);
+  --ui-polish-radius:16px;
+}
+
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{line-height:1.48}
+h1,h2,h3{line-height:1.15}
+.muted{line-height:1.45}
+
+:where(button,a,input,select,textarea,[role="button"]):focus-visible{
+  outline:3px solid var(--ui-focus-ring);
+  outline-offset:3px;
+  box-shadow:0 0 0 5px var(--ui-focus-halo)
+}
+
+button,.ghost,input,select,textarea{
+  transition:border-color .16s ease,box-shadow .16s ease,background-color .16s ease,transform .16s ease
+}
+
+.panel-head h2,.panel-head h3{letter-spacing:-.01em}
+.panel-head .muted{margin:.25rem 0 0}
+
+.empty,.empty-state{
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.5
+}
+.contextual-empty{
+  display:grid;
+  justify-items:center;
+  gap:7px;
+  padding:18px 12px;
+  text-align:center
+}
+.contextual-empty-icon{
+  display:grid;
+  place-items:center;
+  width:42px;
+  height:42px;
+  border-radius:14px;
+  background:#edf2ee;
+  font-size:21px
+}
+.contextual-empty strong{color:var(--ink);font-size:14px}
+.contextual-empty span{max-width:440px}
+.contextual-empty button{margin-top:3px}
+
+.modal-panel{
+  scrollbar-gutter:stable;
+  overscroll-behavior:contain
+}
+.modal-panel:focus{outline:none}
+.modal-panel h2{margin:4px 48px 10px 0}
+.modal-panel h3{margin-top:0}
+.modal-close{
+  min-width:42px;
+  min-height:42px
+}
+.form-grid{gap:14px}
+.form-grid label{line-height:1.35}
+.form-grid label>span:first-child{font-size:12px;font-weight:700;color:#536158}
+.form-actions{padding-top:4px}
+
+.sortable-header[role="button"]{cursor:pointer}
+.sortable-header[role="button"]:focus-visible{
+  outline:3px solid var(--ui-focus-ring);
+  outline-offset:-3px
+}
+
+#toast[role="status"]{max-width:min(440px,calc(100vw - 24px));line-height:1.4}
+
+@media(max-width:650px){
+  .view{gap:14px}
+  .panel,.stat{padding:15px}
+  .panel-head{align-items:flex-start;margin-bottom:11px}
+  .panel-head h2{font-size:1.45rem}
+  .hero{padding:20px}
+  .hero h2{font-size:28px}
+
+  .modal{padding:10px}
+  .modal-panel{
+    width:100%;
+    max-height:calc(100dvh - 20px);
+    padding:20px 16px 18px;
+    border-radius:18px
+  }
+  .modal-close{right:10px;top:10px}
+  .modal-panel h2{margin-right:46px}
+  .form-actions{
+    position:sticky;
+    bottom:-18px;
+    z-index:3;
+    margin:16px -16px -18px;
+    padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    background:linear-gradient(to bottom,rgba(255,253,248,.94),var(--paper) 25%);
+    border-top:1px solid rgba(35,76,60,.08)
+  }
+  .form-actions button{min-height:44px}
+  .contextual-empty{padding:16px 8px}
+  #toast{right:12px;bottom:12px}
+}
+
+@media(pointer:coarse){
+  button,.main-nav button,.mobile-simple-nav button{min-height:44px}
+  select,input:not([type="checkbox"]):not([type="radio"]){min-height:44px}
+}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    scroll-behavior:auto!important;
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.01ms!important
+  }
+}
+</style>
