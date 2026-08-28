@@ -28,3 +28,5 @@ jobs:
         run: node tests/ui_foundation_contract.test.js
       - name: Run UI phase 2 compact-card contracts
         run: node tests/ui_phase2_contract.test.js
+      - name: Run unified background save contracts
+        run: node tests/background_save_contract.test.js
