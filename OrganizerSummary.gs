@@ -65,8 +65,9 @@ function getOrganizerVotingSummary(values) {
 
   function cabinName_(cabin) {
     return String(
-      cabin['Rental Name'] || cabin.Name || cabin['Property Name'] ||
-      cabin['Provider Property ID'] || cabin['Cabin ID'] || 'Rental'
+      cabin.Nickname || cabin['Cabin Name'] || cabin['Rental Name'] ||
+      cabin.Name || cabin['Property Name'] || cabin['Provider Property ID'] ||
+      cabin['Cabin ID'] || 'Rental'
     ).trim();
   }
 
@@ -82,7 +83,7 @@ function getOrganizerVotingSummary(values) {
       const cabin = cabinById[cabinId];
       return {
         cabinId: cabinId,
-        name: cabin ? cabinName_(cabin) : cabinId,
+        name: cabin ? cabinName_(cabin) + ' · ' + cabinId : cabinId,
         score: Number(vote.Score || 0),
         firstChoice: String(vote['First Choice'] || '').toLowerCase() === 'yes'
       };
