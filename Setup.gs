@@ -15,6 +15,7 @@ function setupVacationPortal() {
     'End Date': '',
     'Portal Stage': 'Gathering',
     'Voting Round': 'Preliminary',
+    'Voting Method': 'Rating',
     'Finalist Count': '3',
     'Currency': 'USD',
     'Vacation Status': 'Planning',
