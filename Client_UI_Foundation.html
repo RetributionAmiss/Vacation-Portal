@@ -1,0 +1,92 @@
+<script>
+(function(){
+  const baseToast_=toast;
+
+  toast=function(text,error){
+    let message=String(text??'');
+
+    if(message==='Only the Justin traveler profile can remove rentals.'){
+      message='Switch to the Organizer profile to remove rentals.';
+    }
+
+    return baseToast_(message,error);
+  };
+
+  function applyOrganizerUiCopy_(){
+    document.querySelectorAll('.admin-action-label').forEach(function(label){
+      if(label.dataset.uiFoundationApplied==='1') return;
+      label.textContent='🔒 Organizer tools';
+      label.dataset.uiFoundationApplied='1';
+    });
+
+    const authDialog=document.querySelector('.organizer-auth-dialog');
+    if(authDialog){
+      const authCopy=authDialog.querySelector('h2 + p');
+      if(authCopy && authCopy.dataset.uiFoundationApplied!=='1'){
+        authCopy.textContent=
+          'Enter the private organizer access key to use protected Organizer actions on this device.';
+        authCopy.dataset.uiFoundationApplied='1';
+      }
+
+      const authWarning=authDialog.querySelector('.notice.warning');
+      if(authWarning && authWarning.dataset.uiFoundationApplied!=='1'){
+        authWarning.innerHTML=
+          'Organizer authorization has not been configured yet. In the bound Google Sheet, use '+
+          '<strong>Vacation Portal → Set organizer access key</strong>.';
+        authWarning.dataset.uiFoundationApplied='1';
+      }
+    }
+
+    const travelerSwitch=document.querySelector('.traveler-switch-confirm');
+    if(travelerSwitch){
+      const eyebrow=travelerSwitch.querySelector('.eyebrow');
+      if(
+        eyebrow &&
+        eyebrow.textContent.trim()==='ADMIN PROFILE'
+      ){
+        eyebrow.textContent='ORGANIZER PROFILE';
+      }
+
+      const warning=travelerSwitch.querySelector('.admin-profile-warning');
+      if(warning && warning.dataset.uiFoundationApplied!=='1'){
+        warning.innerHTML=
+          '<strong>Organizer profile:</strong> This profile can access Travelers, Trip Settings, '+
+          'rental maintenance, diagnostics, notification tools, and other protected Organizer controls. '+
+          'Use these controls only when acting as the trip organizer.';
+        warning.dataset.uiFoundationApplied='1';
+      }
+    }
+
+    const removeDialog=document.querySelector('.remove-rental-confirmation');
+    if(removeDialog){
+      const warning=removeDialog.querySelector('.notice.warning');
+      if(warning && warning.dataset.uiFoundationApplied!=='1'){
+        warning.textContent=
+          'This Organizer action is available only while using the Organizer profile.';
+        warning.dataset.uiFoundationApplied='1';
+      }
+    }
+  }
+
+  function startUiFoundationObserver_(){
+    applyOrganizerUiCopy_();
+
+    const observer=new MutationObserver(function(){
+      applyOrganizerUiCopy_();
+    });
+
+    observer.observe(document.body,{
+      childList:true,
+      subtree:true
+    });
+  }
+
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',startUiFoundationObserver_,{
+      once:true
+    });
+  }else{
+    startUiFoundationObserver_();
+  }
+})();
+</script>
