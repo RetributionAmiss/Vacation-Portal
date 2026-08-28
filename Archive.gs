@@ -15,12 +15,12 @@ function startNewVacation() {
     )
   );
 
-  ['Trip','Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Schedule','Payments','Meals','Grocery List','Itinerary','Rental Import'].forEach(function(name) {
+  ['Trip','Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Shares','Payment Schedule','Payments','Meals','Grocery List','Itinerary','Rental Import'].forEach(function(name) {
     const source = ss.getSheetByName(name);
     if (source) source.copyTo(archive).setName(name);
   });
 
-  ['Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Schedule','Payments','Meals','Grocery List','Itinerary','Rental Import'].forEach(function(name) {
+  ['Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Shares','Payment Schedule','Payments','Meals','Grocery List','Itinerary','Rental Import'].forEach(function(name) {
     const sheet = ss.getSheetByName(name);
     if (sheet && sheet.getLastRow() > 1) {
       sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
@@ -46,6 +46,7 @@ function resetPlanningPortalToGathering(values) {
     'Assignments': true,
     'Budget': true,
     'Booking Plans': true,
+    'Payment Shares': true,
     'Payment Schedule': true,
     'Payments': true,
     'Meals': true,
@@ -70,7 +71,7 @@ function resetPlanningPortalToGathering(values) {
     APP_TITLE + ' Planning Reset Archive ' + stamp
   );
 
-  ['Trip','Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Schedule','Payments','Meals','Grocery List','Itinerary']
+  ['Trip','Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Shares','Payment Schedule','Payments','Meals','Grocery List','Itinerary']
     .forEach(function(name) {
       const source = ss.getSheetByName(name);
       if (source) source.copyTo(archive).setName(name);
