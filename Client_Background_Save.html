@@ -1,0 +1,796 @@
+<script>
+const backgroundSaveState_={
+  nextId:1,
+  pending:new Map(),
+  latestByKey:{},
+  hideTimer:null
+};
+
+function backgroundSaveElement_(){
+  return document.getElementById('backgroundSaveStatus');
+}
+
+function backgroundSaveMessage_(error){
+  return String(error&&error.message?error.message:error||'Save failed.');
+}
+
+function beginBackgroundSave_(label,key){
+  const id='SAVE-'+backgroundSaveState_.nextId++;
+  const saveKey=String(key||id);
+
+  if(backgroundSaveState_.hideTimer){
+    clearTimeout(backgroundSaveState_.hideTimer);
+    backgroundSaveState_.hideTimer=null;
+  }
+
+  backgroundSaveState_.pending.set(id,{
+    label:String(label||'Changes'),
+    key:saveKey,
+    startedAt:Date.now()
+  });
+  backgroundSaveState_.latestByKey[saveKey]=id;
+  renderBackgroundSaveStatus_();
+  return id;
+}
+
+function isLatestBackgroundSave_(id,key){
+  return backgroundSaveState_.latestByKey[String(key||id)]===id;
+}
+
+function completeBackgroundSave_(id,successText){
+  if(!backgroundSaveState_.pending.has(id)) return;
+
+  backgroundSaveState_.pending.delete(id);
+
+  if(backgroundSaveState_.pending.size){
+    renderBackgroundSaveStatus_();
+    return;
+  }
+
+  const element=backgroundSaveElement_();
+  if(!element) return;
+
+  element.classList.remove('hidden','is-error');
+  element.classList.add('is-success');
+  element.innerHTML=`
+    <span class="progress-spinner" aria-hidden="true"></span>
+    <span class="save-state-icon" aria-hidden="true">✓</span>
+    <span class="background-save-copy">
+      <strong>${esc(successText||'All changes saved')}</strong>
+      <small>You can keep using the portal.</small>
+    </span>`;
+
+  backgroundSaveState_.hideTimer=setTimeout(function(){
+    element.classList.add('hidden');
+    element.classList.remove('is-success');
+    backgroundSaveState_.hideTimer=null;
+  },2600);
+}
+
+function failBackgroundSave_(id,error,label){
+  backgroundSaveState_.pending.delete(id);
+
+  const element=backgroundSaveElement_();
+  if(!element) return;
+
+  const message=backgroundSaveMessage_(error);
+  const remaining=backgroundSaveState_.pending.size;
+
+  element.classList.remove('hidden','is-success');
+  element.classList.add('is-error');
+  element.innerHTML=`
+    <span class="progress-spinner" aria-hidden="true"></span>
+    <span class="save-state-icon" aria-hidden="true">!</span>
+    <span class="background-save-copy">
+      <strong>${esc(label||'A change could not be saved')}</strong>
+      <small>${esc(message)}${remaining?' · '+remaining+' other save'+(remaining===1?' is':'s are')+' still running.':''}</small>
+    </span>`;
+
+  if(backgroundSaveState_.hideTimer){
+    clearTimeout(backgroundSaveState_.hideTimer);
+  }
+
+  backgroundSaveState_.hideTimer=setTimeout(function(){
+    if(backgroundSaveState_.pending.size){
+      renderBackgroundSaveStatus_();
+    }else{
+      element.classList.add('hidden');
+      element.classList.remove('is-error');
+    }
+    backgroundSaveState_.hideTimer=null;
+  },7000);
+}
+
+function renderBackgroundSaveStatus_(){
+  const element=backgroundSaveElement_();
+  if(!element) return;
+
+  const pending=Array.from(backgroundSaveState_.pending.values());
+
+  if(!pending.length){
+    element.classList.add('hidden');
+    return;
+  }
+
+  const count=pending.length;
+  const label=count===1
+    ? pending[0].label
+    : count+' changes';
+
+  element.classList.remove('hidden','is-success','is-error');
+  element.innerHTML=`
+    <span class="progress-spinner" aria-hidden="true"></span>
+    <span class="save-state-icon" aria-hidden="true"></span>
+    <span class="background-save-copy">
+      <strong>Saving ${esc(label)} in the background…</strong>
+      <small>Request captured — keep editing or navigate anywhere in the portal.</small>
+    </span>`;
+}
+
+const BACKGROUND_RUN_FUNCTIONS_={
+  saveTripSettings:'Trip settings',
+  saveFinalists:'Finalists'
+};
+
+run=function(name,args,message,close=true){
+  const invoke=function(){
+    let finalArgs=(args||[]).slice();
+    if(ADMIN_RUN_FUNCTIONS_[name]){
+      finalArgs[0]=organizerAuthorizationValues_(finalArgs[0]||{});
+    }
+
+    const backgroundLabel=BACKGROUND_RUN_FUNCTIONS_[name]||'';
+    const backgroundKey='run:'+name;
+    const startedView=typeof currentView==='undefined'?'':currentView;
+    const saveId=backgroundLabel
+      ? beginBackgroundSave_(backgroundLabel,backgroundKey)
+      : '';
+
+    if(backgroundLabel && close){
+      closeModal();
+    }
+
+    google.script.run
+      .withSuccessHandler(function(data){
+        if(backgroundLabel){
+          if(data && isLatestBackgroundSave_(saveId,backgroundKey)){
+            DATA=data;
+            hydrateHeader();
+
+            if(
+              typeof currentView!=='undefined' &&
+              currentView!==startedView
+            ){
+              render();
+            }
+          }
+
+          completeBackgroundSave_(saveId,message||backgroundLabel+' saved');
+          return;
+        }
+
+        DATA=data;
+        if(close) closeModal();
+        hydrateHeader();
+        render();
+        toast(message||'Saved.');
+      })
+      .withFailureHandler(function(error){
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+
+        if(backgroundLabel){
+          failBackgroundSave_(saveId,error,backgroundLabel+' could not be saved');
+          toast(backgroundSaveMessage_(error),true);
+          return;
+        }
+
+        toast(backgroundSaveMessage_(error),true);
+      })[name].apply(null,finalArgs);
+  };
+
+  if(ADMIN_RUN_FUNCTIONS_[name]) withOrganizerAuthorization_(invoke);
+  else invoke();
+};
+
+quickSetGroceryBringing_=function(id,bringing){
+  const planner=PLANNERS['Grocery List'];
+  const rows=DATA[planner.data]||[];
+  const index=rows.findIndex(function(row){
+    return row[planner.id]===id;
+  });
+
+  if(index<0) return;
+
+  const previous=Object.assign({},rows[index]);
+  const updated=Object.assign({},rows[index],{
+    Bringing:bringing?'Yes':'No'
+  });
+
+  if(!bringing){
+    updated['Brought By']='';
+  }
+
+  rows[index]=updated;
+  render();
+
+  const saveId=beginBackgroundSave_(
+    'Grocery item',
+    'grocery:'+id
+  );
+
+  google.script.run
+    .withSuccessHandler(function(saved){
+      const currentIndex=(DATA[planner.data]||[]).findIndex(function(row){
+        return row[planner.id]===id ||
+          row[planner.id]===saved[planner.id];
+      });
+
+      if(currentIndex>=0 && isLatestBackgroundSave_(saveId,'grocery:'+id)){
+        DATA[planner.data][currentIndex]=saved;
+      }
+      render();
+      completeBackgroundSave_(saveId,'Grocery item saved');
+    })
+    .withFailureHandler(function(error){
+      const restoreIndex=(DATA[planner.data]||[]).findIndex(function(row){
+        return row[planner.id]===id;
+      });
+
+      if(restoreIndex>=0 && isLatestBackgroundSave_(saveId,'grocery:'+id)){
+        DATA[planner.data][restoreIndex]=previous;
+      }
+
+      render();
+      failBackgroundSave_(saveId,error,'Grocery item could not be saved');
+      toast('Grocery item could not be updated: '+backgroundSaveMessage_(error),true);
+    })
+    .saveGrocery(updated);
+};
+
+savePlannerForm=function(e,name){
+  e.preventDefault();
+
+  const p=PLANNERS[name];
+  const object=plannerObjectFromForm_(name);
+  const existingId=object[p.id]||'';
+  const previous=(DATA[p.data]||[]).map(function(row){
+    return Object.assign({},row);
+  });
+
+  const localId=optimisticPlannerRecord_(name,object);
+  const saveKey='planner:'+name+':'+localId;
+  const saveId=beginBackgroundSave_(name+' item',saveKey);
+
+  closeModal();
+  render();
+
+  const payload=Object.assign({},object);
+  if(!existingId){
+    delete payload[p.id];
+  }
+
+  google.script.run
+    .withSuccessHandler(function(saved){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        replaceOptimisticPlannerRecord_(name,localId,saved);
+        render();
+      }
+      completeBackgroundSave_(saveId,name+' item saved');
+    })
+    .withFailureHandler(function(error){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA[p.data]=previous;
+        render();
+      }
+      failBackgroundSave_(saveId,error,name+' item could not be saved');
+      toast(name+' item could not be saved: '+backgroundSaveMessage_(error),true);
+    })[p.save](payload);
+};
+
+saveRoomForm=function(e,cabinId,roomId){
+  e.preventDefault();
+
+  const payload={
+    id:roomId||'',
+    cabinId:cabinId,
+    name:val('roomName'),
+    floor:val('roomFloor'),
+    beds:val('roomBeds'),
+    sleeps:val('roomSleeps'),
+    privateBathroom:val('roomBath')==='yes',
+    notes:val('roomNotes')
+  };
+
+  const saveKey='room:'+cabinId+':'+(roomId||payload.name||'new');
+  const saveId=beginBackgroundSave_('Bedroom',saveKey);
+
+  closeModal();
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA=data;
+        render();
+      }
+      completeBackgroundSave_(saveId,'Bedroom saved');
+    })
+    .withFailureHandler(function(error){
+      failBackgroundSave_(saveId,error,'Bedroom could not be saved');
+      toast('Bedroom could not be saved: '+backgroundSaveMessage_(error),true);
+    })
+    .saveBedroom(payload);
+};
+
+savePastedBedroomLayout_=function(cabinId){
+  const parsed=parseBedroomLayoutText_(val('bedroomLayoutText'));
+
+  if(!parsed.length){
+    toast('I could not find room names followed by bed descriptions in that text.',true);
+    return;
+  }
+
+  const saveKey='bedroom-layout:'+cabinId;
+  const saveId=beginBackgroundSave_('Bedroom layout',saveKey);
+
+  closeModal();
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA=data;
+        render();
+      }
+      completeBackgroundSave_(saveId,parsed.length+' bedroom cards saved');
+    })
+    .withFailureHandler(function(error){
+      failBackgroundSave_(saveId,error,'Bedroom layout could not be saved');
+      toast('Bedroom layout could not be saved: '+backgroundSaveMessage_(error),true);
+    })
+    .replaceBedroomLayout(cabinId,parsed);
+};
+
+saveBulkRoomAssignments_=function(cabinId){
+  const payload=Object.keys(roomAssignmentDraft_||{})
+    .filter(function(travelerId){
+      return roomAssignmentDraft_[travelerId];
+    })
+    .map(function(travelerId){
+      return {
+        travelerId:travelerId,
+        bedroomId:roomAssignmentDraft_[travelerId]
+      };
+    });
+
+  const previous=(DATA.assignments||[]).slice();
+  const saveKey='room-assignments:'+cabinId;
+  const saveId=beginBackgroundSave_('Room assignments',saveKey);
+
+  DATA.assignments=(DATA.assignments||[])
+    .filter(function(assignment){
+      return assignment['Cabin ID']!==cabinId;
+    })
+    .concat(
+      payload.map(function(item,index){
+        return {
+          'Assignment ID':'LOCAL-'+Date.now()+'-'+index,
+          'Cabin ID':cabinId,
+          'Bedroom ID':item.bedroomId,
+          'Traveler ID':item.travelerId,
+          'Created At':new Date().toISOString()
+        };
+      })
+    );
+
+  closeModal();
+  render();
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA=data;
+        render();
+      }
+      completeBackgroundSave_(saveId,'Room assignments saved');
+    })
+    .withFailureHandler(function(error){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA.assignments=previous;
+        render();
+      }
+      failBackgroundSave_(saveId,error,'Room assignments could not be saved');
+      toast('Room assignments could not be saved: '+backgroundSaveMessage_(error),true);
+    })
+    .saveRoomAssignmentsBatch(cabinId,payload);
+};
+
+saveTravelerForm=function(e){
+  e.preventDefault();
+
+  const travelerType=val('travelerType');
+  const parentGuardianId=travelerType==='Child'?val('parentGuardianId'):'';
+  const payload={
+    id:val('travelerId'),
+    name:val('travelerName').trim(),
+    email:val('travelerEmail').trim(),
+    group:val('travelerGroup').trim(),
+    homeLocation:val('travelerHome').trim(),
+    travelerType:travelerType,
+    parentGuardianId:parentGuardianId,
+    priceCap:travelerType==='Adult'?Number(val('travelerPriceCap')||0):0,
+    costPercent:travelerType==='Adult'?Number(val('travelerCostPercent')||0):0,
+    payMore:travelerType==='Adult'&&val('travelerPayMore')==='yes',
+    shareRoom:travelerType==='Adult'&&Boolean(document.getElementById('travelerShareRoom')?.checked),
+    notes:val('travelerNotes').trim(),
+    deviceId:String(PWA_DEVICE_ID_||'')
+  };
+
+  if(!payload.name){toast('Traveler name is required.',true);return;}
+
+  const editingOwnProfile=Boolean(
+    payload.id && String(payload.id)===String(currentTravelerId||'')
+  );
+
+  const save=function(){
+    const previous=(DATA.travelers||[]).map(function(row){return Object.assign({},row);});
+    const optimistic=travelerOptimisticRecord_(payload);
+    const localId=optimistic['Traveler ID'];
+    const existingIndex=(DATA.travelers||[]).findIndex(function(row){
+      return row['Traveler ID']===payload.id;
+    });
+    const saveKey='traveler:'+localId;
+    const saveId=beginBackgroundSave_('Traveler profile',saveKey);
+
+    if(existingIndex>=0) DATA.travelers[existingIndex]=optimistic;
+    else DATA.travelers.push(optimistic);
+
+    closeModal();
+    hydrateHeader();
+    render();
+
+    const serverPayload=editingOwnProfile
+      ? Object.assign({},payload,{deviceId:String(PWA_DEVICE_ID_||'')})
+      : organizerAuthorizationValues_(payload);
+
+    google.script.run
+      .withSuccessHandler(function(saved){
+        if(isLatestBackgroundSave_(saveId,saveKey)){
+          const index=(DATA.travelers||[]).findIndex(function(row){
+            return row['Traveler ID']===localId||row['Traveler ID']===saved['Traveler ID'];
+          });
+          if(index>=0) DATA.travelers[index]=saved;
+          else DATA.travelers.push(saved);
+
+          if(currentTravelerId===localId){
+            currentTravelerId=saved['Traveler ID'];
+            localStorage.setItem('vacationTravelerId',currentTravelerId);
+            const savedDefault=savedDeviceTravelerProfile_&&
+              String(savedDeviceTravelerProfile_.travelerId||'')===String(localId||'');
+            if(savedDefault) commitDeviceTravelerProfile_(saved);
+          }
+
+          hydrateHeader();
+          render();
+        }
+        completeBackgroundSave_(saveId,'Traveler profile saved');
+      })
+      .withFailureHandler(function(error){
+        if(isLatestBackgroundSave_(saveId,saveKey)){
+          DATA.travelers=previous;
+          hydrateHeader();
+          render();
+        }
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+        failBackgroundSave_(saveId,error,'Traveler profile could not be saved');
+        toast('Traveler could not be saved: '+backgroundSaveMessage_(error),true);
+      })
+      .saveTraveler(serverPayload);
+  };
+
+  if(editingOwnProfile) save();
+  else withOrganizerAuthorization_(save);
+};
+
+saveCabinForm=function(e,reviewMode){
+  e.preventDefault();
+
+  const v={
+    id:val('cabinId'),name:val('cabinName'),nickname:val('cabinNickname'),
+    originalUrl:val('cabinOriginalUrl'),url:val('cabinUrl'),
+    location:val('cabinLocation'),sleeps:val('cabinSleeps'),
+    bedrooms:val('cabinBedrooms'),bathrooms:val('cabinBathrooms'),
+    totalCost:val('cabinTotal'),nightlyRate:val('cabinNightly'),
+    rating:val('cabinRating'),reviewCount:val('cabinReviews'),
+    imageUrl:val('cabinImage'),photoUrls:val('cabinPhotos'),
+    description:val('cabinDescription'),amenities:val('cabinAmenities'),
+    pool:val('cabinPool'),hotTub:val('cabinHotTub'),
+    theater:val('cabinTheater'),arcade:val('cabinArcade'),
+    cancellationPolicy:val('cabinCancellation'),feesAndTaxes:val('cabinFees'),
+    houseRules:val('cabinRules'),parking:val('cabinParking'),
+    accessibility:val('cabinAccessibility'),nearbyHighlights:val('cabinNearby'),
+    submittedBy:(currentTraveler()||{}).Name||''
+  };
+
+  if(!v.name){
+    toast('Property name is required.',true);
+    return;
+  }
+
+  withOrganizerAuthorization_(function(){
+    const cabinIndex=(DATA.cabins||[]).findIndex(function(cabin){
+      return cabin['Cabin ID']===v.id;
+    });
+
+    const previousCabin=cabinIndex>=0
+      ? Object.assign({},DATA.cabins[cabinIndex])
+      : null;
+    const saveKey='rental:'+String(v.id||v.url||v.name);
+    const saveId=beginBackgroundSave_(reviewMode?'Rental review':'Rental edits',saveKey);
+
+    if(cabinIndex>=0){
+      DATA.cabins[cabinIndex]=Object.assign({},DATA.cabins[cabinIndex],{
+        'Cabin Name':v.name,
+        'Nickname':v.nickname,
+        'Original Rental URL':v.originalUrl||v.url,
+        'Rental URL':v.url,
+        'Location':v.location,
+        'Sleeps':Number(v.sleeps||0),
+        'Bedrooms':Number(v.bedrooms||0),
+        'Bathrooms':Number(v.bathrooms||0),
+        'Total Rental Cost':Number(v.totalCost||0),
+        'Nightly Rate':Number(v.nightlyRate||0),
+        'Rating':Number(v.rating||0),
+        'Review Count':Number(v.reviewCount||0),
+        'Image URL':v.imageUrl,
+        'Photo URLs':v.photoUrls,
+        'Description':v.description,
+        'Amenities':v.amenities,
+        'Cancellation Policy':v.cancellationPolicy,
+        'Fees and Taxes':v.feesAndTaxes,
+        'House Rules':v.houseRules,
+        'Parking':v.parking,
+        'Accessibility':v.accessibility,
+        'Nearby Highlights':v.nearbyHighlights,
+        'Import Stage':reviewMode?'Review Saving…':'Saving Edits…',
+        detail:Object.assign({},DATA.cabins[cabinIndex].detail||{},{
+          Pool:v.pool,
+          'Hot Tub':v.hotTub,
+          Theater:v.theater,
+          Arcade:v.arcade
+        })
+      });
+    }
+
+    closeModal();
+    render();
+    scheduleRentalPolling_();
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        if(result&&result.cabin&&isLatestBackgroundSave_(saveId,saveKey)){
+          const index=(DATA.cabins||[]).findIndex(function(cabin){
+            return cabin['Cabin ID']===result.cabin['Cabin ID'];
+          });
+
+          if(index>=0){
+            DATA.cabins[index]=Object.assign({},DATA.cabins[index],result.cabin);
+            render();
+          }
+        }
+        scheduleRentalPolling_();
+        completeBackgroundSave_(saveId,'Rental edit queued');
+      })
+      .withFailureHandler(function(error){
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+
+        if(cabinIndex>=0&&previousCabin&&isLatestBackgroundSave_(saveId,saveKey)){
+          DATA.cabins[cabinIndex]=previousCabin;
+          render();
+        }
+
+        failBackgroundSave_(saveId,error,'Rental edit could not be queued');
+        toast('The edit could not be queued: '+backgroundSaveMessage_(error),true);
+      })
+      .queueCabinEdit(
+        organizerAuthorizationValues_(v),
+        Boolean(reviewMode)
+      );
+  });
+};
+
+saveCommentForm=function(e,cabinId){
+  e.preventDefault();
+  requireTraveler();
+
+  const comment=val('commentText').trim();
+
+  if(!comment){
+    toast('Enter a comment.',true);
+    return;
+  }
+
+  const cabin=(DATA.cabins||[]).find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  if(!cabin){
+    toast('Rental could not be found.',true);
+    return;
+  }
+
+  const traveler=currentTraveler();
+  const localId='LOCAL-COMMENT-'+Date.now();
+  const saveKey='comment:'+localId;
+  const saveId=beginBackgroundSave_('Comment',saveKey);
+
+  const optimistic={
+    'Comment ID':localId,
+    'Cabin ID':cabinId,
+    'Traveler ID':currentTravelerId,
+    'Comment':comment,
+    'Created At':new Date().toISOString(),
+    travelerName:traveler?traveler.Name:'Traveler'
+  };
+
+  cabin.comments=(cabin.comments||[]).slice();
+  cabin.comments.push(optimistic);
+
+  closeModal();
+  render();
+
+  google.script.run
+    .withSuccessHandler(function(saved){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        const target=(DATA.cabins||[]).find(function(item){
+          return item['Cabin ID']===cabinId;
+        });
+
+        if(target){
+          const index=(target.comments||[]).findIndex(function(item){
+            return item['Comment ID']===localId;
+          });
+
+          if(index>=0) target.comments[index]=saved;
+          else target.comments=(target.comments||[]).concat([saved]);
+          render();
+        }
+      }
+      completeBackgroundSave_(saveId,'Comment saved');
+    })
+    .withFailureHandler(function(error){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        const target=(DATA.cabins||[]).find(function(item){
+          return item['Cabin ID']===cabinId;
+        });
+
+        if(target){
+          target.comments=(target.comments||[]).filter(function(item){
+            return item['Comment ID']!==localId;
+          });
+        }
+        render();
+      }
+
+      failBackgroundSave_(saveId,error,'Comment could not be saved');
+      toast('Comment could not be saved: '+backgroundSaveMessage_(error),true);
+    })
+    .saveComment({
+      cabinId:cabinId,
+      travelerId:currentTravelerId,
+      comment:comment
+    });
+};
+
+saveVoteForm=function(e,cabinId){
+  e.preventDefault();
+  requireTraveler();
+
+  const scoreInput=document.querySelector('input[name="voteScoreRadio"]:checked');
+
+  if(!scoreInput){
+    toast('Choose a rating from 1 to 5.',true);
+    return;
+  }
+
+  const score=Number(scoreInput.value);
+  const reasons=Array.from(
+    document.querySelectorAll('input[name="voteReason"]:checked')
+  ).map(function(input){return input.value;});
+
+  const round=currentVotingRound_();
+  const previousVote=myVoteForCabin_(cabinId);
+  const notes=val('voteNotes');
+  const firstChoice=Boolean(
+    round==='Final' &&
+    document.getElementById('voteFirstChoice') &&
+    document.getElementById('voteFirstChoice').checked
+  );
+  const saveKey='vote:'+round+':'+cabinId+':'+currentTravelerId;
+  const saveId=beginBackgroundSave_(previousVote?'Updated rating':'Rating',saveKey);
+
+  const optimisticVote={
+    'Vote ID':previousVote?previousVote['Vote ID']:'LOCAL-'+Date.now(),
+    'Cabin ID':cabinId,
+    'Traveler ID':currentTravelerId,
+    'Score':score,
+    'Notes':notes,
+    'Reasons':reasons.join('|'),
+    'First Choice':firstChoice?'Yes':'',
+    'Voting Round':round,
+    'Created At':new Date().toISOString()
+  };
+
+  DATA.votes=(DATA.votes||[]).filter(function(vote){
+    return !(
+      vote['Cabin ID']===cabinId &&
+      vote['Traveler ID']===currentTravelerId &&
+      String(vote['Voting Round']||'Preliminary')===round
+    );
+  });
+  DATA.votes.push(optimisticVote);
+
+  const cabin=DATA.cabins.find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+
+  if(cabin){
+    const votes=currentRoundVotesForCabin_(cabinId);
+    cabin.voteCount=votes.length;
+    cabin.averageScore=votes.length
+      ? votes.reduce(function(total,vote){
+          return total+Number(vote.Score||0);
+        },0)/votes.length
+      : 0;
+  }
+
+  closeModal();
+  render();
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA.votes=(DATA.votes||[]).filter(function(vote){
+          return !(
+            vote['Cabin ID']===cabinId &&
+            vote['Traveler ID']===currentTravelerId &&
+            String(vote['Voting Round']||'Preliminary')===round
+          );
+        });
+        DATA.votes.push(result.vote);
+
+        if(cabin){
+          cabin.voteCount=result.voteCount;
+          cabin.averageScore=result.averageScore;
+        }
+
+        render();
+      }
+      completeBackgroundSave_(saveId,result.message||'Rating saved');
+    })
+    .withFailureHandler(function(error){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA.votes=(DATA.votes||[]).filter(function(vote){
+          return !(
+            vote['Cabin ID']===cabinId &&
+            vote['Traveler ID']===currentTravelerId &&
+            String(vote['Voting Round']||'Preliminary')===round
+          );
+        });
+
+        if(previousVote) DATA.votes.push(previousVote);
+        render();
+      }
+
+      failBackgroundSave_(saveId,error,'Rating could not be saved');
+      toast('Rating could not be saved: '+backgroundSaveMessage_(error),true);
+    })
+    .saveVoteFast({
+      cabinId:cabinId,
+      travelerId:currentTravelerId,
+      score:score,
+      notes:notes,
+      reasons:reasons,
+      firstChoice:firstChoice,
+      round:round
+    });
+};
+</script>
