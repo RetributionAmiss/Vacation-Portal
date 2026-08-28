@@ -1,4 +1,4 @@
-const PORTAL_SCHEMA_VERSION = '4.3.0';
+const PORTAL_SCHEMA_VERSION = '4.4.0';
 const SPREADSHEET_ID = '16FJTnkhexYLFRC2NaIK6izIeH5wfbdXgJvdISt7X06A';
 const APP_TITLE = 'Smoky Mountain Family Vacation Portal';
 const GEMINI_MODEL = 'gemini-3.6-flash';
@@ -39,7 +39,10 @@ const SCHEMAS = {
     'Bedroom ID', 'Cabin ID', 'Bedroom Name', 'Floor',
     'Bed Configuration', 'Sleeps', 'Private Bathroom', 'Notes'
   ],
-  Votes: ['Vote ID', 'Cabin ID', 'Traveler ID', 'Score', 'Notes', 'Reasons', 'First Choice', 'Voting Round', 'Created At'],
+  Votes: [
+    'Vote ID', 'Cabin ID', 'Traveler ID', 'Score', 'Rank',
+    'Notes', 'Reasons', 'First Choice', 'Voting Round', 'Created At'
+  ],
   Comments: ['Comment ID', 'Cabin ID', 'Traveler ID', 'Comment', 'Created At'],
   Feedback: [
     'Feedback ID', 'Traveler ID', 'Traveler Name', 'Type', 'Summary',
