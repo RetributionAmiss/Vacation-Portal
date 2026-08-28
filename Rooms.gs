@@ -130,3 +130,45 @@ function saveRoomAssignmentsBatch(cabinId, assignments) {
 
   return getPortalData();
 }
+
+function clearRoomAssignmentsForCabin_(cabinId) {
+  const sheet = getSpreadsheet_().getSheetByName('Assignments');
+  if (!sheet) return;
+
+  const grid = sheet.getDataRange().getValues();
+  if (!grid.length) return;
+
+  const headers = grid[0].map(function (v) {
+    return String(v || '').trim();
+  });
+  const cabinIndex = headers.indexOf('Cabin ID');
+  if (cabinIndex < 0) return;
+
+  const retained = grid.slice(1).filter(function (row) {
+    return String(row[cabinIndex] || '') !== cabinId;
+  });
+
+  const output = [headers].concat(retained);
+  sheet.clearContents();
+  sheet.getRange(1, 1, output.length, headers.length).setValues(output);
+}
+
+function removeAllBedrooms(cabinId) {
+  cabinId = String(cabinId || '').trim();
+  if (!cabinId) throw new Error('Cabin is required.');
+
+  const cabin = readSheet_('Cabins').find(function (row) {
+    return row['Cabin ID'] === cabinId;
+  });
+  if (!cabin) throw new Error('Cabin not found.');
+
+  replaceCabinBedrooms_(cabinId, []);
+  clearRoomAssignmentsForCabin_(cabinId);
+
+  updateById_('Cabins', 'Cabin ID', cabinId, {
+    'Bedrooms': 0,
+    'Updated At': new Date()
+  });
+
+  return getPortalData();
+}
