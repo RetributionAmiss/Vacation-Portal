@@ -1,0 +1,20 @@
+<script>
+const organizerCopyBaseOpenModal_=openModal;
+openModal=function(html){
+  organizerCopyBaseOpenModal_(
+    String(html||'')
+      .replace(/Justin-only/g,'Organizer-only')
+      .replace(/Justin tools/g,'Organizer tools')
+  );
+};
+
+const organizerCopyBaseConfirmRemoveRental_=confirmRemoveRental_;
+confirmRemoveRental_=function(cabinId){
+  if(!canRemoveRentals_()){
+    closeModal();
+    toast('Only the Organizer traveler profile can remove rentals.',true);
+    return;
+  }
+  organizerCopyBaseConfirmRemoveRental_(cabinId);
+};
+</script>

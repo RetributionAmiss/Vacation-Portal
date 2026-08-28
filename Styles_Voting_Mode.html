@@ -1,0 +1,123 @@
+<style>
+.voting-method-field{
+  border:1px solid rgba(23,63,50,.16);
+  border-radius:14px;
+  padding:12px;
+  background:rgba(247,250,248,.9);
+}
+.voting-method-field small{
+  display:block;
+  margin-top:6px;
+  line-height:1.35;
+}
+
+.simplified-vote-dialog{
+  max-width:720px;
+  margin:0 auto;
+}
+.simplified-rating-grid{
+  gap:8px;
+}
+.simplified-rating-grid .rating-choice{
+  min-height:92px;
+  padding:10px 8px;
+}
+.simplified-rating-grid .rating-choice small{
+  display:none;
+}
+.ranking-choice-field select{
+  min-height:52px;
+  font-size:1rem;
+  font-weight:700;
+}
+
+.voting-order-panel{
+  border:1px solid rgba(23,63,50,.12);
+  border-radius:18px;
+}
+.dashboard-voting-row{
+  padding:10px 0;
+  margin:0;
+  border-bottom:1px solid rgba(23,63,50,.08);
+}
+.dashboard-voting-row:last-child{
+  border-bottom:0;
+}
+
+.winner-rental-panel{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:24px;
+  margin:18px 0;
+  padding:20px 22px;
+  border:1px solid rgba(23,63,50,.18);
+  border-radius:20px;
+  background:linear-gradient(135deg,rgba(240,248,243,.98),rgba(255,250,235,.98));
+  box-shadow:0 12px 30px rgba(23,63,50,.08);
+}
+.winner-rental-panel h3{
+  margin:2px 0 4px;
+  font-size:1.45rem;
+}
+.winner-rental-panel p{
+  margin:0 0 4px;
+}
+.winner-rental-panel small{
+  color:var(--muted,#65766f);
+}
+.winner-result{
+  min-width:150px;
+  text-align:right;
+}
+.winner-result strong{
+  display:block;
+  font-size:2rem;
+  line-height:1;
+}
+.winner-result span{
+  display:block;
+  margin-top:6px;
+  color:var(--muted,#65766f);
+  font-size:.85rem;
+}
+.finalist-dashboard-card.winner-card{
+  outline:2px solid rgba(23,63,50,.28);
+  box-shadow:0 12px 28px rgba(23,63,50,.1);
+}
+
+.traveler-top-three li span{
+  display:block;
+}
+.traveler-top-three li small{
+  display:block;
+  margin-top:2px;
+}
+
+@media (max-width:720px){
+  .simplified-rating-grid{
+    grid-template-columns:repeat(5,minmax(0,1fr));
+  }
+  .simplified-rating-grid .rating-choice{
+    min-height:72px;
+    padding:8px 4px;
+  }
+  .simplified-rating-grid .rating-choice span{
+    font-size:.72rem;
+    letter-spacing:-1px;
+  }
+  .winner-rental-panel{
+    align-items:flex-start;
+    flex-direction:column;
+    padding:16px;
+  }
+  .winner-result{
+    min-width:0;
+    width:100%;
+    text-align:left;
+  }
+  .voting-method-field{
+    padding:10px;
+  }
+}
+</style>

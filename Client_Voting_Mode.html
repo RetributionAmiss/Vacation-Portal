@@ -1,0 +1,819 @@
+<script>
+function votingMethod_(){
+  return /^rank/i.test(String(DATA&&DATA.trip?DATA.trip['Voting Method']||'':''))
+    ? 'Ranking'
+    : 'Rating';
+}
+
+function votingVerb_(past){
+  if(votingMethod_()==='Ranking') return past?'ranked':'rank';
+  return past?'rated':'rate';
+}
+
+function ordinal_(value){
+  const number=Number(value||0);
+  if(!number) return '';
+  const mod100=number%100;
+  const mod10=number%10;
+  const suffix=mod100>=11&&mod100<=13
+    ? 'th'
+    : mod10===1
+      ? 'st'
+      : mod10===2
+        ? 'nd'
+        : mod10===3
+          ? 'rd'
+          : 'th';
+  return number+suffix;
+}
+
+function votingEligibleCabins_(){
+  const cabins=(DATA&&DATA.cabins||[]).slice();
+  const round=String(DATA&&DATA.trip?DATA.trip['Voting Round']||'Preliminary':'Preliminary');
+  const finalists=typeof finalistCabinIds_==='function'
+    ? finalistCabinIds_()
+    : [];
+
+  if(round==='Final'&&finalists.length){
+    return cabins.filter(function(cabin){
+      return finalists.indexOf(cabin['Cabin ID'])>=0;
+    });
+  }
+
+  return cabins;
+}
+
+function familyVoteSummary_(cabinId){
+  const method=votingMethod_();
+  const eligible=(DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no';
+  });
+  const latestByTraveler={};
+
+  currentRoundVotesForCabin_(cabinId).forEach(function(vote){
+    const travelerId=String(vote['Traveler ID']||'').trim();
+    if(!travelerId) return;
+
+    const current=latestByTraveler[travelerId];
+    const incomingTime=new Date(vote['Created At']||0).getTime()||0;
+    const currentTime=current
+      ? (new Date(current['Created At']||0).getTime()||0)
+      : -1;
+
+    if(!current||incomingTime>=currentTime){
+      latestByTraveler[travelerId]=vote;
+    }
+  });
+
+  const votes=Object.keys(latestByTraveler)
+    .map(function(travelerId){return latestByTraveler[travelerId];})
+    .filter(function(vote){
+      if(method==='Ranking'){
+        const rank=Number(vote.Rank||0);
+        return Number.isInteger(rank)&&rank>=1;
+      }
+      const score=Number(vote.Score||0);
+      return score>=1&&score<=5;
+    });
+
+  const scores=votes.map(function(vote){return Number(vote.Score||0);})
+    .filter(function(score){return score>=1&&score<=5;});
+  const ranks=votes.map(function(vote){return Number(vote.Rank||0);})
+    .filter(function(rank){return Number.isInteger(rank)&&rank>=1;});
+
+  return {
+    method:method,
+    votes:votes,
+    reviewed:votes.length,
+    total:eligible.length,
+    percent:eligible.length
+      ? Math.round(votes.length/eligible.length*100)
+      : 0,
+    average:scores.length
+      ? scores.reduce(function(total,score){return total+score;},0)/scores.length
+      : 0,
+    averageRank:ranks.length
+      ? ranks.reduce(function(total,rank){return total+rank;},0)/ranks.length
+      : 0,
+    firstPlaceCount:ranks.filter(function(rank){return rank===1;}).length
+  };
+}
+
+topFamilyReasons_=function(){return [];};
+
+function votingLeaderboard_(resultOrder){
+  const method=votingMethod_();
+  const rows=votingEligibleCabins_().map(function(cabin){
+    return {
+      cabin:cabin,
+      summary:familyVoteSummary_(cabin['Cabin ID'])
+    };
+  });
+
+  rows.sort(function(left,right){
+    const ls=left.summary;
+    const rs=right.summary;
+
+    if(resultOrder){
+      if(method==='Ranking'){
+        const leftRank=ls.reviewed?ls.averageRank:Number.POSITIVE_INFINITY;
+        const rightRank=rs.reviewed?rs.averageRank:Number.POSITIVE_INFINITY;
+        return leftRank-rightRank ||
+          rs.firstPlaceCount-ls.firstPlaceCount ||
+          rs.reviewed-ls.reviewed ||
+          String(displayName(left.cabin)).localeCompare(String(displayName(right.cabin)));
+      }
+
+      return rs.average-ls.average ||
+        rs.reviewed-ls.reviewed ||
+        String(displayName(left.cabin)).localeCompare(String(displayName(right.cabin)));
+    }
+
+    if(method==='Ranking'){
+      const leftRank=ls.reviewed?ls.averageRank:Number.POSITIVE_INFINITY;
+      const rightRank=rs.reviewed?rs.averageRank:Number.POSITIVE_INFINITY;
+      return rs.reviewed-ls.reviewed ||
+        leftRank-rightRank ||
+        rs.firstPlaceCount-ls.firstPlaceCount ||
+        String(displayName(left.cabin)).localeCompare(String(displayName(right.cabin)));
+    }
+
+    return rs.reviewed-ls.reviewed ||
+      rs.average-ls.average ||
+      String(displayName(left.cabin)).localeCompare(String(displayName(right.cabin)));
+  });
+
+  return rows;
+}
+
+function votingWinner_(){
+  const row=votingLeaderboard_(true).find(function(item){
+    return item.summary.reviewed>0;
+  });
+  return row||null;
+}
+
+function votingSummaryText_(summary){
+  if(!summary||!summary.reviewed) return 'No votes yet';
+  if(votingMethod_()==='Ranking'){
+    return summary.reviewed+' vote'+(summary.reviewed===1?'':'s')+
+      ' · avg rank '+summary.averageRank.toFixed(1)+
+      (summary.firstPlaceCount
+        ? ' · '+summary.firstPlaceCount+' first-place'
+        : '');
+  }
+  return summary.reviewed+' vote'+(summary.reviewed===1?'':'s')+
+    ' · '+summary.average.toFixed(1)+' / 5 average';
+}
+
+const phase4BaseVisibleRentalCabins_=visibleRentalCabins_;
+visibleRentalCabins_=function(){
+  const base=phase4BaseVisibleRentalCabins_();
+  const stage=String(DATA.trip['Portal Stage']||'');
+
+  if(!/Voting/i.test(stage)&&stage!=='Voting Closed') return base;
+
+  const allowed=new Set(base.map(function(cabin){return cabin['Cabin ID'];}));
+  return votingLeaderboard_(stage==='Voting Closed')
+    .map(function(item){return item.cabin;})
+    .filter(function(cabin){return allowed.has(cabin['Cabin ID']);});
+};
+
+const phase4BaseRenderTopPicks_=renderTopPicks_;
+renderTopPicks_=function(){
+  const stage=String(DATA.trip['Portal Stage']||'');
+  if(!/Voting/i.test(stage)) return phase4BaseRenderTopPicks_();
+
+  const ranked=votingLeaderboard_(false).filter(function(item){
+    return item.summary.reviewed>0;
+  }).slice(0,3);
+
+  if(!ranked.length) return '';
+
+  return `<section class="top-picks voting-order-panel">
+    <div>
+      <p class="eyebrow">LIVE VOTING ORDER</p>
+      <h3>${votingMethod_()==='Ranking'?'Current ranking leaders':'Most-voted rentals'}</h3>
+      <small>Updates as travelers submit or change their votes.</small>
+    </div>
+    <div class="top-pick-list">
+      ${ranked.map(function(item,index){
+        return `<button type="button"
+          onclick="focusRentalCard_('${item.cabin['Cabin ID']}')">
+          <strong>#${index+1} ${esc(displayName(item.cabin))}</strong>
+          <span>${esc(votingSummaryText_(item.summary))}</span>
+          <small>Rental ID: ${esc(item.cabin['Cabin ID']||'')}</small>
+        </button>`;
+      }).join('')}
+    </div>
+  </section>`;
+};
+
+function validTravelerVoteCount_(travelerId){
+  const round=currentVotingRound_();
+  const eligibleIds=new Set(votingEligibleCabins_().map(function(cabin){
+    return cabin['Cabin ID'];
+  }));
+
+  return new Set((DATA.votes||[]).filter(function(vote){
+    if(vote['Traveler ID']!==travelerId) return false;
+    if(String(vote['Voting Round']||'Preliminary')!==round) return false;
+    if(!eligibleIds.has(vote['Cabin ID'])) return false;
+
+    if(votingMethod_()==='Ranking'){
+      const rank=Number(vote.Rank||0);
+      return Number.isInteger(rank)&&rank>=1;
+    }
+
+    const score=Number(vote.Score||0);
+    return score>=1&&score<=5;
+  }).map(function(vote){return vote['Cabin ID'];})).size;
+}
+
+currentRoundTravelerProgress_=function(){
+  const stage=String(DATA.trip['Portal Stage']||'');
+  const round=String(DATA.trip['Voting Round']||'Preliminary');
+  const rentals=votingEligibleCabins_();
+
+  if(!/Voting/i.test(stage)||!rentals.length) return null;
+
+  const active=(DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no';
+  });
+
+  return {
+    round:round,
+    rentals:rentals,
+    progress:active.map(function(traveler){
+      const count=validTravelerVoteCount_(traveler['Traveler ID']);
+      return {
+        traveler:traveler,
+        rated:count,
+        required:rentals.length,
+        first:true,
+        complete:count===rentals.length
+      };
+    })
+  };
+};
+
+renderCurrentRoundVotingCompletion_=function(){
+  const data=currentRoundTravelerProgress_();
+  if(!data) return '';
+  const verb=votingVerb_(true);
+
+  return `<section class="panel voting-completion-panel">
+    <div class="panel-head">
+      <div>
+        <h3>Voting completion</h3>
+        <p class="muted">${esc(data.round)} round · ${esc(votingMethod_())}</p>
+      </div>
+    </div>
+    <div class="traveler-final-progress">
+      ${data.progress.map(function(item){
+        return `<div class="${item.complete?'voting-traveler-complete':''}">
+          <strong>${esc(item.traveler.Name||'Traveler')}</strong>
+          <span>${item.rated}/${item.required} ${verb}${item.complete?' · Complete':''}</span>
+        </div>`;
+      }).join('')}
+    </div>
+  </section>`;
+};
+
+function dashboardVotingList_(){
+  const stage=String(DATA.trip['Portal Stage']||'');
+  if(!/Voting/i.test(stage)) return null;
+  return votingLeaderboard_(false).slice(0,3);
+}
+
+renderDashboard=function(){
+  if(typeof isFinalVotingStage_==='function'&&isFinalVotingStage_()){
+    return renderFinalVotingDashboard_();
+  }
+
+  const totalPeople=DATA.travelers.length;
+  const reviewed=DATA.cabins.filter(function(c){
+    return !c.import||c.import.Status==='Imported';
+  }).length;
+  const totalBudget=(DATA.budget||[]).reduce(function(n,b){
+    return n+Number(b.Amount||0);
+  },0);
+  const upcoming=(DATA.itinerary||[]).slice()
+    .sort(function(a,b){return String(a.Date).localeCompare(String(b.Date));})
+    .slice(0,5);
+  const votingRows=dashboardVotingList_();
+  const topRows=votingRows||DATA.cabins.slice()
+    .sort(function(a,b){return Number(b.averageScore||0)-Number(a.averageScore||0);})
+    .slice(0,3)
+    .map(function(cabin){
+      return {cabin:cabin,summary:familyVoteSummary_(cabin['Cabin ID'])};
+    });
+
+  return `<section class="view">
+    ${renderReleaseBadge_()}
+    ${renderAppSetupCard_()}
+    <div class="hero">
+      <div><p class="eyebrow">${esc(DATA.trip['Portal Stage']||'PLANNING')}</p>
+      <h2>Plan the trip without the group-text chaos.</h2>
+      <p>Compare cabins, vote, assign rooms, organize meals, and keep the whole mountain expedition in one place.</p></div>
+      <button onclick="navigate('rentals')">Browse rentals</button>
+    </div>
+    <div class="stats">
+      ${stat(DATA.cabins.length,'Rental options')}
+      ${stat(reviewed,'Reviewed rentals')}
+      ${stat(totalPeople,'Travelers')}
+      ${stat(money(totalBudget),'Planned budget')}
+    </div>
+    ${renderCurrentRoundVotingCompletion_()}
+    <div class="grid">
+      <section class="panel">
+        <div class="panel-head"><h3>${votingRows?'Voting order':'Top rentals'}</h3></div>
+        ${topRows.map(function(item,index){
+          const summary=item.summary;
+          return `<p class="dashboard-voting-row">
+            <strong>${votingRows?'#'+(index+1)+' ':''}${esc(displayName(item.cabin))}</strong><br>
+            <span class="muted">${
+              votingRows
+                ? esc(votingSummaryText_(summary))
+                : Number(item.cabin.voteCount||0)+' votes · '+Number(item.cabin.averageScore||0).toFixed(1)+' average'
+            }</span>
+          </p>`;
+        }).join('')||'<p class="muted">No rentals yet.</p>'}
+      </section>
+      <section class="panel"><div class="panel-head"><h3>Upcoming plans</h3></div>
+        ${upcoming.map(function(i){
+          return `<p><strong>${fmtDate(i.Date)} — ${esc(i.Activity)}</strong><br><span class="muted">${esc(i.Location||'')}</span></p>`;
+        }).join('')||'<p class="muted">No itinerary items yet.</p>'}
+      </section>
+      <section class="panel"><div class="panel-head"><h3>Planning status</h3></div>
+        <p><strong>${esc(DATA.trip['Voting Round']||'Preliminary')}</strong><br><span class="muted">Current voting round</span></p>
+        <p><strong>${esc(votingMethod_())}</strong><br><span class="muted">Voting method</span></p>
+        <p><strong>${(DATA.imports||[]).filter(function(i){return i.Status==='Needs Review';}).length}</strong><br><span class="muted">Rentals needing review</span></p>
+      </section>
+    </div>
+  </section>`;
+};
+
+finalVotingTravelerProgress_=function(){
+  const finalists=votingEligibleCabins_();
+  return {
+    rated:currentTravelerId?validTravelerVoteCount_(currentTravelerId):0,
+    hasFirstChoice:true,
+    total:finalists.length
+  };
+};
+
+renderFinalVotingBanner_=function(){
+  if(!isFinalVotingStage_()) return '';
+
+  const closed=finalVotingIsClosed_();
+  const progress=finalVotingTravelerProgress_();
+  const winner=closed?votingWinner_():null;
+
+  return `<section class="final-voting-banner">
+    <div>
+      <p class="eyebrow">${closed?'FINAL RESULTS':'FINAL ROUND'}</p>
+      <h3>${
+        closed&&winner
+          ? 'Winner: '+esc(displayName(winner.cabin))
+          : closed
+            ? 'Final voting results'
+            : votingMethod_()==='Ranking'
+              ? 'Rank the final three'
+              : 'Rate the final three'
+      }</h3>
+      <p class="muted">${
+        closed
+          ? 'Voting is closed. Family results are now visible.'
+          : `You have ${votingVerb_(true)} ${progress.rated} of ${progress.total} finalists.`
+      }</p>
+    </div>
+    <button type="button" onclick="compareAllFinalists_()">Compare all 3 finalists</button>
+  </section>`;
+};
+
+renderFinalVotingDashboard_=function(){
+  const finalists=visibleRentalCabins_();
+  const closed=finalVotingIsClosed_();
+  const winner=closed?votingWinner_():null;
+  const activeTravelers=(DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no';
+  });
+  const travelerProgress=activeTravelers.map(function(traveler){
+    const count=validTravelerVoteCount_(traveler['Traveler ID']);
+    return {traveler:traveler,count:count,complete:count===finalists.length};
+  });
+  const completed=travelerProgress.filter(function(item){return item.complete;}).length;
+
+  return `<section class="view">
+    ${renderReleaseBadge_()}
+    ${renderAppSetupCard_()}
+    <div class="hero final-dashboard-hero">
+      <div>
+        <p class="eyebrow">${closed?'FINAL RESULTS':'FINAL VOTING'}</p>
+        <h2>${
+          closed&&winner
+            ? esc(displayName(winner.cabin))+' wins the family vote.'
+            : closed
+              ? 'The family has spoken.'
+              : votingMethod_()==='Ranking'
+                ? 'Put the final three in order.'
+                : 'Rate each of the final three.'
+        }</h2>
+        <p>${
+          closed
+            ? 'The winning rental and final vote order are shown below.'
+            : `Final voting is using ${votingMethod_.call(null).toLowerCase()}. Complete all ${finalists.length} rentals when you are ready.`
+        }</p>
+      </div>
+      <button onclick="navigate('rentals')">${closed?'View finalists':'Vote on finalists'}</button>
+    </div>
+
+    ${winner?`<section class="winner-rental-panel">
+      <div>
+        <p class="eyebrow">WINNING RENTAL</p>
+        <h3>${esc(displayName(winner.cabin))}</h3>
+        <p>${esc(winner.cabin.Location||'')}</p>
+        <small>Rental ID: ${esc(winner.cabin['Cabin ID']||'')}</small>
+      </div>
+      <div class="winner-result">
+        <strong>${
+          votingMethod_()==='Ranking'
+            ? winner.summary.averageRank.toFixed(1)
+            : winner.summary.average.toFixed(1)+' / 5'
+        }</strong>
+        <span>${
+          votingMethod_()==='Ranking'
+            ? 'average rank · '+winner.summary.firstPlaceCount+' first-place vote'+(winner.summary.firstPlaceCount===1?'':'s')
+            : winner.summary.reviewed+' rating'+(winner.summary.reviewed===1?'':'s')
+        }</span>
+      </div>
+    </section>`:''}
+
+    <div class="stats">
+      ${stat(finalists.length,'Finalists')}
+      ${stat(completed+' / '+activeTravelers.length,'Travelers finished')}
+      ${stat(activeTravelers.length-completed,'Still voting')}
+      ${stat(closed?'Closed':'Open','Final voting')}
+    </div>
+
+    <div class="finalist-dashboard-grid">
+      ${finalists.map(function(cabin,index){
+        const summary=familyVoteSummary_(cabin['Cabin ID']);
+        const myVote=myVoteForCabin_(cabin['Cabin ID']);
+        const myValue=votingMethod_()==='Ranking'
+          ? Number(myVote&&myVote.Rank||0)
+          : Number(myVote&&myVote.Score||0);
+
+        return `<article class="finalist-dashboard-card ${winner&&winner.cabin['Cabin ID']===cabin['Cabin ID']?'winner-card':''}">
+          <span class="finalist-number">${closed?'#'+(index+1):'Finalist '+(index+1)}</span>
+          <h3>${esc(displayName(cabin))}</h3>
+          <p class="muted">${esc(cabin.Location||'')}</p>
+          ${closed
+            ? `<div class="final-results-numbers">
+                <strong>${
+                  votingMethod_()==='Ranking'
+                    ? (summary.reviewed?summary.averageRank.toFixed(1):'—')
+                    : summary.average.toFixed(1)+' / 5'
+                }</strong>
+                <span>${
+                  votingMethod_()==='Ranking'
+                    ? 'average rank'
+                    : summary.reviewed+' final rating'+(summary.reviewed===1?'':'s')
+                }</span>
+                ${votingMethod_()==='Ranking'
+                  ? `<strong>${summary.firstPlaceCount}</strong><span>first-place votes</span>`
+                  : ''}
+              </div>`
+            : `<div class="my-final-status">${
+                myValue
+                  ? `✓ Your ${votingMethod_()==='Ranking'?'rank':'rating'}: ${
+                      votingMethod_()==='Ranking'?ordinal_(myValue):myValue+'/5'
+                    }`
+                  : `Not yet ${votingVerb_(true)} by you`
+              }</div>`}
+        </article>`;
+      }).join('')}
+    </div>
+
+    ${closed?'':`<section class="panel">
+      <div class="panel-head"><h3>Voting completion</h3></div>
+      <div class="traveler-final-progress">
+        ${travelerProgress.map(function(item){
+          return `<div class="${item.complete?'voting-traveler-complete':''}">
+            <strong>${esc(item.traveler.Name||'Traveler')}</strong>
+            <span>${item.count}/${finalists.length} ${votingVerb_(true)}${item.complete?' · Complete':''}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </section>`}
+  </section>`;
+};
+
+openVote=function(cabinId){
+  requireTraveler();
+
+  if(finalVotingIsClosed_()){
+    toast('Voting is closed.',true);
+    return;
+  }
+
+  const cabin=(DATA.cabins||[]).find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+  if(!cabin){toast('Rental could not be found.',true);return;}
+
+  const existing=myVoteForCabin_(cabinId);
+  const method=votingMethod_();
+  const existingScore=Number(existing&&existing.Score||0);
+  const existingRank=Number(existing&&existing.Rank||0);
+  const eligibleCount=votingEligibleCabins_().length;
+
+  openModal(`<div class="vote-dialog simplified-vote-dialog">
+    <p class="eyebrow">YOUR VOTE · ${esc(method.toUpperCase())}</p>
+    <h2>${method==='Ranking'?'Rank':'Rate'} ${esc(displayName(cabin))}</h2>
+    <p class="vote-modal-help">${
+      method==='Ranking'
+        ? `Choose this rental's place from 1st through ${ordinal_(eligibleCount)}. If you choose a place already used, the two rentals swap positions.`
+        : '<strong>1 = least liked</strong> and <strong>5 = most liked</strong>.'
+    }</p>
+
+    <form onsubmit="saveVoteForm(event,'${cabinId}')" class="form-grid vote-form">
+      ${method==='Ranking'
+        ? `<label class="wide ranking-choice-field">
+            <span>Rank this rental</span>
+            <select id="voteRank" required>
+              <option value="">Choose a position…</option>
+              ${Array.from({length:eligibleCount},function(_,index){
+                const rank=index+1;
+                return `<option value="${rank}" ${existingRank===rank?'selected':''}>${ordinal_(rank)}${rank===1?' · favorite':''}</option>`;
+              }).join('')}
+            </select>
+          </label>`
+        : `<div class="wide rating-choice-grid simplified-rating-grid">
+            ${[1,2,3,4,5].map(function(number){
+              return `<label class="rating-choice ${existingScore===number?'selected':''}">
+                <input type="radio" name="voteScoreRadio" value="${number}"
+                  ${existingScore===number?'checked':''} required
+                  onchange="updateVoteChoiceDisplay_(this)">
+                <strong>${number}</strong>
+                <span>${starText_(number)}</span>
+              </label>`;
+            }).join('')}
+          </div>`}
+
+      <label class="wide">
+        <span>Comments</span>
+        <textarea id="voteNotes" rows="4" placeholder="Optional thoughts about this rental…">${esc(existing?existing.Notes||'':'')}</textarea>
+      </label>
+
+      <div class="wide form-actions vote-form-actions">
+        <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+        <button class="vote-primary">Save ${method.toLowerCase()}</button>
+      </div>
+    </form>
+  </div>`);
+};
+
+saveVoteForm=function(e,cabinId){
+  e.preventDefault();
+  requireTraveler();
+
+  const method=votingMethod_();
+  const round=currentVotingRound_();
+  const scoreInput=document.querySelector('input[name="voteScoreRadio"]:checked');
+  const score=method==='Rating'&&scoreInput?Number(scoreInput.value):0;
+  const rank=method==='Ranking'?Number(val('voteRank')||0):0;
+  const notes=val('voteNotes');
+  const eligibleCount=votingEligibleCabins_().length;
+
+  if(method==='Rating'&&(!score||score<1||score>5)){
+    toast('Choose a rating from 1 to 5.',true);
+    return;
+  }
+  if(method==='Ranking'&&(!Number.isInteger(rank)||rank<1||rank>eligibleCount)){
+    toast('Choose a rank from 1 to '+eligibleCount+'.',true);
+    return;
+  }
+
+  const previousVotes=(DATA.votes||[]).map(function(vote){
+    return Object.assign({},vote);
+  });
+  const previousVote=myVoteForCabin_(cabinId);
+  const previousRank=Number(previousVote&&previousVote.Rank||0);
+
+  if(method==='Ranking'){
+    const duplicate=(DATA.votes||[]).find(function(vote){
+      return vote['Traveler ID']===currentTravelerId &&
+        vote['Cabin ID']!==cabinId &&
+        String(vote['Voting Round']||'Preliminary')===round &&
+        Number(vote.Rank||0)===rank;
+    });
+    if(duplicate){
+      duplicate.Rank=previousRank&&previousRank!==rank?previousRank:'';
+      duplicate['First Choice']=Number(duplicate.Rank||0)===1?'Yes':'';
+    }
+  }
+
+  DATA.votes=(DATA.votes||[]).filter(function(vote){
+    return !(vote['Cabin ID']===cabinId &&
+      vote['Traveler ID']===currentTravelerId &&
+      String(vote['Voting Round']||'Preliminary')===round);
+  });
+
+  DATA.votes.push({
+    'Vote ID':previousVote?previousVote['Vote ID']:'LOCAL-'+Date.now(),
+    'Cabin ID':cabinId,
+    'Traveler ID':currentTravelerId,
+    'Score':method==='Rating'?score:'',
+    'Rank':method==='Ranking'?rank:'',
+    'Notes':notes,
+    'Reasons':'',
+    'First Choice':method==='Ranking'&&rank===1?'Yes':'',
+    'Voting Round':round,
+    'Created At':new Date().toISOString()
+  });
+
+  const saveKey='vote:'+currentTravelerId+':'+round+':'+cabinId;
+  const saveId=beginBackgroundSave_('Vote',saveKey);
+  closeModal();
+  render();
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA.votes=(DATA.votes||[]).filter(function(vote){
+          return !(vote['Traveler ID']===currentTravelerId &&
+            String(vote['Voting Round']||'Preliminary')===round);
+        }).concat(Array.isArray(result.travelerVotes)?result.travelerVotes:[]);
+        render();
+      }
+      completeBackgroundSave_(saveId,result.message||'Vote saved');
+    })
+    .withFailureHandler(function(error){
+      if(isLatestBackgroundSave_(saveId,saveKey)){
+        DATA.votes=previousVotes;
+        render();
+      }
+      failBackgroundSave_(saveId,error,'Vote could not be saved');
+      toast('Vote could not be saved: '+backgroundSaveMessage_(error),true);
+    })
+    .saveVoteFast({
+      cabinId:cabinId,
+      travelerId:currentTravelerId,
+      score:score,
+      rank:rank,
+      notes:notes,
+      round:round
+    });
+};
+
+const phase4BaseRenderSettings_=renderSettings;
+renderSettings=function(){
+  let html=phase4BaseRenderSettings_();
+  const method=votingMethod_();
+  const field=`<label class="voting-method-field">
+    <span>Voting method</span>
+    <select id="setVotingMethod">
+      <option value="Rating" ${method==='Rating'?'selected':''}>Rating · 1 to 5</option>
+      <option value="Ranking" ${method==='Ranking'?'selected':''}>Ranking · 1st, 2nd, 3rd…</option>
+    </select>
+    <small>Choose before votes are cast. Changing methods mid-round is blocked to protect existing votes.</small>
+  </label>`;
+
+  html=html.replace(
+    /(<div class="wide form-actions">\s*<button>Save trip settings<\/button>)/,
+    field+'$1'
+  );
+  return html;
+};
+
+saveSettingsForm=function(e){
+  e.preventDefault();
+  run('saveTripSettings',[{
+    'Trip Name':val('setTripName'),
+    Destination:val('setDestination'),
+    'Start Date':val('setStart'),
+    'End Date':val('setEnd'),
+    'Portal Stage':val('setStage'),
+    'Voting Round':val('setRound'),
+    'Voting Method':document.getElementById('setVotingMethod')
+      ? val('setVotingMethod')
+      : votingMethod_(),
+    'OneSignal App ID':document.getElementById('setOneSignalAppId')
+      ? val('setOneSignalAppId')
+      : (DATA.trip['OneSignal App ID']||'')
+  }],'Trip settings saved.');
+};
+
+renderJustinVotingSummary_=function(summary){
+  const rows=Array.isArray(summary.rows)?summary.rows:[];
+  const round=String(summary.round||DATA.trip['Voting Round']||'Preliminary');
+  const method=String(summary.method||votingMethod_());
+  const eligible=Number(summary.eligibleRentalCount||0);
+
+  if(!rows.length) return '<div class="muted">No active travelers were found.</div>';
+
+  return `<div class="voting-summary-round">
+    <strong>${esc(round)} voting · ${esc(method)}</strong>
+    <span>${eligible} rental${eligible===1?'':'s'} in this round</span>
+  </div>
+  <div class="voting-summary-table-wrap">
+    <table class="voting-summary-table">
+      <thead><tr><th>Traveler</th><th>Voted</th><th>Top 3 rentals</th><th>Mobile app</th></tr></thead>
+      <tbody>${rows.map(function(row){
+        const top3=Array.isArray(row.top3)?row.top3:[];
+        const complete=Number(row.eligibleRentalCount||0)>0&&
+          Number(row.votedCount||0)>=Number(row.eligibleRentalCount||0);
+        return `<tr>
+          <td data-label="Traveler"><strong>${esc(row.travelerName||'Traveler')}</strong>${row.family?`<small>${esc(row.family)}</small>`:''}</td>
+          <td data-label="Voted"><span class="voting-count ${complete?'complete':''}">${Number(row.votedCount||0)} / ${Number(row.eligibleRentalCount||0)}</span>${complete?'<small class="voting-complete-label">Complete</small>':''}</td>
+          <td data-label="Top 3 rentals">${top3.length
+            ? `<ol class="traveler-top-three">${top3.map(function(item){
+                return `<li><span>${esc(item.nickname||'Rental')}</span><small>Rental ID: ${esc(item.cabinId||'')} · ${
+                  method==='Ranking'
+                    ? esc(ordinal_(item.rank))
+                    : Number(item.score||0).toFixed(0)+' / 5'
+                }</small></li>`;
+              }).join('')}</ol>`
+            : '<span class="muted">No votes yet</span>'}</td>
+          <td data-label="Mobile app">${row.appInstalled
+            ? `<span class="app-install-status installed">✓ Installed</span><small>${Number(row.installedDeviceCount||0)} device${Number(row.installedDeviceCount||0)===1?'':'s'}</small>`
+            : `<span class="app-install-status not-installed">Not installed</span>${Number(row.linkedDeviceCount||0)>0?'<small>Browser/device linked</small>':''}`}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+  </div>`;
+};
+
+const phase4BaseComparisonFeatureValue_=comparisonFeatureValue_;
+comparisonFeatureValue_=function(cabin,key){
+  if(votingMethod_()==='Ranking'){
+    const summary=familyVoteSummary_(cabin['Cabin ID']);
+    const myVote=myVoteForCabin_(cabin['Cabin ID']);
+    if(key==='familyScore'){
+      return summary.reviewed
+        ? 'Avg rank '+summary.averageRank.toFixed(1)
+        : 'No family rankings yet';
+    }
+    if(key==='myRating'){
+      return myVote&&Number(myVote.Rank||0)
+        ? ordinal_(myVote.Rank)
+        : 'Not ranked';
+    }
+  }
+  return phase4BaseComparisonFeatureValue_(cabin,key);
+};
+
+function decorateVotingCards_(){
+  if(!DATA) return;
+  const method=votingMethod_();
+
+  document.querySelectorAll('.rental-card').forEach(function(card){
+    const cabinId=String(card.dataset.cabinId||'');
+    const vote=myVoteForCabin_(cabinId);
+    const summary=familyVoteSummary_(cabinId);
+    const voteButton=card.querySelector('.vote-primary');
+    const myStatus=card.querySelector('.my-rating');
+    const familyLabel=card.querySelector('.family-review-progress strong');
+    const topReasons=card.querySelector('.top-reasons');
+    const adminLabel=card.querySelector('.admin-action-label');
+
+    if(topReasons) topReasons.remove();
+    if(adminLabel) adminLabel.textContent='Organizer tools';
+
+    if(familyLabel){
+      familyLabel.textContent=method==='Ranking'?'Family rankings':'Family ratings';
+    }
+
+    if(method==='Ranking'){
+      const rank=Number(vote&&vote.Rank||0);
+      if(myStatus){
+        myStatus.classList.toggle('reviewed',Boolean(rank));
+        myStatus.classList.toggle('unreviewed',!rank);
+        myStatus.innerHTML=rank
+          ? `<strong>✓ Your rank: ${esc(ordinal_(rank))}</strong><span>Position can be changed anytime while voting is open.</span>`
+          : '<strong>Not ranked by you</strong><span>Choose where this rental belongs in your list.</span>';
+      }
+      if(voteButton){
+        voteButton.textContent=finalVotingIsClosed_()
+          ? (rank?'Final rank · '+ordinal_(rank):'Voting closed')
+          : (rank?'Edit rank · '+ordinal_(rank):'Set rank');
+      }
+    }else if(voteButton){
+      const score=Number(vote&&vote.Score||0);
+      voteButton.textContent=finalVotingIsClosed_()
+        ? (score?'Final rating · '+score+'/5':'Voting closed')
+        : (score?'Edit rating · '+score+'/5':'Rate rental');
+    }
+
+    card.dataset.voteCount=String(summary.reviewed||0);
+  });
+}
+
+const phase4BaseRender_=render;
+render=function(){
+  phase4BaseRender_();
+  setTimeout(decorateVotingCards_,0);
+};
+</script>

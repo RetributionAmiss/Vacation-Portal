@@ -50,8 +50,9 @@ assert(
   'Organizer vote summary must prioritize rental nicknames.'
 );
 assert(
-  organizerSummary.includes("cabinName_(cabin) + ' · ' + cabinId"),
-  'Organizer vote summary must display the rental ID with the rental nickname/name.'
+  organizerSummary.includes('nickname: cabin ? cabinName_(cabin) : cabinId') &&
+    organizerSummary.includes('cabinId: cabinId'),
+  'Organizer vote summary must expose both the rental nickname/name and rental ID.'
 );
 
 console.log('PASS UI foundation contracts');
