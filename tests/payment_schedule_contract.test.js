@@ -185,4 +185,4 @@ assert(
   'Payment planning data and adjusted share targets must be included in vacation archive/reset handling.'
 );
 
-console.log('PASS payment schedule, traveler shares, self-service, and optimistic update contracts');
+console.log('PASS payment schedule, traveler shares, self-service, and immediate optimistic update contracts');
