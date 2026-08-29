@@ -1,0 +1,301 @@
+<script>
+const applyPaymentDataBeforeShares_=applyPaymentData_;
+const renderPaymentsBeforeShares_=renderPayments;
+const syncBookingPaymentScheduleBeforeShares_=syncBookingPaymentSchedule_;
+
+paymentState_.shares=paymentState_.shares||[];
+let paymentEditingPaymentIdV2_='';
+
+applyPaymentData_=function(data){
+  applyPaymentDataBeforeShares_(data);
+  paymentState_.shares=Array.isArray(data&&data.shares)?data.shares:[];
+};
+
+function paymentOrganizerUi_(){
+  return typeof isJustinCurrentTraveler_==='function' && isJustinCurrentTraveler_();
+}
+
+function paymentSavedShares_(cabinId){
+  return (paymentState_.shares||[]).filter(function(row){
+    return row['Cabin ID']===cabinId;
+  });
+}
+
+function paymentSplitBasis_(cabinId){
+  const plan=paymentPlan_(cabinId);
+  return String(plan&&plan['Split Basis']||'Adult')==='Bedroom'?'Bedroom':'Adult';
+}
+
+function paymentAutomaticShares_(cabin,basis,totalOverride){
+  if(!cabin) return [];
+  const total=Math.max(0,Number(totalOverride||0));
+  const normalized=String(basis||'Adult')==='Bedroom'?'Bedroom':'Adult';
+  let result={rows:[],unresolved:total};
+
+  if(normalized==='Bedroom' && typeof cappedBedroomSplit_==='function'){
+    result=cappedBedroomSplit_(cabin,total);
+  }else if(typeof cappedAdultSplit_==='function'){
+    result=cappedAdultSplit_(cabin,total);
+  }
+
+  return (result.rows||[]).map(function(row){
+    return {
+      travelerId:String(row.travelerId||''),
+      travelerName:String(row.travelerName||paymentTravelerName_(row.travelerId)),
+      calculatedShare:Math.max(0,Number(row.amount||0)),
+      base:Math.max(0,Number(row.base||0)),
+      capped:Boolean(row.capped),
+      extra:Math.max(0,Number(row.extra||0)),
+      unresolved:Math.max(0,Number(result.unresolved||0))
+    };
+  });
+}
+
+function paymentShareViewRows_(cabin){
+  if(!cabin) return [];
+  const cabinId=cabin['Cabin ID'];
+  const saved=paymentSavedShares_(cabinId);
+  const summary=paymentSummary_(cabin);
+  const basis=paymentSplitBasis_(cabinId);
+  const automatic=paymentAutomaticShares_(cabin,basis,summary.bookingTotal);
+
+  if(!saved.length){
+    return automatic.map(function(row){
+      return Object.assign({},row,{
+        adjustedShare:row.calculatedShare,
+        saved:false,
+        basis:basis
+      });
+    });
+  }
+
+  const autoByTraveler={};
+  automatic.forEach(function(row){autoByTraveler[row.travelerId]=row;});
+
+  return saved.map(function(row){
+    const travelerId=String(row['Traveler ID']||'');
+    const auto=autoByTraveler[travelerId]||{};
+    return {
+      travelerId:travelerId,
+      travelerName:paymentTravelerName_(travelerId),
+      calculatedShare:Number(row['Calculated Share']||auto.calculatedShare||0),
+      adjustedShare:Number(row['Adjusted Share']||0),
+      base:Number(auto.base||0),
+      capped:Boolean(auto.capped),
+      extra:Number(auto.extra||0),
+      unresolved:Number(auto.unresolved||0),
+      saved:true,
+      basis:String(row['Split Basis']||basis)
+    };
+  }).sort(function(a,b){
+    return String(a.travelerName).localeCompare(String(b.travelerName));
+  });
+}
+
+function paymentTravelerPaidTotal_(cabinId,travelerId,excludePaymentId){
+  return paymentsForCabin_(cabinId)
+    .filter(function(row){
+      return String(row['Paid By Traveler ID']||'')===String(travelerId||'') &&
+        String(row['Payment ID']||'')!==String(excludePaymentId||'');
+    })
+    .reduce(function(sum,row){return sum+Number(row.Amount||0);},0);
+}
+
+function paymentExpectedShareForTraveler_(cabin,travelerId){
+  const row=paymentShareViewRows_(cabin).find(function(item){
+    return item.travelerId===travelerId;
+  });
+  return row?Number(row.adjustedShare||0):0;
+}
+
+function renderPaymentSharesPanel_(cabin){
+  if(!cabin) return '';
+  const cabinId=cabin['Cabin ID'];
+  const rows=paymentShareViewRows_(cabin);
+  const summary=paymentSummary_(cabin);
+  const saved=paymentSavedShares_(cabinId).length>0;
+  const basis=paymentSplitBasis_(cabinId);
+  const expectedTotal=rows.reduce(function(sum,row){return sum+Number(row.adjustedShare||0);},0);
+  const difference=expectedTotal-summary.bookingTotal;
+
+  return `<div class="panel payment-share-panel">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">EXPECTED TRAVELER SHARES</p>
+        <h3>Rental split → payment targets</h3>
+        <p class="muted">
+          ${saved
+            ? 'Saved payment targets, originally seeded from the Rental board split.'
+            : 'Previewing the Rental board '+esc(basis.toLowerCase())+' split. The Organizer can save or adjust these targets.'}
+        </p>
+      </div>
+      ${paymentOrganizerUi_()
+        ? `<button type="button" class="ghost" onclick="openPaymentSharesEditor_('${cabinId}')">Adjust multiple travelers</button>`
+        : ''}
+    </div>
+
+    ${rows.length?`<div class="payment-share-grid">
+      ${rows.map(function(row){
+        const paid=paymentTravelerPaidTotal_(cabinId,row.travelerId,'');
+        const remaining=Math.max(0,Number(row.adjustedShare||0)-paid);
+        return `<article class="payment-share-card ${row.travelerId===currentTravelerId?'is-current':''}">
+          <div>
+            <strong>${esc(row.travelerName)}</strong>
+            <small>${row.saved && Math.abs(Number(row.adjustedShare||0)-Number(row.calculatedShare||0))>.005
+              ? 'Organizer adjusted · Rental board '+paymentMoney_(row.calculatedShare)
+              : esc(basis)+' split target'}</small>
+          </div>
+          <div class="payment-share-amounts">
+            <span><small>Expected</small><strong>${paymentMoney_(row.adjustedShare)}</strong></span>
+            <span><small>Paid</small><strong>${paymentMoney_(paid)}</strong></span>
+            <span><small>Left</small><strong>${paymentMoney_(remaining)}</strong></span>
+          </div>
+        </article>`;
+      }).join('')}
+    </div>`:`<div class="payment-empty-state"><strong>No adult traveler split is available.</strong><span>Check traveler Cost %, price caps, and Room Planner assignments, or use the Adult split.</span></div>`}
+
+    <div class="payment-share-total ${Math.abs(difference)>.01?'is-warning':''}">
+      <span>Expected traveler shares: <strong>${paymentMoney_(expectedTotal)}</strong></span>
+      <span>Booking total: <strong>${paymentMoney_(summary.bookingTotal)}</strong></span>
+      ${Math.abs(difference)>.01
+        ? `<small>${difference>0?paymentMoney_(difference)+' above':paymentMoney_(Math.abs(difference))+' below'} the booking total. This is allowed when the Organizer intentionally adjusts shares.</small>`
+        : '<small>Traveler shares match the booking total.</small>'}
+    </div>
+  </div>`;
+}
+
+renderPayments=function(){
+  let html=renderPaymentsBeforeShares_();
+  if(!paymentState_.loaded) return html;
+
+  const cabin=selectedPaymentCabin_();
+  if(!cabin) return html;
+
+  const marker=`<div class="panel">
+      <div class="panel-head">
+        <div><p class="eyebrow">PAYMENT SCHEDULE</p><h3>Upcoming and planned transfers</h3></div>`;
+
+  if(html.indexOf(marker)>=0){
+    html=html.replace(marker,renderPaymentSharesPanel_(cabin)+'\n\n    '+marker);
+  }
+
+  if(!paymentOrganizerUi_()){
+    html=html.replace(
+      /<button type="button" class="ghost" onclick="openBookingPlanForm_\('[^']+'\)">[\s\S]*?<\/button>/,
+      ''
+    );
+    html=html.replace(
+      /<button type="button" onclick="openPaymentScheduleForm_\('[^']+',''\)">Add installment<\/button>/,
+      ''
+    );
+  }
+
+  return html;
+};
+
+function paymentOrganizerBackgroundSave_(label,key,method,payload,successText){
+  withOrganizerAuthorization_(function(){
+    const saveId=typeof beginBackgroundSave_==='function'
+      ? beginBackgroundSave_(label,key)
+      : '';
+    closeModal();
+
+    google.script.run
+      .withSuccessHandler(function(data){
+        applyPaymentData_(data);
+        if(currentView==='payments') render();
+        if(saveId&&typeof completeBackgroundSave_==='function'){
+          completeBackgroundSave_(saveId,successText||label+' saved');
+        }else{
+          toast(successText||label+' saved');
+        }
+      })
+      .withFailureHandler(function(error){
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+        const message=error&&error.message?error.message:String(error);
+        if(saveId&&typeof failBackgroundSave_==='function'){
+          failBackgroundSave_(saveId,error,label+' could not be saved');
+        }
+        toast(message,true);
+      })[method](organizerAuthorizationValues_(payload));
+  });
+}
+
+openBookingPlanForm_=function(cabinId){
+  if(!paymentOrganizerUi_()){
+    toast('Only the Organizer can change booking responsibility and traveler shares.',true);
+    return;
+  }
+
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  if(!cabin) return;
+  const plan=paymentPlan_(cabinId);
+  const adults=paymentAdultTravelers_();
+  const selected=new Set(paymentBookerIds_(cabinId));
+  const basis=paymentSplitBasis_(cabinId);
+  const hasSavedShares=paymentSavedShares_(cabinId).length>0;
+
+  openModal(`<div class="payment-plan-editor">
+    <p class="eyebrow">BOOKING SETUP</p>
+    <h2>${plan?'Edit booking setup':'Set up booking'}</h2>
+    <p class="muted">The first traveler payment targets can be filled automatically using the exact Cost %, price-cap, and Pay More rules from the Rental board.</p>
+    <form class="form-grid" onsubmit="saveBookingPlanForm_(event,'${cabinId}')">
+      <label class="wide"><span>Travelers handling the booking</span><div class="payment-booker-picker">
+        ${adults.map(function(traveler){
+          const id=traveler['Traveler ID'];
+          return `<label class="check"><input type="checkbox" name="paymentBooker" value="${escAttr(id)}" ${selected.has(id)?'checked':''}><span>${esc(traveler.Name||'Traveler')}</span></label>`;
+        }).join('')}
+      </div></label>
+      ${field('paymentPlanAgency','Agency / property payee',plan?plan['Agency Name']:(cabin.Provider||''),'text',true)}
+      ${field('paymentPlanTotal','Confirmed booking total',plan?plan['Booking Total']:(cabin['Total Rental Cost']||''),'number',true)}
+      <label><span>Rental board split source</span><select id="paymentPlanSplitBasis">
+        <option value="Adult" ${basis==='Adult'?'selected':''}>Adult split · Cost %, caps &amp; Pay More</option>
+        <option value="Bedroom" ${basis==='Bedroom'?'selected':''}>Bedroom split · room assignments + Cost %</option>
+      </select></label>
+      <label class="wide payment-refresh-shares"><input type="checkbox" id="paymentRefreshShares" ${hasSavedShares?'':'checked'}><span>${hasSavedShares?'Refresh saved traveler shares from the Rental board when I save':'Automatically add traveler shares from the Rental board'}</span></label>
+      ${area('paymentPlanNotes','Notes',plan?plan.Notes:'')}
+      <div class="wide form-actions"><button>Save booking setup</button></div>
+    </form>
+  </div>`);
+};
+
+saveBookingPlanForm_=function(event,cabinId){
+  event.preventDefault();
+  const bookingTravelerIds=Array.from(document.querySelectorAll('input[name="paymentBooker"]:checked'))
+    .map(function(input){return input.value;});
+  if(!bookingTravelerIds.length){toast('Choose at least one traveler handling the booking.',true);return;}
+
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  if(!cabin) return;
+  const bookingTotal=Number(val('paymentPlanTotal')||0);
+  const splitBasis=val('paymentPlanSplitBasis')||'Adult';
+  const refresh=Boolean(document.getElementById('paymentRefreshShares')&&document.getElementById('paymentRefreshShares').checked);
+  const payload={
+    cabinId:cabinId,
+    bookingTravelerIds:bookingTravelerIds,
+    agencyName:val('paymentPlanAgency'),
+    bookingTotal:bookingTotal,
+    splitBasis:splitBasis,
+    notes:val('paymentPlanNotes')
+  };
+
+  if(refresh){
+    payload.shares=paymentAutomaticShares_(cabin,splitBasis,bookingTotal).map(function(row){
+      return {
+        travelerId:row.travelerId,
+        calculatedShare:row.calculatedShare,
+        adjustedShare:row.calculatedShare
+      };
+    });
+  }
+
+  paymentOrganizerBackgroundSave_(
+    'Booking setup',
+    'payment-plan:'+cabinId,
+    'saveBookingPlan',
+    payload,
+    'Booking setup saved'
+  );
+};
+
+</script>

@@ -1,0 +1,200 @@
+<script>
+function paymentOptimisticKnownIds_(method,payload){
+  payload=payload||{};
+  if(method==='savePaymentScheduleItem'&&!String(payload.id||'')){
+    return (paymentState_.schedule||[]).map(function(row){
+      return String(row['Schedule ID']||'');
+    }).filter(Boolean);
+  }
+  if(method==='saveBookingPayment'&&!String(payload.id||'')){
+    return (paymentState_.payments||[]).map(function(row){
+      return String(row['Payment ID']||'');
+    }).filter(Boolean);
+  }
+  return [];
+}
+
+function paymentOptimisticSameNumber_(left,right){
+  return Math.abs(Number(left||0)-Number(right||0))<.005;
+}
+
+function paymentOptimisticLatestRow_(rows){
+  return (rows||[]).slice().sort(function(a,b){
+    return String(b['Created At']||b['Updated At']||'')
+      .localeCompare(String(a['Created At']||a['Updated At']||''));
+  })[0]||null;
+}
+
+function paymentOptimisticCreatedServerId_(job,data){
+  const payload=job&&job.payload||{};
+  const known=new Set(job&&job.knownIds||[]);
+
+  if(job.method==='savePaymentScheduleItem'&&!String(payload.id||'')){
+    const recipient=paymentOptimisticRecipient_(payload.cabinId,payload,null);
+    const candidates=(data&&data.schedule||[]).filter(function(row){
+      const id=String(row['Schedule ID']||'');
+      return id && !known.has(id) &&
+        String(row['Cabin ID']||'')===String(payload.cabinId||'') &&
+        String(row.Label||'')===String(payload.label||'Booking payment') &&
+        String(row['Due Date']||'').slice(0,10)===String(payload.dueDate||'').slice(0,10) &&
+        paymentOptimisticSameNumber_(row['Amount Due'],payload.amountDue) &&
+        String(row['Expected Payer Traveler ID']||'')===String(payload.expectedPayerTravelerId||'') &&
+        String(row['Recipient Type']||'Agency')===recipient.type &&
+        String(row['Recipient Traveler ID']||'')===recipient.travelerId &&
+        String(row['Recipient Name']||'')===recipient.name;
+    });
+    const row=paymentOptimisticLatestRow_(candidates);
+    return row?String(row['Schedule ID']||''):'';
+  }
+
+  if(job.method==='saveBookingPayment'&&!String(payload.id||'')){
+    const scheduleId=String(payload.scheduleId||'');
+    const schedule=scheduleId
+      ? (paymentState_.schedule||[]).find(function(row){return row['Schedule ID']===scheduleId;})||null
+      : null;
+    const recipient=paymentOptimisticRecipient_(payload.cabinId,payload,schedule);
+    const candidates=(data&&data.payments||[]).filter(function(row){
+      const id=String(row['Payment ID']||'');
+      return id && !known.has(id) &&
+        String(row['Cabin ID']||'')===String(payload.cabinId||'') &&
+        String(row['Schedule ID']||'')===scheduleId &&
+        String(row['Paid By Traveler ID']||'')===String(payload.paidByTravelerId||'') &&
+        paymentOptimisticSameNumber_(row.Amount,payload.amount) &&
+        String(row['Payment Date']||'').slice(0,10)===String(payload.paymentDate||'').slice(0,10) &&
+        String(row['Paid To Type']||'Agency')===recipient.type &&
+        String(row['Paid To Traveler ID']||'')===recipient.travelerId &&
+        String(row['Paid To Name']||'')===recipient.name;
+    });
+    const row=paymentOptimisticLatestRow_(candidates);
+    return row?String(row['Payment ID']||''):'';
+  }
+
+  return '';
+}
+
+function paymentOptimisticRewriteQueuedId_(localId,serverId,kind){
+  if(!localId||!serverId||localId===serverId) return;
+
+  paymentOptimisticQueue_.jobs.slice(1).forEach(function(job){
+    const payload=job.payload||{};
+    if(kind==='schedule'){
+      if(String(payload.id||'')===localId &&
+        (job.method==='savePaymentScheduleItem'||job.method==='deletePaymentScheduleItem')){
+        payload.id=serverId;
+      }
+      if(String(payload.scheduleId||'')===localId){
+        payload.scheduleId=serverId;
+      }
+    }else if(kind==='payment'){
+      if(String(payload.id||'')===localId &&
+        (job.method==='saveBookingPayment'||job.method==='deleteBookingPayment')){
+        payload.id=serverId;
+      }
+    }
+  });
+}
+
+function paymentOptimisticRebaseAfterSuccess_(job,data){
+  const localId=String(job&&job.payload&&job.payload.clientId||'');
+  const serverId=paymentOptimisticCreatedServerId_(job,data);
+
+  if(serverId&&localId){
+    paymentOptimisticRewriteQueuedId_(
+      localId,
+      serverId,
+      job.method==='savePaymentScheduleItem'?'schedule':'payment'
+    );
+  }
+
+  applyPaymentData_(data||{});
+
+  paymentOptimisticQueue_.jobs.slice(1).forEach(function(queued){
+    queued.knownIds=paymentOptimisticKnownIds_(queued.method,queued.payload);
+    queued.rollback=paymentOptimisticApply_(queued.method,queued.payload);
+  });
+
+  paymentOptimisticRender_();
+}
+
+paymentOptimisticQueueWrite_=function(label,key,method,payload,successText){
+  const knownIds=paymentOptimisticKnownIds_(method,payload);
+  const rollback=paymentOptimisticApply_(method,payload);
+  const saveId=typeof beginBackgroundSave_==='function'
+    ? beginBackgroundSave_(label,key)
+    : '';
+
+  closeModal();
+  paymentOptimisticRender_();
+
+  paymentOptimisticQueue_.jobs.push({
+    label:label,
+    key:key,
+    method:method,
+    payload:payload,
+    successText:successText,
+    saveId:saveId,
+    knownIds:knownIds,
+    rollback:rollback
+  });
+
+  paymentOptimisticPump_();
+};
+
+paymentOptimisticPump_=function(){
+  if(paymentOptimisticQueue_.running||!paymentOptimisticQueue_.jobs.length) return;
+
+  const job=paymentOptimisticQueue_.jobs[0];
+  paymentOptimisticQueue_.running=true;
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      paymentOptimisticQueue_.running=false;
+
+      // Rebase the authoritative response first, then replay every later
+      // optimistic change before the browser paints another Payments frame.
+      paymentOptimisticRebaseAfterSuccess_(job,data||{});
+      paymentOptimisticQueue_.jobs.shift();
+
+      if(job.saveId&&typeof completeBackgroundSave_==='function'){
+        completeBackgroundSave_(job.saveId,job.successText||job.label+' saved');
+      }else{
+        toast(job.successText||job.label+' saved');
+      }
+
+      if(paymentOptimisticQueue_.jobs.length){
+        paymentOptimisticPump_();
+      }
+    })
+    .withFailureHandler(function(error){
+      paymentOptimisticQueue_.running=false;
+      const failedJobs=paymentOptimisticQueue_.jobs.splice(0);
+
+      for(let index=failedJobs.length-1;index>=0;index--){
+        try{failedJobs[index].rollback();}catch(rollbackError){}
+      }
+
+      failedJobs.forEach(function(item){
+        if(item.saveId&&typeof failBackgroundSave_==='function'){
+          failBackgroundSave_(item.saveId,error,item.label+' could not be saved');
+        }
+      });
+
+      if(typeof organizerAuthError_==='function'&&organizerAuthError_(error)){
+        saveOrganizerSession_(null);
+      }
+
+      paymentOptimisticRender_();
+      toast(
+        (error&&error.message?error.message:String(error))+
+        (failedJobs.length>1?' Later unsaved payment changes were also rolled back.':''),
+        true
+      );
+
+      setTimeout(function(){
+        if(!paymentOptimisticQueue_.running&&!paymentOptimisticQueue_.jobs.length){
+          loadPaymentData_(true);
+        }
+      },400);
+    })[job.method](job.payload);
+};
+</script>

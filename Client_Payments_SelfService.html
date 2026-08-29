@@ -1,0 +1,364 @@
+<script>
+function openPaymentSharesEditor_(cabinId){
+  if(!paymentOrganizerUi_()){
+    toast('Only the Organizer can adjust traveler payment targets.',true);
+    return;
+  }
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  if(!cabin) return;
+  const summary=paymentSummary_(cabin);
+  const basis=paymentSplitBasis_(cabinId);
+  const saved=paymentSavedShares_(cabinId);
+  const savedByTraveler={};
+  saved.forEach(function(row){savedByTraveler[row['Traveler ID']]=row;});
+  const auto=paymentAutomaticShares_(cabin,basis,summary.bookingTotal);
+
+  openModal(`<div class="payment-share-editor">
+    <p class="eyebrow">BULK TRAVELER SHARES</p>
+    <h2>Adjust multiple travelers</h2>
+    <p class="muted">Rental board amounts are shown beside every traveler. Change as many payment targets as needed, then save them together.</p>
+    <label><span>Split source</span><select id="paymentShareBasis" onchange="resetPaymentShareInputsFromRental_('${cabinId}')">
+      <option value="Adult" ${basis==='Adult'?'selected':''}>Adult split</option>
+      <option value="Bedroom" ${basis==='Bedroom'?'selected':''}>Bedroom split</option>
+    </select></label>
+    <div class="payment-share-editor-list" id="paymentShareEditorList">
+      ${auto.map(function(row){
+        const savedRow=savedByTraveler[row.travelerId];
+        const amount=savedRow?Number(savedRow['Adjusted Share']||0):row.calculatedShare;
+        return `<label class="payment-share-edit-row" data-share-traveler="${escAttr(row.travelerId)}">
+          <span><strong>${esc(row.travelerName)}</strong><small data-share-calculated-label>Rental board: ${paymentMoney_(row.calculatedShare)}</small></span>
+          <input type="number" min="0" step="0.01" value="${Number(amount||0).toFixed(2)}" data-payment-share-input data-traveler-id="${escAttr(row.travelerId)}" data-calculated="${Number(row.calculatedShare||0)}">
+        </label>`;
+      }).join('')}
+    </div>
+    <div class="payment-share-editor-total" id="paymentShareEditorTotal"></div>
+    <div class="form-actions payment-share-editor-actions">
+      <button class="ghost" type="button" onclick="resetPaymentShareInputsFromRental_('${cabinId}')">Reset all to Rental board</button>
+      <button type="button" onclick="savePaymentSharesEditor_('${cabinId}')">Save all traveler shares</button>
+    </div>
+  </div>`);
+  updatePaymentShareEditorTotal_(summary.bookingTotal);
+}
+
+function resetPaymentShareInputsFromRental_(cabinId){
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  if(!cabin) return;
+  const summary=paymentSummary_(cabin);
+  const basis=val('paymentShareBasis')||'Adult';
+  const rows=paymentAutomaticShares_(cabin,basis,summary.bookingTotal);
+  const byTraveler={};
+  rows.forEach(function(row){byTraveler[row.travelerId]=row;});
+
+  document.querySelectorAll('[data-payment-share-input]').forEach(function(input){
+    const row=byTraveler[input.dataset.travelerId];
+    if(!row) return;
+    input.value=Number(row.calculatedShare||0).toFixed(2);
+    input.dataset.calculated=String(Number(row.calculatedShare||0));
+    const wrapper=input.closest('[data-share-traveler]');
+    const label=wrapper&&wrapper.querySelector('[data-share-calculated-label]');
+    if(label) label.textContent='Rental board: '+paymentMoney_(row.calculatedShare);
+  });
+  updatePaymentShareEditorTotal_(summary.bookingTotal);
+}
+
+function updatePaymentShareEditorTotal_(bookingTotal){
+  const target=document.getElementById('paymentShareEditorTotal');
+  if(!target) return;
+  const total=Array.from(document.querySelectorAll('[data-payment-share-input]'))
+    .reduce(function(sum,input){return sum+Math.max(0,Number(input.value||0));},0);
+  const difference=total-Number(bookingTotal||0);
+  target.classList.toggle('is-warning',Math.abs(difference)>.01);
+  target.innerHTML=`<strong>${paymentMoney_(total)} assigned</strong><span>${paymentMoney_(bookingTotal)} booking total</span>${Math.abs(difference)>.01?`<small>${difference>0?paymentMoney_(difference)+' above':paymentMoney_(Math.abs(difference))+' below'} booking total</small>`:'<small>Shares match booking total</small>'}`;
+}
+
+document.addEventListener('input',function(event){
+  if(event.target&&event.target.matches('[data-payment-share-input]')){
+    const cabin=selectedPaymentCabin_();
+    if(cabin) updatePaymentShareEditorTotal_(paymentSummary_(cabin).bookingTotal);
+  }
+});
+
+function savePaymentSharesEditor_(cabinId){
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  if(!cabin) return;
+  const summary=paymentSummary_(cabin);
+  const splitBasis=val('paymentShareBasis')||'Adult';
+  const shares=Array.from(document.querySelectorAll('[data-payment-share-input]')).map(function(input){
+    return {
+      travelerId:input.dataset.travelerId,
+      calculatedShare:Number(input.dataset.calculated||0),
+      adjustedShare:Math.max(0,Number(input.value||0))
+    };
+  });
+
+  paymentOrganizerBackgroundSave_(
+    'Traveler payment shares',
+    'payment-shares:'+cabinId,
+    'savePaymentShares',
+    {cabinId:cabinId,splitBasis:splitBasis,sourceTotal:summary.bookingTotal,shares:shares},
+    'Traveler payment shares saved'
+  );
+}
+
+savePaymentScheduleForm_=function(event,cabinId,id){
+  event.preventDefault();
+  const payload={
+    id:id||'',
+    cabinId:cabinId,
+    label:val('scheduleLabel'),
+    dueDate:val('scheduleDueDate'),
+    amountDue:Number(val('scheduleAmountDue')||0),
+    expectedPayerTravelerId:val('scheduleExpectedPayer'),
+    recipientType:val('scheduleRecipientType'),
+    recipientTravelerId:val('scheduleRecipientTravelerId'),
+    recipientName:val('scheduleRecipientName'),
+    notes:val('scheduleNotes')
+  };
+
+  paymentOrganizerBackgroundSave_(
+    'Payment installment',
+    'payment-schedule:'+(id||'new:'+cabinId),
+    'savePaymentScheduleItem',
+    payload,
+    'Payment installment saved'
+  );
+};
+
+deletePaymentScheduleNow_=function(id){
+  paymentOrganizerBackgroundSave_(
+    'Payment installment',
+    'payment-schedule:'+id,
+    'deletePaymentScheduleItem',
+    {id:id},
+    'Payment installment deleted'
+  );
+};
+
+renderPaymentScheduleRows_=function(cabinId){
+  const schedule=paymentScheduleForCabin_(cabinId);
+  const payments=paymentsForCabin_(cabinId);
+  const organizer=paymentOrganizerUi_();
+
+  if(!schedule.length){
+    return `<div class="payment-empty-state"><strong>No installments scheduled yet.</strong><span>${organizer?'Add deposits, interim payments, final balance dates, or reimbursement deadlines.':'The Organizer has not added scheduled installments yet.'}</span></div>`;
+  }
+
+  return `<div class="payment-schedule-list">
+    ${schedule.map(function(row){
+      const status=paymentScheduleStatus_(row,payments);
+      const expectedId=String(row['Expected Payer Traveler ID']||'');
+      const payer=expectedId?paymentTravelerName_(expectedId):'Any traveler';
+      const canPay=Boolean(currentTravelerId) && (!expectedId||expectedId===currentTravelerId||organizer);
+      return `<article class="payment-schedule-row ${status.status==='Overdue'?'is-overdue':''}">
+        <div class="payment-schedule-date"><span>${esc(paymentDateLabel_(row['Due Date']))}</span><small>${esc(status.status)}</small></div>
+        <div class="payment-schedule-main"><strong>${esc(row.Label||'Booking payment')}</strong><span>${esc(payer)} → ${esc(paymentRecipientLabel_(row,'Recipient'))}</span>${row.Notes?`<small>${esc(row.Notes)}</small>`:''}</div>
+        <div class="payment-schedule-amount"><strong>${paymentMoney_(row['Amount Due'])}</strong><span>${paymentMoney_(status.paid)} paid</span>${status.remaining>0.005?`<small>${paymentMoney_(status.remaining)} remaining</small>`:'<small>Complete</small>'}</div>
+        <div class="payment-row-actions">
+          ${canPay&&status.remaining>.005?`<button type="button" class="tiny" onclick="openBookingPaymentForm_('${cabinId}','','${row['Schedule ID']}')">Make payment</button>`:''}
+          ${organizer?`<button class="ghost tiny" type="button" onclick="openPaymentScheduleForm_('${cabinId}','${row['Schedule ID']}')">Edit</button><button class="ghost tiny" type="button" onclick="confirmDeletePaymentSchedule_('${row['Schedule ID']}')">Delete</button>`:''}
+        </div>
+      </article>`;
+    }).join('')}
+  </div>`;
+};
+
+renderPaymentHistory_=function(cabinId){
+  const payments=paymentsForCabin_(cabinId);
+  const schedule=paymentScheduleForCabin_(cabinId);
+  const organizer=paymentOrganizerUi_();
+  if(!payments.length){
+    return `<div class="payment-empty-state"><strong>No payments recorded yet.</strong><span>Each traveler can record their own payment here as soon as money is sent.</span></div>`;
+  }
+
+  return `<div class="payment-history-list">
+    ${payments.map(function(row){
+      const linked=schedule.find(function(item){return item['Schedule ID']===row['Schedule ID'];});
+      const payerId=String(row['Paid By Traveler ID']||'');
+      const payer=paymentTravelerName_(payerId);
+      const canEdit=organizer||payerId===currentTravelerId;
+      return `<article class="payment-history-row ${payerId===currentTravelerId?'is-current':''}">
+        <div class="payment-history-main"><strong>${esc(payer)} → ${esc(paymentRecipientLabel_(row,'Paid To'))}</strong><span>${esc(paymentDateLabel_(row['Payment Date']))}${linked?' · '+esc(linked.Label||'Scheduled payment'):''}</span>${row.Notes?`<small>${esc(row.Notes)}</small>`:''}</div>
+        <div class="payment-history-amount"><strong>${paymentMoney_(row.Amount)}</strong><small>${String(row['Paid To Type']||'Agency')==='Agency'?'Toward booking':'Reimbursement'}</small></div>
+        <div class="payment-row-actions">${canEdit?`<button class="ghost tiny" type="button" onclick="openBookingPaymentForm_('${cabinId}','${row['Payment ID']}','')">Edit</button><button class="ghost tiny" type="button" onclick="confirmDeleteBookingPayment_('${row['Payment ID']}')">Delete</button>`:''}</div>
+      </article>`;
+    }).join('')}
+  </div>`;
+};
+
+function paymentFullAmountFor_(cabinId,payerId,scheduleId,editingPaymentId){
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  if(!cabin) return {amount:0,label:'No balance available'};
+
+  if(scheduleId){
+    const schedule=paymentScheduleForCabin_(cabinId).find(function(row){return row['Schedule ID']===scheduleId;});
+    if(schedule){
+      const otherPaid=paymentsForCabin_(cabinId)
+        .filter(function(row){return row['Schedule ID']===scheduleId && row['Payment ID']!==editingPaymentId;})
+        .reduce(function(sum,row){return sum+Number(row.Amount||0);},0);
+      return {
+        amount:Math.max(0,Number(schedule['Amount Due']||0)-otherPaid),
+        label:'Pay remaining installment balance'
+      };
+    }
+  }
+
+  const expected=paymentExpectedShareForTraveler_(cabin,payerId);
+  if(expected>0){
+    return {
+      amount:Math.max(0,expected-paymentTravelerPaidTotal_(cabinId,payerId,editingPaymentId)),
+      label:'Pay remaining traveler share'
+    };
+  }
+
+  const summary=paymentSummary_(cabin);
+  const existing=editingPaymentId
+    ? paymentsForCabin_(cabinId).find(function(row){return row['Payment ID']===editingPaymentId;})
+    : null;
+  const credit=existing&&String(existing['Paid To Type']||'Agency')==='Agency'?Number(existing.Amount||0):0;
+  return {
+    amount:Math.max(0,summary.remaining+credit),
+    label:'Pay remaining booking balance'
+  };
+}
+
+openBookingPaymentForm_=function(cabinId,id,presetScheduleId){
+  paymentEditingPaymentIdV2_=String(id||'');
+  const row=id?(paymentState_.payments||[]).find(function(item){return item['Payment ID']===id;}):null;
+  const organizer=paymentOrganizerUi_();
+  if(row && !organizer && String(row['Paid By Traveler ID']||'')!==String(currentTravelerId||'')){
+    toast('You can only edit payments you made yourself.',true);
+    return;
+  }
+
+  const plan=paymentPlan_(cabinId);
+  let schedule=paymentScheduleForCabin_(cabinId);
+  if(!organizer){
+    schedule=schedule.filter(function(item){
+      const expected=String(item['Expected Payer Traveler ID']||'');
+      return !expected||expected===String(currentTravelerId||'');
+    });
+  }
+  const travelers=activePaymentTravelers_();
+  const selectedScheduleId=String((row&&row['Schedule ID'])||presetScheduleId||'');
+  const selectedSchedule=schedule.find(function(item){return item['Schedule ID']===selectedScheduleId;})||null;
+  const defaultPayer=row
+    ? String(row['Paid By Traveler ID']||'')
+    : String((selectedSchedule&&selectedSchedule['Expected Payer Traveler ID'])||currentTravelerId||'');
+  const recipientType=row?String(row['Paid To Type']||'Agency'):(selectedSchedule?String(selectedSchedule['Recipient Type']||'Agency'):'Agency');
+  const agency=row?row['Paid To Name']:(selectedSchedule?selectedSchedule['Recipient Name']:(plan?plan['Agency Name']:''));
+  const full=paymentFullAmountFor_(cabinId,defaultPayer,selectedScheduleId,id||'');
+
+  openModal(`<div class="payment-entry-editor">
+    <p class="eyebrow">PAYMENT LEDGER</p>
+    <h2>${row?'Update your payment':'Record payment'}</h2>
+    <form class="form-grid" onsubmit="saveBookingPaymentForm_(event,'${cabinId}','${id||''}')">
+      <label class="wide"><span>Apply to scheduled installment (optional)</span><select id="paymentScheduleId" onchange="syncBookingPaymentSchedule_('${cabinId}')"><option value="">Not tied to an installment</option>${schedule.map(function(item){return `<option value="${escAttr(item['Schedule ID'])}" ${item['Schedule ID']===selectedScheduleId?'selected':''}>${esc(item.Label||'Payment')} · ${esc(paymentDateLabel_(item['Due Date']))} · ${paymentMoney_(item['Amount Due'])}</option>`;}).join('')}</select></label>
+      ${organizer
+        ? `<label><span>Paid by</span><select id="paymentPaidBy" onchange="syncPaymentAmountMode_('${cabinId}','${id||''}')"><option value="">Choose traveler</option>${travelers.map(function(traveler){const tid=traveler['Traveler ID'];return `<option value="${escAttr(tid)}" ${tid===defaultPayer?'selected':''}>${esc(traveler.Name||'Traveler')}</option>`;}).join('')}</select></label>`
+        : `<label><span>Paid by</span><input value="${escAttr(paymentTravelerName_(defaultPayer))}" disabled><input id="paymentPaidBy" type="hidden" value="${escAttr(defaultPayer)}"></label>`}
+      <label class="wide"><span>Amount option</span><div class="payment-amount-options">
+        <label><input type="radio" name="paymentAmountMode" value="manual" ${row?'checked':''} onchange="syncPaymentAmountMode_('${cabinId}','${id||''}')"><span>Enter a specific amount</span></label>
+        <label><input type="radio" name="paymentAmountMode" value="full" ${row?'':'checked'} onchange="syncPaymentAmountMode_('${cabinId}','${id||''}')"><span>Pay in full</span></label>
+      </div></label>
+      <label id="paymentManualAmountWrap"><span>Amount</span><input id="paymentAmount" type="number" min="0.01" step="0.01" value="${row?escAttr(row.Amount):''}"></label>
+      <div id="paymentFullAmountPreview" class="payment-full-preview"><span>${esc(full.label)}</span><strong>${paymentMoney_(full.amount)}</strong></div>
+      ${field('paymentDate','Payment date',row?String(row['Payment Date']||'').slice(0,10):paymentToday_(),'date',true)}
+      <div id="paymentManualRecipient" class="wide payment-recipient-grid">${paymentRecipientControls_('payment',cabinId,recipientType,row?row['Paid To Traveler ID']:'',agency)}</div>
+      ${area('paymentNotes','Notes',row?row.Notes:'')}
+      <div class="wide form-actions"><button>${row?'Save payment changes':'Record payment'}</button></div>
+    </form>
+  </div>`);
+  syncPaymentRecipientFields_('payment');
+  syncBookingPaymentSchedule_(cabinId);
+  syncPaymentAmountMode_(cabinId,id||'');
+};
+
+syncBookingPaymentSchedule_=function(cabinId){
+  syncBookingPaymentScheduleBeforeShares_(cabinId);
+  syncPaymentAmountMode_(cabinId,paymentEditingPaymentIdV2_);
+};
+
+function syncPaymentAmountMode_(cabinId,editingPaymentId){
+  const modeElement=document.querySelector('input[name="paymentAmountMode"]:checked');
+  const mode=modeElement?modeElement.value:'manual';
+  const manual=document.getElementById('paymentManualAmountWrap');
+  const preview=document.getElementById('paymentFullAmountPreview');
+  const payer=val('paymentPaidBy');
+  const scheduleId=val('paymentScheduleId');
+  const full=paymentFullAmountFor_(cabinId,payer,scheduleId,editingPaymentId||'');
+
+  if(manual) manual.classList.toggle('hidden',mode==='full');
+  if(preview){
+    preview.classList.toggle('hidden',mode!=='full');
+    preview.innerHTML=`<span>${esc(full.label)}</span><strong>${paymentMoney_(full.amount)}</strong>`;
+  }
+}
+
+function paymentSelfBackgroundSave_(label,key,method,payload,successText){
+  const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_(label,key):'';
+  closeModal();
+  google.script.run
+    .withSuccessHandler(function(data){
+      applyPaymentData_(data);
+      if(currentView==='payments') render();
+      if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,successText||label+' saved');
+      else toast(successText||label+' saved');
+    })
+    .withFailureHandler(function(error){
+      const message=error&&error.message?error.message:String(error);
+      if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,label+' could not be saved');
+      toast(message,true);
+    })[method](payload);
+}
+
+saveBookingPaymentForm_=function(event,cabinId,id){
+  event.preventDefault();
+  const payerId=val('paymentPaidBy');
+  if(!payerId){toast('Choose who made the payment.',true);return;}
+  const modeElement=document.querySelector('input[name="paymentAmountMode"]:checked');
+  const mode=modeElement?modeElement.value:'manual';
+  const full=paymentFullAmountFor_(cabinId,payerId,val('paymentScheduleId'),id||'');
+  const amount=mode==='full'?Number(full.amount||0):Number(val('paymentAmount')||0);
+  if(!(amount>0)){toast(mode==='full'?'There is no remaining balance to pay in full.':'Enter a payment amount.',true);return;}
+
+  const payload={
+    id:id||'',
+    cabinId:cabinId,
+    scheduleId:val('paymentScheduleId'),
+    paidByTravelerId:payerId,
+    amount:amount,
+    paymentDate:val('paymentDate'),
+    recipientType:val('paymentRecipientType'),
+    recipientTravelerId:val('paymentRecipientTravelerId'),
+    recipientName:val('paymentRecipientName'),
+    notes:val('paymentNotes')
+  };
+
+  if(paymentOrganizerUi_() && payerId!==String(currentTravelerId||'')){
+    paymentOrganizerBackgroundSave_('Payment','payment:'+(id||Date.now()),'saveBookingPayment',payload,'Payment saved');
+    return;
+  }
+
+  payload.deviceId=String(PWA_DEVICE_ID_||'');
+  paymentSelfBackgroundSave_('Payment','payment:'+(id||Date.now()),'saveBookingPayment',payload,'Payment saved');
+};
+
+deleteBookingPaymentNow_=function(id){
+  const row=(paymentState_.payments||[]).find(function(item){return item['Payment ID']===id;});
+  if(!row) return;
+  const payerId=String(row['Paid By Traveler ID']||'');
+
+  if(paymentOrganizerUi_() && payerId!==String(currentTravelerId||'')){
+    paymentOrganizerBackgroundSave_('Payment','payment:'+id,'deleteBookingPayment',{id:id},'Payment deleted');
+    return;
+  }
+
+  paymentSelfBackgroundSave_(
+    'Payment',
+    'payment:'+id,
+    'deleteBookingPayment',
+    {id:id,deviceId:String(PWA_DEVICE_ID_||'')},
+    'Payment deleted'
+  );
+};
+</script>

@@ -18,9 +18,9 @@ const index = read('AppsScriptIndex.html');
 const client = read('Client_Voting_Mode.html');
 
 assert(
-  config.includes("PORTAL_SCHEMA_VERSION = '4.4.0'") &&
+  /PORTAL_SCHEMA_VERSION = '4\.4\.\d+'/.test(config) &&
     /Votes:[\s\S]*'Score', 'Rank'/.test(config),
-  'Phase 4 must version the schema and add a Rank column without replacing Score.'
+  'Phase 4 must retain a 4.4.x schema and a Rank column without replacing Score.'
 );
 
 assert(

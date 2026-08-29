@@ -1,0 +1,376 @@
+<script>
+const paymentOptimisticQueue_={
+  running:false,
+  jobs:[],
+  lastServerData:null
+};
+
+function paymentOptimisticClone_(value){
+  return value===undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function paymentOptimisticId_(prefix){
+  let suffix='';
+  try{
+    if(window.crypto&&typeof window.crypto.getRandomValues==='function'){
+      const bytes=new Uint32Array(3);
+      window.crypto.getRandomValues(bytes);
+      suffix=Array.from(bytes).map(function(value){
+        return value.toString(36).toUpperCase();
+      }).join('');
+    }
+  }catch(error){}
+
+  if(!suffix){
+    suffix=(Date.now().toString(36)+Math.random().toString(36).slice(2)).toUpperCase();
+  }
+
+  suffix=suffix.replace(/[^A-Z0-9]/g,'').slice(0,30);
+  while(suffix.length<12) suffix+='0';
+  return String(prefix||'PAY')+'-'+suffix;
+}
+
+function paymentOptimisticReplaceById_(collection,idHeader,id,row){
+  const rows=Array.isArray(paymentState_[collection])?paymentState_[collection]:[];
+  const index=rows.findIndex(function(item){
+    return String(item[idHeader]||'')===String(id||'');
+  });
+
+  if(row===null){
+    if(index>=0) rows.splice(index,1);
+    return;
+  }
+
+  if(index>=0) rows[index]=row;
+  else rows.push(row);
+}
+
+function paymentOptimisticReplacePlan_(cabinId,row){
+  const rows=Array.isArray(paymentState_.plans)?paymentState_.plans:[];
+  const index=rows.findIndex(function(item){return item['Cabin ID']===cabinId;});
+  if(row===null){
+    if(index>=0) rows.splice(index,1);
+    return;
+  }
+  if(index>=0) rows[index]=row;
+  else rows.push(row);
+}
+
+function paymentOptimisticReplaceShares_(cabinId,rows){
+  const retained=(paymentState_.shares||[]).filter(function(item){
+    return item['Cabin ID']!==cabinId;
+  });
+  paymentState_.shares=retained.concat(rows||[]);
+}
+
+function paymentOptimisticRecipient_(cabinId,payload,schedule){
+  if(schedule){
+    return {
+      type:String(schedule['Recipient Type']||'Agency'),
+      travelerId:String(schedule['Recipient Traveler ID']||''),
+      name:String(schedule['Recipient Name']||'')
+    };
+  }
+
+  const type=String(payload.recipientType||'Agency')==='Traveler'?'Traveler':'Agency';
+  const travelerId=type==='Traveler'?String(payload.recipientTravelerId||''):'';
+  const plan=paymentPlan_(cabinId);
+  const name=type==='Traveler'
+    ? paymentTravelerName_(travelerId)
+    : String(payload.recipientName||(plan?plan['Agency Name']:'')||'');
+
+  return {type:type,travelerId:travelerId,name:name};
+}
+
+function paymentOptimisticApply_(method,payload){
+  payload=payload||{};
+  const now=new Date().toISOString();
+
+  if(method==='saveBookingPlan'){
+    const cabinId=String(payload.cabinId||'');
+    const previous=paymentOptimisticClone_(paymentPlan_(cabinId));
+    const previousShares=Array.isArray(payload.shares)
+      ? paymentOptimisticClone_(paymentSavedShares_(cabinId))
+      : null;
+    const existing=previous||{};
+    const row={
+      'Booking Plan ID':String(existing['Booking Plan ID']||paymentOptimisticId_('BOOK')),
+      'Cabin ID':cabinId,
+      'Booking Traveler IDs':(payload.bookingTravelerIds||[]).join(','),
+      'Agency Name':String(payload.agencyName||''),
+      'Booking Total':Number(payload.bookingTotal||0),
+      'Split Basis':String(payload.splitBasis||'Adult')==='Bedroom'?'Bedroom':'Adult',
+      'Notes':String(payload.notes||''),
+      'Created At':existing['Created At']||now,
+      'Updated At':now
+    };
+    paymentOptimisticReplacePlan_(cabinId,row);
+
+    if(Array.isArray(payload.shares)){
+      paymentOptimisticReplaceShares_(cabinId,payload.shares.map(function(item){
+        return {
+          'Share ID':paymentOptimisticId_('SHARE'),
+          'Cabin ID':cabinId,
+          'Traveler ID':String(item.travelerId||''),
+          'Split Basis':row['Split Basis'],
+          'Source Total':Number(payload.bookingTotal||0),
+          'Calculated Share':Number(item.calculatedShare||0),
+          'Adjusted Share':Number(item.adjustedShare||0),
+          'Notes':String(item.notes||''),
+          'Created At':now,
+          'Updated At':now
+        };
+      }));
+    }
+
+    return function(){
+      paymentOptimisticReplacePlan_(cabinId,previous);
+      if(previousShares!==null) paymentOptimisticReplaceShares_(cabinId,previousShares);
+    };
+  }
+
+  if(method==='savePaymentShares'){
+    const cabinId=String(payload.cabinId||'');
+    const previousShares=paymentOptimisticClone_(paymentSavedShares_(cabinId));
+    const previousPlan=paymentOptimisticClone_(paymentPlan_(cabinId));
+    const basis=String(payload.splitBasis||'Adult')==='Bedroom'?'Bedroom':'Adult';
+
+    paymentOptimisticReplaceShares_(cabinId,(payload.shares||[]).map(function(item){
+      return {
+        'Share ID':paymentOptimisticId_('SHARE'),
+        'Cabin ID':cabinId,
+        'Traveler ID':String(item.travelerId||''),
+        'Split Basis':basis,
+        'Source Total':Number(payload.sourceTotal||0),
+        'Calculated Share':Number(item.calculatedShare||0),
+        'Adjusted Share':Number(item.adjustedShare||0),
+        'Notes':String(item.notes||''),
+        'Created At':now,
+        'Updated At':now
+      };
+    }));
+
+    if(previousPlan){
+      paymentOptimisticReplacePlan_(cabinId,Object.assign({},previousPlan,{
+        'Split Basis':basis,
+        'Updated At':now
+      }));
+    }
+
+    return function(){
+      paymentOptimisticReplaceShares_(cabinId,previousShares);
+      paymentOptimisticReplacePlan_(cabinId,previousPlan);
+    };
+  }
+
+  if(method==='savePaymentScheduleItem'){
+    const isNew=!String(payload.id||'');
+    if(isNew&&!payload.clientId) payload.clientId=paymentOptimisticId_('DUE');
+    const id=String(payload.id||payload.clientId||'');
+    const previous=(paymentState_.schedule||[]).find(function(item){
+      return String(item['Schedule ID']||'')===id;
+    })||null;
+    const previousCopy=paymentOptimisticClone_(previous);
+    const recipient=paymentOptimisticRecipient_(payload.cabinId,payload,null);
+    const row={
+      'Schedule ID':id,
+      'Cabin ID':String(payload.cabinId||''),
+      'Label':String(payload.label||'Booking payment'),
+      'Due Date':String(payload.dueDate||''),
+      'Amount Due':Number(payload.amountDue||0),
+      'Expected Payer Traveler ID':String(payload.expectedPayerTravelerId||''),
+      'Recipient Type':recipient.type,
+      'Recipient Traveler ID':recipient.travelerId,
+      'Recipient Name':recipient.name,
+      'Notes':String(payload.notes||''),
+      'Created At':previous?previous['Created At']:now,
+      'Updated At':now
+    };
+    paymentOptimisticReplaceById_('schedule','Schedule ID',id,row);
+    return function(){
+      paymentOptimisticReplaceById_('schedule','Schedule ID',id,previousCopy);
+    };
+  }
+
+  if(method==='deletePaymentScheduleItem'){
+    const id=String(payload.id||'');
+    const previous=(paymentState_.schedule||[]).find(function(item){
+      return String(item['Schedule ID']||'')===id;
+    })||null;
+    const previousCopy=paymentOptimisticClone_(previous);
+    paymentOptimisticReplaceById_('schedule','Schedule ID',id,null);
+    return function(){
+      if(previousCopy) paymentOptimisticReplaceById_('schedule','Schedule ID',id,previousCopy);
+    };
+  }
+
+  if(method==='saveBookingPayment'){
+    const isNew=!String(payload.id||'');
+    if(isNew&&!payload.clientId) payload.clientId=paymentOptimisticId_('PAY');
+    const id=String(payload.id||payload.clientId||'');
+    const previous=(paymentState_.payments||[]).find(function(item){
+      return String(item['Payment ID']||'')===id;
+    })||null;
+    const previousCopy=paymentOptimisticClone_(previous);
+    const scheduleId=String(payload.scheduleId||'');
+    const schedule=scheduleId
+      ? (paymentState_.schedule||[]).find(function(item){return item['Schedule ID']===scheduleId;})||null
+      : null;
+    const recipient=paymentOptimisticRecipient_(payload.cabinId,payload,schedule);
+    const row={
+      'Payment ID':id,
+      'Cabin ID':String(payload.cabinId||''),
+      'Schedule ID':scheduleId,
+      'Paid By Traveler ID':String(payload.paidByTravelerId||''),
+      'Paid To Type':recipient.type,
+      'Paid To Traveler ID':recipient.travelerId,
+      'Paid To Name':recipient.name,
+      'Amount':Number(payload.amount||0),
+      'Payment Date':String(payload.paymentDate||''),
+      'Notes':String(payload.notes||''),
+      'Created At':previous?previous['Created At']:now,
+      'Updated At':now
+    };
+    paymentOptimisticReplaceById_('payments','Payment ID',id,row);
+    return function(){
+      paymentOptimisticReplaceById_('payments','Payment ID',id,previousCopy);
+    };
+  }
+
+  if(method==='deleteBookingPayment'){
+    const id=String(payload.id||'');
+    const previous=(paymentState_.payments||[]).find(function(item){
+      return String(item['Payment ID']||'')===id;
+    })||null;
+    const previousCopy=paymentOptimisticClone_(previous);
+    paymentOptimisticReplaceById_('payments','Payment ID',id,null);
+    return function(){
+      if(previousCopy) paymentOptimisticReplaceById_('payments','Payment ID',id,previousCopy);
+    };
+  }
+
+  return function(){};
+}
+
+function paymentOptimisticRender_(){
+  paymentState_.loaded=true;
+  paymentState_.loading=false;
+  paymentState_.lastLoaded=Date.now();
+  if(currentView==='payments') render();
+}
+
+function paymentOptimisticQueueWrite_(label,key,method,payload,successText){
+  const rollback=paymentOptimisticApply_(method,payload);
+  const saveId=typeof beginBackgroundSave_==='function'
+    ? beginBackgroundSave_(label,key)
+    : '';
+
+  closeModal();
+  paymentOptimisticRender_();
+
+  paymentOptimisticQueue_.jobs.push({
+    label:label,
+    key:key,
+    method:method,
+    payload:payload,
+    successText:successText,
+    saveId:saveId,
+    rollback:rollback
+  });
+
+  paymentOptimisticPump_();
+}
+
+function paymentOptimisticPump_(){
+  if(paymentOptimisticQueue_.running||!paymentOptimisticQueue_.jobs.length) return;
+
+  const job=paymentOptimisticQueue_.jobs[0];
+  paymentOptimisticQueue_.running=true;
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      paymentOptimisticQueue_.running=false;
+      paymentOptimisticQueue_.jobs.shift();
+      paymentOptimisticQueue_.lastServerData=data||paymentOptimisticQueue_.lastServerData;
+
+      if(job.saveId&&typeof completeBackgroundSave_==='function'){
+        completeBackgroundSave_(job.saveId,job.successText||job.label+' saved');
+      }else{
+        toast(job.successText||job.label+' saved');
+      }
+
+      if(paymentOptimisticQueue_.jobs.length){
+        paymentOptimisticPump_();
+        return;
+      }
+
+      if(paymentOptimisticQueue_.lastServerData){
+        applyPaymentData_(paymentOptimisticQueue_.lastServerData);
+        paymentOptimisticQueue_.lastServerData=null;
+        paymentOptimisticRender_();
+      }
+    })
+    .withFailureHandler(function(error){
+      paymentOptimisticQueue_.running=false;
+      const failedJobs=paymentOptimisticQueue_.jobs.splice(0);
+      paymentOptimisticQueue_.lastServerData=null;
+
+      for(let index=failedJobs.length-1;index>=0;index--){
+        try{failedJobs[index].rollback();}catch(rollbackError){}
+      }
+
+      failedJobs.forEach(function(item){
+        if(item.saveId&&typeof failBackgroundSave_==='function'){
+          failBackgroundSave_(item.saveId,error,item.label+' could not be saved');
+        }
+      });
+
+      if(typeof organizerAuthError_==='function'&&organizerAuthError_(error)){
+        saveOrganizerSession_(null);
+      }
+
+      paymentOptimisticRender_();
+      toast(
+        (error&&error.message?error.message:String(error))+
+        (failedJobs.length>1?' Later unsaved payment changes were also rolled back.':''),
+        true
+      );
+
+      setTimeout(function(){
+        if(!paymentOptimisticQueue_.running&&!paymentOptimisticQueue_.jobs.length){
+          loadPaymentData_(true);
+        }
+      },400);
+    })[job.method](job.payload);
+}
+
+function paymentOrganizerSessionReady_(){
+  return Boolean(
+    organizerSession_&&
+    organizerSession_.token&&
+    new Date(organizerSession_.expiresAt).getTime()>Date.now()
+  );
+}
+
+paymentOrganizerBackgroundSave_=function(label,key,method,payload,successText){
+  const invoke=function(){
+    paymentOptimisticQueueWrite_(
+      label,
+      key,
+      method,
+      organizerAuthorizationValues_(payload),
+      successText
+    );
+  };
+
+  // A still-live client session can go straight to the optimistic update.
+  // Server-side authorization remains the security boundary; a revoked or
+  // invalid session rolls the local change back through the failure handler.
+  if(paymentOrganizerSessionReady_()) invoke();
+  else withOrganizerAuthorization_(invoke);
+};
+
+paymentSelfBackgroundSave_=function(label,key,method,payload,successText){
+  paymentOptimisticQueueWrite_(label,key,method,payload,successText);
+};
+</script>

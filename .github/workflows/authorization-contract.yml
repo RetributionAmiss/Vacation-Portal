@@ -36,3 +36,5 @@ jobs:
         run: node tests/ui_polish_contract.test.js
       - name: Run bedroom planner draft contracts
         run: node tests/bedroom_planner_draft_contract.test.js
+      - name: Run payment schedule contracts
+        run: node tests/payment_schedule_contract.test.js

@@ -1,0 +1,49 @@
+<script>
+const renderBeforePayments_=render;
+render=function(){
+  if(currentView!=='payments'){
+    return renderBeforePayments_.apply(this,arguments);
+  }
+
+  if(
+    typeof bedroomPlannerDraftCabinId_!=='undefined' &&
+    bedroomPlannerDraftCabinId_
+  ){
+    return renderBeforePayments_.apply(this,arguments);
+  }
+
+  document.querySelectorAll('#mainNav button').forEach(function(button){
+    button.classList.toggle('active',button.dataset.view==='payments');
+  });
+
+  const root=document.getElementById('viewRoot');
+  if(root) root.innerHTML=renderPayments();
+
+  if(typeof applyUiPolish_==='function') applyUiPolish_();
+};
+
+const openMobileSectionMenuBeforePayments_=openMobileSectionMenu_;
+openMobileSectionMenu_=function(){
+  openMobileSectionMenuBeforePayments_();
+
+  const menu=document.querySelector('#modal .mobile-section-menu');
+  if(!menu||menu.querySelector('[data-payment-menu="1"]')) return;
+
+  const button=document.createElement('button');
+  button.type='button';
+  button.dataset.paymentMenu='1';
+  button.className='mobile-section-menu-item'+(currentView==='payments'?' active':'');
+  button.setAttribute('onclick',"selectMobileSection_('payments')");
+  button.innerHTML=`
+    <span class="mobile-section-icon">💳</span>
+    <span>Payments</span>
+    ${currentView==='payments'?'<span class="mobile-section-current">Current</span>':''}`;
+
+  const installButton=Array.from(menu.querySelectorAll('.mobile-section-menu-item')).find(function(item){
+    return String(item.getAttribute('onclick')||'').indexOf("'appSetup'")>=0;
+  });
+
+  if(installButton) menu.insertBefore(button,installButton);
+  else menu.appendChild(button);
+};
+</script>
