@@ -1,14 +1,153 @@
 <script>
+const PAYMENT_SNAPSHOT_KEY_='vacationPortalPaymentSnapshotV1';
+let paymentApplyingSnapshot_=false;
+let paymentPendingHostSnapshot_=null;
+
+paymentState_.serverTime=paymentState_.serverTime||'';
+paymentState_.fromSnapshot=Boolean(paymentState_.fromSnapshot);
+
+function paymentSnapshotTripKey_(){
+  if(!DATA||!DATA.trip) return '';
+  return [
+    DATA.trip['Trip Name']||'',
+    DATA.trip.Destination||'',
+    DATA.trip['Start Date']||'',
+    DATA.trip['End Date']||''
+  ].map(function(value){return String(value||'').trim();}).join('|');
+}
+
+function paymentSnapshotValid_(snapshot){
+  if(!snapshot||typeof snapshot!=='object') return false;
+  if(snapshot.tripKey!==paymentSnapshotTripKey_()) return false;
+  return Boolean(
+    Array.isArray(snapshot.plans) &&
+    Array.isArray(snapshot.shares) &&
+    Array.isArray(snapshot.schedule) &&
+    Array.isArray(snapshot.payments)
+  );
+}
+
+function paymentSnapshotFromState_(){
+  return {
+    tripKey:paymentSnapshotTripKey_(),
+    plans:(paymentState_.plans||[]).map(function(row){return Object.assign({},row);}),
+    shares:(paymentState_.shares||[]).map(function(row){return Object.assign({},row);}),
+    schedule:(paymentState_.schedule||[]).map(function(row){return Object.assign({},row);}),
+    payments:(paymentState_.payments||[]).map(function(row){return Object.assign({},row);}),
+    serverTime:String(paymentState_.serverTime||''),
+    cachedAt:Date.now()
+  };
+}
+
+function paymentStoreSnapshot_(snapshot){
+  if(!snapshot||!snapshot.tripKey) return;
+
+  try{
+    localStorage.setItem(PAYMENT_SNAPSHOT_KEY_,JSON.stringify(snapshot));
+  }catch(error){}
+
+  try{
+    if(window.parent&&window.parent!==window){
+      window.parent.postMessage({
+        type:'vacation-portal-save-payment-snapshot',
+        snapshot:snapshot
+      },'*');
+    }
+  }catch(error){}
+}
+
+function paymentReadLocalSnapshot_(){
+  try{
+    return JSON.parse(localStorage.getItem(PAYMENT_SNAPSHOT_KEY_)||'null');
+  }catch(error){
+    return null;
+  }
+}
+
+function paymentApplySnapshot_(snapshot){
+  if(!paymentSnapshotValid_(snapshot)) return false;
+
+  paymentApplyingSnapshot_=true;
+  try{
+    applyPaymentData_({
+      plans:snapshot.plans,
+      shares:snapshot.shares,
+      schedule:snapshot.schedule,
+      payments:snapshot.payments,
+      serverTime:String(snapshot.serverTime||'')
+    });
+  }finally{
+    paymentApplyingSnapshot_=false;
+  }
+
+  paymentState_.lastLoaded=Number(snapshot.cachedAt||0);
+  paymentState_.fromSnapshot=true;
+  return true;
+}
+
+function paymentRestoreSnapshot_(){
+  if(paymentState_.loaded) return true;
+
+  if(paymentPendingHostSnapshot_&&paymentApplySnapshot_(paymentPendingHostSnapshot_)){
+    paymentPendingHostSnapshot_=null;
+    return true;
+  }
+
+  return paymentApplySnapshot_(paymentReadLocalSnapshot_());
+}
+
+function paymentRequestHostSnapshot_(){
+  try{
+    if(window.parent&&window.parent!==window){
+      window.parent.postMessage({
+        type:'vacation-portal-request-payment-snapshot'
+      },'*');
+    }
+  }catch(error){}
+}
+
+const applyPaymentDataBeforePerformance_=applyPaymentData_;
+applyPaymentData_=function(data){
+  data=data||{};
+
+  const incomingTime=Date.parse(String(data.serverTime||''))||0;
+  const currentTime=Date.parse(String(paymentState_.serverTime||''))||0;
+
+  // A short server cache may legitimately return an older snapshot while a
+  // newer optimistic write has already been confirmed. Never let that older
+  // response rewind the visible ledger.
+  if(incomingTime&&currentTime&&incomingTime<currentTime){
+    paymentState_.loading=false;
+    return false;
+  }
+
+  applyPaymentDataBeforePerformance_(data);
+  paymentState_.serverTime=String(data.serverTime||paymentState_.serverTime||'');
+  paymentState_.fromSnapshot=Boolean(paymentApplyingSnapshot_);
+
+  if(!paymentApplyingSnapshot_){
+    paymentStoreSnapshot_(paymentSnapshotFromState_());
+  }
+
+  return true;
+};
+
 function paymentDataIsFresh_(){
   return Boolean(
     paymentState_.loaded &&
+    !paymentState_.fromSnapshot &&
     Date.now()-Number(paymentState_.lastLoaded||0)<15000
   );
 }
 
 loadPaymentData_=function(force){
+  if(!paymentState_.loaded){
+    const restored=paymentRestoreSnapshot_();
+    if(restored&&currentView==='payments') render();
+  }
+
   if(paymentState_.loading) return;
-  if(!force && paymentDataIsFresh_()) return;
+  if(!force&&paymentDataIsFresh_()) return;
 
   paymentState_.loading=true;
 
@@ -19,31 +158,114 @@ loadPaymentData_=function(force){
     })
     .withFailureHandler(function(error){
       paymentState_.loading=false;
-      toast(
-        'Payment schedule could not be loaded: '+
-        (error&&error.message?error.message:String(error)),
-        true
-      );
+
+      // A durable snapshot is still useful if the network refresh fails. Only
+      // interrupt the traveler when there is no payment data at all.
+      if(!paymentState_.loaded){
+        toast(
+          'Payment schedule could not be loaded: '+
+          (error&&error.message?error.message:String(error)),
+          true
+        );
+      }
+
       if(currentView==='payments') render();
     })
-    .getPaymentDataFast();
+    .getPaymentDataFast(Boolean(force));
 };
 
-let paymentPrefetchTimer_=null;
+const renderPaymentsBeforePerformance_=renderPayments;
+renderPayments=function(){
+  if(!paymentState_.loaded){
+    paymentRestoreSnapshot_();
+  }
 
-function prefetchPaymentDataWhenReady_(){
-  if(paymentState_.loaded || paymentState_.loading) return;
+  const html=renderPaymentsBeforePerformance_();
 
-  if(DATA && DATA.deferredLoaded){
-    loadPaymentData_(false);
+  if(paymentState_.loaded&&paymentState_.fromSnapshot&&!paymentState_.loading){
+    setTimeout(function(){loadPaymentData_(true);},0);
+  }
+
+  if(!paymentState_.loaded){
+    return html.replace(
+      '<strong>Loading payment schedule…</strong>',
+      '<strong>Opening payment planner…</strong><small>Fetching the first payment snapshot. Future opens use the saved snapshot immediately.</small>'
+    );
+  }
+
+  if(paymentState_.fromSnapshot||paymentState_.loading){
+    return html.replace(
+      '<section class="view payment-view">',
+      '<section class="view payment-view"><div class="payment-snapshot-status" role="status">Showing saved payment data while the latest sheet values sync in the background…</div>'
+    );
+  }
+
+  return html;
+};
+
+// Replace the original deferred-data call with one response that already
+// carries a payment snapshot. This preserves the fast startup endpoint while
+// eliminating the separate post-startup payment prefetch round-trip.
+loadDeferredPortalData_=function(){
+  if(portalDeferredLoadBusy_) return;
+
+  portalDeferredLoadBusy_=true;
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      portalDeferredLoadBusy_=false;
+
+      const paymentData=data&&data.paymentData?data.paymentData:null;
+      if(data&&Object.prototype.hasOwnProperty.call(data,'paymentData')){
+        delete data.paymentData;
+      }
+
+      DATA=data;
+      portalDeltaSince=data.serverTime||portalDeltaSince;
+      portalFastStartFromSnapshot_=false;
+
+      if(paymentData){
+        applyPaymentData_(paymentData);
+      }
+
+      hydrateHeader();
+      render();
+      setFastStartStatus_(false);
+      scheduleRentalPolling_();
+    })
+    .withFailureHandler(function(error){
+      portalDeferredLoadBusy_=false;
+
+      setFastStartStatus_(
+        true,
+        'Dashboard is ready. Some detailed sections could not finish loading.'
+      );
+    })
+    .getPortalDeferredDataWithPayments();
+};
+
+window.addEventListener('message',function(event){
+  const data=event.data||{};
+
+  if(data.type==='vacation-portal-payment-snapshot'){
+    const snapshot=data.snapshot||null;
+
+    if(!DATA||!DATA.trip){
+      paymentPendingHostSnapshot_=snapshot;
+      return;
+    }
+
+    if(!paymentState_.loaded&&paymentApplySnapshot_(snapshot)){
+      if(currentView==='payments') render();
+      loadPaymentData_(true);
+    }
     return;
   }
 
-  paymentPrefetchTimer_=setTimeout(prefetchPaymentDataWhenReady_,700);
-}
+  if(data.type==='vacation-portal-host-ready'){
+    paymentRequestHostSnapshot_();
+  }
+});
 
-(function schedulePaymentPrefetch_(){
-  if(paymentPrefetchTimer_) clearTimeout(paymentPrefetchTimer_);
-  paymentPrefetchTimer_=setTimeout(prefetchPaymentDataWhenReady_,1400);
-})();
+paymentRequestHostSnapshot_();
 </script>
