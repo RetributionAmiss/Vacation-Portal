@@ -1,0 +1,484 @@
+<script>
+const renderDashboardBeforeP1_=renderDashboard;
+const renderBeforeP1Navigation_=render;
+const applyPaymentDataBeforeP1_=
+  typeof applyPaymentData_==='function' ? applyPaymentData_ : null;
+let p1DashboardPaymentRequested_=false;
+
+const P1_NAV_GROUPS_=[
+  {id:'home',label:'Home',defaultView:'dashboard',views:['dashboard']},
+  {id:'rental',label:'Rental',defaultView:'rentals',views:['rentals']},
+  {id:'stay',label:'Stay',defaultView:'rooms',views:['rooms','travelers']},
+  {id:'plan',label:'Plan',defaultView:'itinerary',views:['itinerary','meals','groceries']},
+  {id:'money',label:'Money',defaultView:'payments',views:['payments','budget']},
+  {id:'organizer',label:'Organizer',defaultView:'settings',views:['settings']}
+];
+
+const P1_VIEW_LABELS_={
+  dashboard:'Home',
+  rentals:'Rentals',
+  rooms:'Room Planner',
+  travelers:'Travelers',
+  itinerary:'Itinerary',
+  meals:'Meals',
+  groceries:'Grocery List',
+  payments:'Payments',
+  budget:'Budget',
+  settings:'Trip Settings'
+};
+
+function p1OrganizerUi_(){
+  return typeof isJustinCurrentTraveler_==='function' && isJustinCurrentTraveler_();
+}
+
+function p1ViewAllowed_(view){
+  if(view==='travelers'||view==='settings') return p1OrganizerUi_();
+  return true;
+}
+
+function p1GroupForView_(view){
+  return P1_NAV_GROUPS_.find(function(group){
+    return group.views.indexOf(view)>=0;
+  })||P1_NAV_GROUPS_[0];
+}
+
+function p1VisibleViewsForGroup_(group){
+  return group.views.filter(p1ViewAllowed_);
+}
+
+function p1EnsureNavigationShell_(){
+  const legacy=document.getElementById('mainNav');
+  if(!legacy) return;
+
+  if(!document.getElementById('p1NavigationShell')){
+    const shell=document.createElement('div');
+    shell.id='p1NavigationShell';
+    shell.className='p1-navigation-shell';
+    shell.innerHTML=`
+      <nav id="p1PrimaryNav" class="p1-primary-nav" aria-label="Primary portal navigation"></nav>
+      <nav id="p1SecondaryNav" class="p1-secondary-nav hidden" aria-label="Section navigation"></nav>`;
+    legacy.parentNode.insertBefore(shell,legacy);
+  }
+
+  document.body.classList.add('p1-navigation-ready');
+}
+
+function p1NavigateGroup_(groupId){
+  const group=P1_NAV_GROUPS_.find(function(item){return item.id===groupId;});
+  if(!group) return;
+
+  const visible=p1VisibleViewsForGroup_(group);
+  if(!visible.length) return;
+
+  const target=visible.indexOf(currentView)>=0
+    ? currentView
+    : (visible.indexOf(group.defaultView)>=0?group.defaultView:visible[0]);
+
+  navigate(target);
+}
+
+function p1NavigateView_(view){
+  if(!p1ViewAllowed_(view)) return;
+  navigate(view);
+}
+
+function p1SyncDesktopNavigation_(){
+  p1EnsureNavigationShell_();
+  const primary=document.getElementById('p1PrimaryNav');
+  const secondary=document.getElementById('p1SecondaryNav');
+  if(!primary||!secondary) return;
+
+  const activeGroup=p1GroupForView_(currentView);
+  const groups=P1_NAV_GROUPS_.filter(function(group){
+    return p1VisibleViewsForGroup_(group).length>0;
+  });
+
+  primary.innerHTML=groups.map(function(group){
+    const active=group.id===activeGroup.id;
+    return `<button type="button"
+      class="p1-primary-nav-button${active?' active':''}"
+      ${active?'aria-current="page"':''}
+      onclick="p1NavigateGroup_('${group.id}')">
+      ${esc(group.label)}
+    </button>`;
+  }).join('');
+
+  const views=p1VisibleViewsForGroup_(activeGroup);
+  if(views.length<=1){
+    secondary.classList.add('hidden');
+    secondary.innerHTML='';
+    return;
+  }
+
+  secondary.classList.remove('hidden');
+  secondary.innerHTML=views.map(function(view){
+    const active=view===currentView;
+    return `<button type="button"
+      class="p1-secondary-nav-button${active?' active':''}"
+      ${active?'aria-current="page"':''}
+      onclick="p1NavigateView_('${view}')">
+      ${esc(P1_VIEW_LABELS_[view]||view)}
+    </button>`;
+  }).join('');
+}
+
+function p1SyncMobileNavigation_(){
+  const mobile=document.querySelector('.mobile-simple-nav');
+  if(!mobile) return;
+
+  const group=p1GroupForView_(currentView);
+  const moreActive=['stay','organizer'].indexOf(group.id)>=0 || currentView==='budget';
+
+  mobile.classList.add('p1-mobile-nav');
+  mobile.innerHTML=`
+    <button type="button" class="${currentView==='dashboard'?'active':''}" onclick="p1NavigateView_('dashboard')">
+      <span class="p1-mobile-nav-icon" aria-hidden="true">⌂</span><span>Home</span>
+    </button>
+    <button type="button" class="${currentView==='rentals'?'active':''}" onclick="p1NavigateView_('rentals')">
+      <span class="p1-mobile-nav-icon" aria-hidden="true">◇</span><span>Rental</span>
+    </button>
+    <button type="button" class="${group.id==='plan'?'active':''}" onclick="p1NavigateGroup_('plan')">
+      <span class="p1-mobile-nav-icon" aria-hidden="true">▤</span><span>Plan</span>
+    </button>
+    <button type="button" class="${currentView==='payments'?'active':''}" onclick="p1NavigateView_('payments')">
+      <span class="p1-mobile-nav-icon" aria-hidden="true">$</span><span>Payments</span>
+    </button>
+    <button type="button" class="${moreActive?'active':''}" onclick="openMobileSectionMenu_()">
+      <span class="p1-mobile-nav-icon" aria-hidden="true">•••</span><span>More</span>
+    </button>`;
+}
+
+function p1SyncNavigation_(){
+  p1SyncDesktopNavigation_();
+  p1SyncMobileNavigation_();
+}
+
+openMobileSectionMenu_=function(){
+  const organizer=p1OrganizerUi_();
+  const group=p1GroupForView_(currentView);
+
+  function item(view,label,detail){
+    const active=currentView===view;
+    return `<button type="button" class="p1-more-item${active?' active':''}"
+      onclick="selectMobileSection_('${view}')">
+      <span><strong>${esc(label)}</strong>${detail?`<small>${esc(detail)}</small>`:''}</span>
+      ${active?'<span class="p1-more-current">Current</span>':'<span aria-hidden="true">›</span>'}
+    </button>`;
+  }
+
+  openModal(`<div class="p1-more-menu">
+    <p class="eyebrow">VACATION PORTAL</p>
+    <h2>More</h2>
+    <p class="muted">Jump directly to another part of the trip.</p>
+
+    <section>
+      <h3>Stay</h3>
+      ${item('rooms','Room Planner','Bedrooms, assignments, and lodging split')}
+      ${organizer?item('travelers','Travelers','Traveler profiles and pricing preferences'):''}
+    </section>
+
+    <section>
+      <h3>Plan</h3>
+      ${item('itinerary','Itinerary','Activities and trip schedule')}
+      ${item('meals','Meals','Menus and meal assignments')}
+      ${item('groceries','Grocery List','Shopping and bring-from-home items')}
+    </section>
+
+    <section>
+      <h3>Money</h3>
+      ${item('payments','Payments','Booking schedule and payment history')}
+      ${item('budget','Budget','Shared trip costs and extras')}
+    </section>
+
+    ${organizer?`<section class="p1-more-organizer">
+      <h3>Organizer</h3>
+      ${item('settings','Trip Settings','Voting, notifications, and trip controls')}
+    </section>`:''}
+
+    <section>
+      <h3>App</h3>
+      <button type="button" class="p1-more-item" onclick="selectMobileSection_('appSetup')">
+        <span><strong>App setup</strong><small>Install the portal and configure notifications</small></span>
+        <span aria-hidden="true">›</span>
+      </button>
+    </section>
+  </div>`);
+};
+
+function p1TripCountdown_(){
+  const startText=String(DATA&&DATA.trip&&DATA.trip['Start Date']||'').slice(0,10);
+  const endText=String(DATA&&DATA.trip&&DATA.trip['End Date']||'').slice(0,10);
+  if(!startText) return {value:'Planning',label:'Trip countdown'};
+
+  const today=new Date();
+  const localToday=new Date(today.getFullYear(),today.getMonth(),today.getDate());
+  const start=new Date(startText+'T00:00:00');
+  const end=endText?new Date(endText+'T23:59:59'):null;
+  const dayMs=86400000;
+
+  if(localToday<start){
+    const days=Math.max(0,Math.ceil((start-localToday)/dayMs));
+    return {value:String(days),label:days===1?'day to go':'days to go'};
+  }
+
+  if(!end||today<=end){
+    const day=Math.max(1,Math.floor((localToday-start)/dayMs)+1);
+    return {value:'Day '+day,label:'of the vacation'};
+  }
+
+  return {value:'Complete',label:'Trip wrapped up'};
+}
+
+function p1VotingAction_(){
+  const stage=String(DATA.trip['Portal Stage']||'');
+  if(!/Voting/i.test(stage)||!currentTravelerId) return null;
+
+  const round=String(DATA.trip['Voting Round']||'Preliminary');
+  const rentals=typeof visibleRentalCabins_==='function'
+    ? visibleRentalCabins_()
+    : (DATA.cabins||[]);
+  if(!rentals.length) return null;
+
+  const eligible=new Set(rentals.map(function(cabin){return cabin['Cabin ID'];}));
+  const voted=new Set((DATA.votes||[])
+    .filter(function(vote){
+      return String(vote['Traveler ID']||'')===String(currentTravelerId) &&
+        String(vote['Voting Round']||'Preliminary')===round &&
+        eligible.has(vote['Cabin ID']);
+    })
+    .map(function(vote){return vote['Cabin ID'];}));
+  const remaining=Math.max(0,rentals.length-voted.size);
+  if(!remaining) return null;
+
+  return {
+    priority:10,
+    marker:'VOTE',
+    title:'Vote on '+remaining+' remaining rental'+(remaining===1?'':'s'),
+    detail:round+' voting is open.',
+    view:'rentals',
+    cta:'Continue voting'
+  };
+}
+
+function p1RoomAction_(){
+  const stage=String(DATA.trip['Portal Stage']||'');
+  if(!/Room Planning|Trip Planning/i.test(stage)||!currentTravelerId) return null;
+
+  const selectedId=String(DATA.trip['Selected Cabin ID']||'');
+  if(!selectedId) return null;
+  const cabin=(DATA.cabins||[]).find(function(item){return item['Cabin ID']===selectedId;});
+  if(!cabin||(cabin.bedrooms||[]).length===0) return null;
+
+  const assigned=(DATA.assignments||[]).some(function(row){
+    return row['Cabin ID']===selectedId &&
+      String(row['Traveler ID']||'')===String(currentTravelerId);
+  });
+  if(assigned) return null;
+
+  return {
+    priority:20,
+    marker:'ROOM',
+    title:'Choose your bedroom',
+    detail:'You are not assigned to a bedroom in '+displayName(cabin)+'.',
+    view:'rooms',
+    cta:'Open Room Planner'
+  };
+}
+
+function p1PaymentAction_(){
+  if(
+    typeof paymentState_==='undefined' ||
+    !paymentState_.loaded ||
+    !currentTravelerId ||
+    typeof paymentVisibleCabins_!=='function'
+  ) return null;
+
+  const cabins=paymentVisibleCabins_();
+  if(!cabins.length) return null;
+  const preferred=String(DATA.trip['Selected Cabin ID']||'');
+  const cabin=cabins.find(function(item){return item['Cabin ID']===preferred;})||cabins[0];
+  const cabinId=cabin['Cabin ID'];
+  if(typeof paymentPlan_!=='function'||!paymentPlan_(cabinId)) return null;
+
+  const schedule=typeof paymentScheduleForCabin_==='function'
+    ? paymentScheduleForCabin_(cabinId)
+    : [];
+  const assignedSchedule=schedule
+    .map(function(row){
+      return {row:row,status:paymentScheduleStatus_(row,paymentsForCabin_(cabinId))};
+    })
+    .filter(function(item){
+      const expected=String(item.row['Expected Payer Traveler ID']||'');
+      return expected===String(currentTravelerId) && item.status.remaining>.005;
+    })[0];
+
+  if(assignedSchedule){
+    return {
+      priority:15,
+      marker:'PAY',
+      title:'Pay '+paymentMoney_(assignedSchedule.status.remaining)+' by '+paymentDateLabel_(assignedSchedule.row['Due Date']),
+      detail:String(assignedSchedule.row.Label||'Scheduled booking payment'),
+      view:'payments',
+      cta:'Make payment'
+    };
+  }
+
+  if(typeof paymentExpectedShareForTraveler_==='function'){
+    const expected=paymentExpectedShareForTraveler_(cabin,currentTravelerId);
+    const paid=paymentTravelerPaidTotal_(cabinId,currentTravelerId,'');
+    const remaining=Math.max(0,expected-paid);
+    if(remaining>.005){
+      return {
+        priority:35,
+        marker:'PAY',
+        title:paymentMoney_(remaining)+' left on your expected share',
+        detail:'Review your lodging payment progress.',
+        view:'payments',
+        cta:'View payments'
+      };
+    }
+  }
+
+  return null;
+}
+
+function p1GroceryAction_(){
+  const traveler=currentTraveler();
+  if(!traveler) return null;
+  const name=String(traveler.Name||'').trim().toLowerCase();
+  if(!name) return null;
+
+  const assigned=(DATA.groceries||[]).filter(function(row){
+    if(String(row.Purchased||'No').toLowerCase()==='yes') return false;
+    const buyer=String(row['Assigned To']||'').trim().toLowerCase();
+    const bringer=String(row['Brought By']||'').trim().toLowerCase();
+    return buyer===name || bringer===name;
+  });
+
+  if(!assigned.length) return null;
+  return {
+    priority:45,
+    marker:'LIST',
+    title:assigned.length+' grocery item'+(assigned.length===1?'':'s')+' assigned to you',
+    detail:'Still marked as not purchased.',
+    view:'groceries',
+    cta:'Open grocery list'
+  };
+}
+
+function p1OrganizerAction_(){
+  if(!p1OrganizerUi_()) return null;
+  const needsReview=(DATA.imports||[]).filter(function(row){
+    return String(row.Status||'')==='Needs Review';
+  }).length;
+  if(!needsReview) return null;
+
+  return {
+    priority:50,
+    marker:'ORG',
+    title:needsReview+' rental'+(needsReview===1?'':'s')+' need review',
+    detail:'Import details are waiting for Organizer attention.',
+    view:'rentals',
+    cta:'Review rentals'
+  };
+}
+
+function p1DashboardActions_(){
+  return [
+    p1VotingAction_(),
+    p1PaymentAction_(),
+    p1RoomAction_(),
+    p1GroceryAction_(),
+    p1OrganizerAction_()
+  ].filter(Boolean).sort(function(a,b){return a.priority-b.priority;}).slice(0,4);
+}
+
+function p1Greeting_(){
+  const hour=new Date().getHours();
+  const greeting=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
+  const traveler=currentTraveler();
+  const first=traveler?String(traveler.Name||'').trim().split(/\s+/)[0]:'';
+  return first?greeting+', '+first:greeting;
+}
+
+function p1DashboardPrelude_(){
+  const countdown=p1TripCountdown_();
+  const actions=p1DashboardActions_();
+
+  return `<section class="p1-dashboard-command-center">
+    <div class="p1-dashboard-welcome">
+      <div>
+        <p class="eyebrow">YOUR TRIP</p>
+        <h2>${esc(p1Greeting_())}</h2>
+        <p class="muted">Here is what needs your attention next.</p>
+      </div>
+      <div class="p1-trip-countdown" aria-label="Trip countdown">
+        <strong>${esc(countdown.value)}</strong>
+        <span>${esc(countdown.label)}</span>
+      </div>
+    </div>
+
+    ${actions.length
+      ? `<div class="p1-action-grid">
+          ${actions.map(function(action){
+            return `<button type="button" class="p1-action-card" onclick="p1NavigateView_('${action.view}')">
+              <span class="p1-action-marker">${esc(action.marker)}</span>
+              <span class="p1-action-copy">
+                <strong>${esc(action.title)}</strong>
+                <small>${esc(action.detail)}</small>
+              </span>
+              <span class="p1-action-cta">${esc(action.cta)} →</span>
+            </button>`;
+          }).join('')}
+        </div>`
+      : `<div class="p1-caught-up">
+          <span aria-hidden="true">✓</span>
+          <div><strong>You are caught up.</strong><small>No traveler actions need your attention right now.</small></div>
+        </div>`}
+  </section>`;
+}
+
+function p1EnsureDashboardPaymentData_(){
+  if(
+    currentView!=='dashboard' ||
+    typeof paymentState_==='undefined' ||
+    paymentState_.loaded ||
+    paymentState_.loading ||
+    p1DashboardPaymentRequested_ ||
+    typeof loadPaymentData_!=='function'
+  ) return;
+
+  p1DashboardPaymentRequested_=true;
+  setTimeout(function(){
+    if(currentView==='dashboard') loadPaymentData_(false);
+  },0);
+}
+
+renderDashboard=function(){
+  let html=renderDashboardBeforeP1_.apply(this,arguments);
+  html=html.replace(/\s*<div class="release-banner">[\s\S]*?<\/div>/,'');
+  html=html.replace('<section class="view">','<section class="view">'+p1DashboardPrelude_());
+  p1EnsureDashboardPaymentData_();
+  return html;
+};
+
+if(applyPaymentDataBeforeP1_){
+  applyPaymentData_=function(data){
+    const result=applyPaymentDataBeforeP1_.apply(this,arguments);
+    p1DashboardPaymentRequested_=false;
+    if(currentView==='dashboard') setTimeout(function(){render();},0);
+    return result;
+  };
+}
+
+render=function(){
+  const result=renderBeforeP1Navigation_.apply(this,arguments);
+  p1SyncNavigation_();
+  return result;
+};
+
+(function initializeP1DashboardNavigation_(){
+  p1EnsureNavigationShell_();
+  p1SyncNavigation_();
+})();
+</script>
