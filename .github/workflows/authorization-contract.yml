@@ -40,5 +40,7 @@ jobs:
         run: node tests/payment_schedule_contract.test.js
       - name: Run payment load performance contracts
         run: node tests/payment_load_performance_contract.test.js
+      - name: Run P1 payment confirmation and Room Planner contracts
+        run: node tests/p1_payment_confirmation_room_contract.test.js
       - name: Run P1 dashboard and navigation contracts
         run: node tests/p1_dashboard_navigation_contract.test.js
