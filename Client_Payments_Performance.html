@@ -1,0 +1,49 @@
+<script>
+function paymentDataIsFresh_(){
+  return Boolean(
+    paymentState_.loaded &&
+    Date.now()-Number(paymentState_.lastLoaded||0)<15000
+  );
+}
+
+loadPaymentData_=function(force){
+  if(paymentState_.loading) return;
+  if(!force && paymentDataIsFresh_()) return;
+
+  paymentState_.loading=true;
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      applyPaymentData_(data);
+      if(currentView==='payments') render();
+    })
+    .withFailureHandler(function(error){
+      paymentState_.loading=false;
+      toast(
+        'Payment schedule could not be loaded: '+
+        (error&&error.message?error.message:String(error)),
+        true
+      );
+      if(currentView==='payments') render();
+    })
+    .getPaymentDataFast();
+};
+
+let paymentPrefetchTimer_=null;
+
+function prefetchPaymentDataWhenReady_(){
+  if(paymentState_.loaded || paymentState_.loading) return;
+
+  if(DATA && DATA.deferredLoaded){
+    loadPaymentData_(false);
+    return;
+  }
+
+  paymentPrefetchTimer_=setTimeout(prefetchPaymentDataWhenReady_,700);
+}
+
+(function schedulePaymentPrefetch_(){
+  if(paymentPrefetchTimer_) clearTimeout(paymentPrefetchTimer_);
+  paymentPrefetchTimer_=setTimeout(prefetchPaymentDataWhenReady_,1400);
+})();
+</script>
