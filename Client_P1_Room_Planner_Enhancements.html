@@ -1,0 +1,218 @@
+<script>
+let p1BedroomUndoStack_=[];
+let p1BedroomRedoStack_=[];
+let p1BedroomHistoryCabinId_='';
+let p1BedroomRoomSignature_='';
+const P1_BEDROOM_HISTORY_LIMIT_=40;
+
+function p1BedroomDraftSnapshot_(){
+  return Object.assign({},roomAssignmentDraft_||{});
+}
+
+function p1BedroomRoomsSignatureFor_(cabin){
+  return (cabin&&cabin.bedrooms||[])
+    .map(function(room){
+      return [
+        String(room['Bedroom ID']||''),
+        String(room.Sleeps||''),
+        String(room['Bedroom Name']||'')
+      ].join(':');
+    })
+    .sort()
+    .join('|');
+}
+
+function p1BedroomClearHistory_(cabinId,roomSignature){
+  p1BedroomUndoStack_=[];
+  p1BedroomRedoStack_=[];
+  p1BedroomHistoryCabinId_=String(cabinId||'');
+  p1BedroomRoomSignature_=String(roomSignature||'');
+}
+
+function p1BedroomPrepareHistory_(cabinId){
+  const cabin=roomPlannerCabin_(cabinId);
+  const roomSignature=p1BedroomRoomsSignatureFor_(cabin);
+
+  if(
+    p1BedroomHistoryCabinId_!==String(cabinId||'') ||
+    p1BedroomRoomSignature_!==roomSignature
+  ){
+    p1BedroomClearHistory_(cabinId,roomSignature);
+  }
+}
+
+function p1BedroomPushUndo_(){
+  p1BedroomUndoStack_.push(p1BedroomDraftSnapshot_());
+  if(p1BedroomUndoStack_.length>P1_BEDROOM_HISTORY_LIMIT_){
+    p1BedroomUndoStack_.shift();
+  }
+  p1BedroomRedoStack_=[];
+}
+
+function p1BedroomApplySnapshot_(snapshot){
+  roomAssignmentDraft_=Object.assign({},snapshot||{});
+  syncBedroomPlannerDraftDirty_();
+  render();
+}
+
+function undoBedroomPlanner_(){
+  if(bedroomPlannerSaveInFlight_||!p1BedroomUndoStack_.length) return;
+
+  p1BedroomRedoStack_.push(p1BedroomDraftSnapshot_());
+  const snapshot=p1BedroomUndoStack_.pop();
+  p1BedroomApplySnapshot_(snapshot);
+}
+
+function redoBedroomPlanner_(){
+  if(bedroomPlannerSaveInFlight_||!p1BedroomRedoStack_.length) return;
+
+  p1BedroomUndoStack_.push(p1BedroomDraftSnapshot_());
+  const snapshot=p1BedroomRedoStack_.pop();
+  p1BedroomApplySnapshot_(snapshot);
+}
+
+const ensureBedroomPlannerDraftBeforeP1History_=ensureBedroomPlannerDraft_;
+ensureBedroomPlannerDraft_=function(cabinId){
+  ensureBedroomPlannerDraftBeforeP1History_(cabinId);
+  p1BedroomPrepareHistory_(cabinId);
+};
+
+const resetBedroomPlannerDraftStateBeforeP1History_=resetBedroomPlannerDraftState_;
+resetBedroomPlannerDraftState_=function(){
+  resetBedroomPlannerDraftStateBeforeP1History_();
+  p1BedroomClearHistory_('','');
+};
+
+const moveBedroomTravelerBeforeP1History_=moveBedroomTraveler_;
+moveBedroomTraveler_=function(travelerId,bedroomId,cabinId){
+  ensureBedroomPlannerDraft_(cabinId);
+  if(!roomAssignmentDraft_||roomAssignmentDraft_[travelerId]===undefined) return;
+
+  const next=String(bedroomId||'');
+  if(String(roomAssignmentDraft_[travelerId]||'')===next) return;
+
+  p1BedroomPushUndo_();
+  moveBedroomTravelerBeforeP1History_(travelerId,next,cabinId);
+};
+
+const clearBedroomTravelersBeforeP1History_=clearBedroomTravelers_;
+clearBedroomTravelers_=function(cabinId){
+  ensureBedroomPlannerDraft_(cabinId);
+
+  const hasAssignments=Object.keys(roomAssignmentDraft_||{}).some(function(travelerId){
+    return Boolean(roomAssignmentDraft_[travelerId]);
+  });
+
+  if(hasAssignments){
+    p1BedroomPushUndo_();
+  }
+
+  clearBedroomTravelersBeforeP1History_(cabinId);
+};
+
+function p1BedroomAssignedTravelers_(roomId){
+  return (DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no' &&
+      String(roomAssignmentDraft_&&roomAssignmentDraft_[traveler['Traveler ID']]||'')===String(roomId||'');
+  });
+}
+
+function p1BedroomValidation_(cabin){
+  const active=(DATA.travelers||[]).filter(function(traveler){
+    return String(traveler.Active||'Yes').toLowerCase()!=='no';
+  });
+
+  const unassigned=active.filter(function(traveler){
+    return !String(roomAssignmentDraft_&&roomAssignmentDraft_[traveler['Traveler ID']]||'');
+  });
+
+  const overCapacity=(cabin&&cabin.bedrooms||[])
+    .map(function(room){
+      const capacity=Number(room.Sleeps||0);
+      const assigned=p1BedroomAssignedTravelers_(room['Bedroom ID']);
+      return {
+        room:room,
+        capacity:capacity,
+        assigned:assigned.length
+      };
+    })
+    .filter(function(item){
+      return item.capacity>0&&item.assigned>item.capacity;
+    });
+
+  return {
+    unassigned:unassigned,
+    overCapacity:overCapacity
+  };
+}
+
+function renderP1BedroomValidation_(cabin){
+  const validation=p1BedroomValidation_(cabin);
+  const issueCount=validation.unassigned.length+validation.overCapacity.length;
+
+  if(!issueCount){
+    return `<div class="p1-bedroom-validation all-clear" role="status">
+      <strong>Room check passed</strong>
+      <span>Everyone has a room and no bedroom is over its listed sleeping capacity.</span>
+    </div>`;
+  }
+
+  return `<div class="p1-bedroom-validation has-warning" role="status">
+    <strong>Room layout needs attention</strong>
+    <div>
+      ${validation.unassigned.length
+        ? `<span>${validation.unassigned.length} traveler${validation.unassigned.length===1?' is':'s are'} still unassigned.</span>`
+        : ''}
+      ${validation.overCapacity.map(function(item){
+        return `<span>${esc(item.room['Bedroom Name']||'Bedroom')} has ${item.assigned} traveler${item.assigned===1?'':'s'} for ${item.capacity} listed sleeping spot${item.capacity===1?'':'s'}.</span>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+const nativeBedroomDropZoneBeforeP1Validation_=nativeBedroomDropZone_;
+nativeBedroomDropZone_=function(cabin,room){
+  let html=nativeBedroomDropZoneBeforeP1Validation_(cabin,room);
+  if(!room) return html;
+
+  const capacity=Number(room.Sleeps||0);
+  const assigned=p1BedroomAssignedTravelers_(room['Bedroom ID']).length;
+  if(!(capacity>0&&assigned>capacity)) return html;
+
+  html=html.replace(
+    'class="room native-bedroom-room"',
+    'class="room native-bedroom-room is-over-capacity"'
+  );
+
+  html=html.replace(
+    '<p class="muted">',
+    `<div class="p1-room-capacity-warning" role="status">Over capacity · ${assigned}/${capacity}</div><p class="muted">`
+  );
+
+  return html;
+};
+
+const renderNativeBedroomPlannerBeforeP1History_=renderNativeBedroomPlanner_;
+renderNativeBedroomPlanner_=function(cabin){
+  p1BedroomPrepareHistory_(cabin['Cabin ID']);
+
+  let html=renderNativeBedroomPlannerBeforeP1History_(cabin);
+  const controls=`<div class="p1-bedroom-history-actions" aria-label="Bedroom layout history">
+    <button class="ghost tiny" type="button" ${p1BedroomUndoStack_.length&&!bedroomPlannerSaveInFlight_?'':'disabled'} onclick="undoBedroomPlanner_()">Undo</button>
+    <button class="ghost tiny" type="button" ${p1BedroomRedoStack_.length&&!bedroomPlannerSaveInFlight_?'':'disabled'} onclick="redoBedroomPlanner_()">Redo</button>
+  </div>`;
+
+  html=html.replace(
+    '<div class="bedroom-native-toolbar">',
+    '<div class="bedroom-native-toolbar">'+controls
+  );
+
+  const validation=renderP1BedroomValidation_(cabin);
+  html=html.replace(
+    /(<section\s+class="native-bedroom-unassigned")/,
+    validation+'$1'
+  );
+
+  return html;
+};
+</script>

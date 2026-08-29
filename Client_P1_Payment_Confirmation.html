@@ -1,0 +1,229 @@
+<script>
+function paymentConfirmationState_(row){
+  const reimbursement=String(row&&row['Paid To Type']||'')==='Traveler';
+  const confirmed=
+    reimbursement &&
+    String(row&&row['Confirmation Status']||'')==='Confirmed';
+
+  return {
+    reimbursement:reimbursement,
+    confirmed:confirmed,
+    source:String(row&&row['Confirmation Source']||''),
+    confirmedByTravelerId:String(row&&row['Confirmed By Traveler ID']||''),
+    confirmedAt:String(row&&row['Confirmed At']||'')
+  };
+}
+
+function paymentConfirmationRecipientOnThisDevice_(row){
+  if(String(row&&row['Paid To Type']||'')!=='Traveler') return false;
+
+  const recipientId=String(row&&row['Paid To Traveler ID']||'');
+  const savedId=String(
+    savedDeviceTravelerProfile_&&savedDeviceTravelerProfile_.travelerId||''
+  );
+
+  return Boolean(
+    recipientId &&
+    recipientId===savedId &&
+    recipientId===String(currentTravelerId||'')
+  );
+}
+
+function paymentConfirmationCanManage_(row){
+  return Boolean(
+    paymentOrganizerUi_() ||
+    paymentConfirmationRecipientOnThisDevice_(row)
+  );
+}
+
+function paymentConfirmationLabel_(row){
+  const state=paymentConfirmationState_(row);
+  if(!state.reimbursement) return 'Reported to agency';
+  if(!state.confirmed) return 'Pending recipient confirmation';
+  if(state.source==='Organizer') return 'Confirmed by Organizer';
+  return 'Confirmed received';
+}
+
+function paymentConfirmationApplyLocal_(row,confirmed,source){
+  if(!row) return;
+
+  row['Confirmation Status']=confirmed?'Confirmed':'Pending';
+  row['Confirmation Source']=confirmed?String(source||''):'';
+  row['Confirmed By Traveler ID']=
+    confirmed&&source==='Recipient'
+      ? String(row['Paid To Traveler ID']||'')
+      : '';
+  row['Confirmed At']=confirmed?new Date().toISOString():'';
+  row['Updated At']=new Date().toISOString();
+}
+
+function paymentConfirmationRestoreLocal_(row,previous){
+  if(!row||!previous) return;
+  row['Confirmation Status']=previous.status;
+  row['Confirmation Source']=previous.source;
+  row['Confirmed By Traveler ID']=previous.travelerId;
+  row['Confirmed At']=previous.confirmedAt;
+  row['Updated At']=previous.updatedAt;
+}
+
+function paymentPersistVisibleSnapshot_(){
+  if(
+    typeof paymentStoreSnapshot_==='function' &&
+    typeof paymentSnapshotFromState_==='function'
+  ){
+    paymentStoreSnapshot_(paymentSnapshotFromState_());
+  }
+}
+
+function setBookingPaymentConfirmationClient_(paymentId,confirmed){
+  const row=(paymentState_.payments||[]).find(function(item){
+    return String(item['Payment ID']||'')===String(paymentId||'');
+  });
+
+  if(!row){
+    toast('That payment could not be found.',true);
+    return;
+  }
+
+  if(String(row['Paid To Type']||'')!=='Traveler'){
+    toast('Agency payments do not use recipient confirmation.',true);
+    return;
+  }
+
+  if(!paymentConfirmationCanManage_(row)){
+    toast('Only the payment recipient or Organizer can change receipt confirmation.',true);
+    return;
+  }
+
+  const organizer=paymentOrganizerUi_();
+  const basePayload={
+    id:String(paymentId||''),
+    confirmed:Boolean(confirmed),
+    deviceId:String(PWA_DEVICE_ID_||'')
+  };
+
+  function persist(payload,source){
+    const previous={
+      status:String(row['Confirmation Status']||''),
+      source:String(row['Confirmation Source']||''),
+      travelerId:String(row['Confirmed By Traveler ID']||''),
+      confirmedAt:String(row['Confirmed At']||''),
+      updatedAt:String(row['Updated At']||'')
+    };
+
+    paymentConfirmationApplyLocal_(row,Boolean(confirmed),source);
+    paymentPersistVisibleSnapshot_();
+    if(currentView==='payments') render();
+
+    const saveId=typeof beginBackgroundSave_==='function'
+      ? beginBackgroundSave_(
+          confirmed?'Payment receipt':'Payment confirmation',
+          'payment-confirmation:'+String(paymentId||'')
+        )
+      : '';
+
+    google.script.run
+      .withSuccessHandler(function(data){
+        applyPaymentData_(data||{});
+        if(currentView==='payments') render();
+
+        if(saveId&&typeof completeBackgroundSave_==='function'){
+          completeBackgroundSave_(
+            saveId,
+            confirmed?'Payment marked received':'Payment confirmation removed'
+          );
+        }else{
+          toast(confirmed?'Payment marked received':'Payment confirmation removed');
+        }
+      })
+      .withFailureHandler(function(error){
+        paymentConfirmationRestoreLocal_(row,previous);
+        paymentPersistVisibleSnapshot_();
+        if(currentView==='payments') render();
+
+        if(organizer&&typeof organizerAuthError_==='function'&&organizerAuthError_(error)){
+          saveOrganizerSession_(null);
+        }
+
+        if(saveId&&typeof failBackgroundSave_==='function'){
+          failBackgroundSave_(
+            saveId,
+            error,
+            confirmed
+              ? 'Payment receipt could not be confirmed'
+              : 'Payment confirmation could not be removed'
+          );
+        }else{
+          toast(
+            error&&error.message?error.message:String(error),
+            true
+          );
+        }
+      })
+      .setBookingPaymentConfirmation(payload);
+  }
+
+  if(organizer){
+    withOrganizerAuthorization_(function(){
+      persist(
+        organizerAuthorizationValues_(basePayload),
+        'Organizer'
+      );
+    });
+    return;
+  }
+
+  persist(basePayload,'Recipient');
+}
+
+renderPaymentHistory_=function(cabinId){
+  const payments=paymentsForCabin_(cabinId);
+  const schedule=paymentScheduleForCabin_(cabinId);
+  const organizer=paymentOrganizerUi_();
+
+  if(!payments.length){
+    return `<div class="payment-empty-state"><strong>No payments recorded yet.</strong><span>Each traveler can record their own payment here as soon as money is sent.</span></div>`;
+  }
+
+  return `<div class="payment-history-list">
+    ${payments.map(function(row){
+      const linked=schedule.find(function(item){
+        return item['Schedule ID']===row['Schedule ID'];
+      });
+      const payerId=String(row['Paid By Traveler ID']||'');
+      const payer=paymentTravelerName_(payerId);
+      const confirmation=paymentConfirmationState_(row);
+      const canManageConfirmation=
+        confirmation.reimbursement&&paymentConfirmationCanManage_(row);
+      const canEdit=
+        !confirmation.confirmed&&
+        (organizer||payerId===currentTravelerId);
+
+      return `<article class="payment-history-row ${payerId===currentTravelerId?'is-current':''} ${confirmation.confirmed?'is-confirmed':''}">
+        <div class="payment-history-main">
+          <strong>${esc(payer)} → ${esc(paymentRecipientLabel_(row,'Paid To'))}</strong>
+          <span>${esc(paymentDateLabel_(row['Payment Date']))}${linked?' · '+esc(linked.Label||'Scheduled payment'):''}</span>
+          ${row.Notes?`<small>${esc(row.Notes)}</small>`:''}
+          <span class="payment-confirmation-badge ${confirmation.confirmed?'confirmed':confirmation.reimbursement?'pending':'agency'}">
+            ${esc(paymentConfirmationLabel_(row))}
+          </span>
+        </div>
+        <div class="payment-history-amount">
+          <strong>${paymentMoney_(row.Amount)}</strong>
+          <small>${confirmation.reimbursement?'Reimbursement':'Toward booking'}</small>
+        </div>
+        <div class="payment-row-actions">
+          ${canManageConfirmation
+            ? confirmation.confirmed
+              ? `<button class="ghost tiny" type="button" onclick="setBookingPaymentConfirmationClient_('${escAttr(row['Payment ID'])}',false)">Undo confirmation</button>`
+              : `<button class="tiny" type="button" onclick="setBookingPaymentConfirmationClient_('${escAttr(row['Payment ID'])}',true)">Confirm received</button>`
+            : ''}
+          ${canEdit
+            ? `<button class="ghost tiny" type="button" onclick="openBookingPaymentForm_('${escAttr(cabinId)}','${escAttr(row['Payment ID'])}','')">Edit</button><button class="ghost tiny" type="button" onclick="confirmDeleteBookingPayment_('${escAttr(row['Payment ID'])}')">Delete</button>`
+            : ''}
+        </div>
+      </article>`;
+    }).join('')}
+  </div>`;
+};
+</script>

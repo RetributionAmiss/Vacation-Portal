@@ -1,0 +1,116 @@
+<style>
+.payment-confirmation-badge{
+  display:inline-flex;
+  align-items:center;
+  width:max-content;
+  max-width:100%;
+  margin-top:5px;
+  padding:4px 8px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:800;
+  line-height:1.2;
+}
+.payment-confirmation-badge.pending{
+  color:#73520c;
+  background:#fff3d5;
+  border:1px solid rgba(196,154,69,.28);
+}
+.payment-confirmation-badge.confirmed{
+  color:#23623f;
+  background:#eaf6ee;
+  border:1px solid rgba(47,125,82,.2);
+}
+.payment-confirmation-badge.agency{
+  color:var(--muted);
+  background:#eef2ef;
+  border:1px solid rgba(23,63,50,.08);
+}
+.payment-history-row.is-confirmed{
+  border-color:rgba(47,125,82,.2);
+  background:linear-gradient(90deg,rgba(47,125,82,.035),rgba(255,255,255,.95));
+}
+
+.p1-bedroom-history-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex:0 0 auto;
+}
+.p1-bedroom-history-actions button:disabled{
+  opacity:.42;
+  cursor:not-allowed;
+}
+.p1-bedroom-validation{
+  display:grid;
+  gap:5px;
+  margin:10px 0 14px;
+  padding:11px 13px;
+  border-radius:13px;
+  font-size:12px;
+}
+.p1-bedroom-validation strong{
+  font-size:12px;
+}
+.p1-bedroom-validation div{
+  display:grid;
+  gap:3px;
+}
+.p1-bedroom-validation span{
+  line-height:1.4;
+}
+.p1-bedroom-validation.all-clear{
+  color:#23623f;
+  background:#edf7f0;
+  border:1px solid rgba(47,125,82,.18);
+}
+.p1-bedroom-validation.all-clear span{
+  color:#537065;
+}
+.p1-bedroom-validation.has-warning{
+  color:#7b4f04;
+  background:#fff6df;
+  border:1px solid rgba(196,154,69,.34);
+}
+.native-bedroom-room.is-over-capacity{
+  border-color:#d58f23!important;
+  box-shadow:0 0 0 2px rgba(213,143,35,.09);
+}
+.p1-room-capacity-warning{
+  display:inline-flex;
+  width:max-content;
+  margin:7px 0 1px;
+  padding:4px 8px;
+  border-radius:999px;
+  color:#7b4f04;
+  background:#fff1cf;
+  border:1px solid rgba(196,154,69,.3);
+  font-size:10px;
+  font-weight:900;
+}
+
+@media(max-width:900px){
+  .bedroom-native-toolbar{
+    flex-wrap:wrap;
+  }
+  .p1-bedroom-history-actions{
+    order:2;
+  }
+}
+
+@media(max-width:650px){
+  .p1-bedroom-history-actions{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    width:100%;
+    order:0;
+  }
+  .p1-bedroom-history-actions button{
+    min-height:42px;
+    width:100%;
+  }
+  .payment-history-row .payment-row-actions{
+    flex-wrap:wrap;
+  }
+}
+</style>
