@@ -1,0 +1,137 @@
+<script>
+const renderPaymentsBeforeRemainingBalance_=renderPayments;
+
+function paymentRemainingBalancePosition_(cabinId){
+  const cabin=paymentVisibleCabins_().find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+  if(!cabin) return null;
+
+  const summary=paymentSummary_(cabin);
+  const payments=paymentsForCabin_(cabinId);
+  const outstandingAgencySchedule=paymentScheduleForCabin_(cabinId)
+    .filter(function(row){
+      return String(row['Recipient Type']||'Agency')==='Agency';
+    })
+    .reduce(function(sum,row){
+      return sum+Number(paymentScheduleStatus_(row,payments).remaining||0);
+    },0);
+
+  const unscheduled=Math.max(0,Number(summary.remaining||0)-outstandingAgencySchedule);
+  return {
+    bookingTotal:Number(summary.bookingTotal||0),
+    paidToAgency:Number(summary.paidToAgency||0),
+    bookingBalance:Number(summary.remaining||0),
+    outstandingAgencySchedule:outstandingAgencySchedule,
+    unscheduled:unscheduled
+  };
+}
+
+function openPaymentRemainingBalanceTool_(cabinId){
+  if(!paymentOrganizerUi_()){
+    toast('Only the Organizer can add a remaining-balance installment.',true);
+    return;
+  }
+
+  const cabin=paymentVisibleCabins_().find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+  const plan=paymentPlan_(cabinId);
+  const position=paymentRemainingBalancePosition_(cabinId);
+  if(!cabin||!plan||!position){
+    toast('Set up the booking before adding a remaining-balance installment.',true);
+    return;
+  }
+
+  const bookers=paymentBookerIds_(cabinId);
+  const defaultAmount=position.unscheduled>0.005
+    ? position.unscheduled
+    : position.bookingBalance;
+
+  openModal(`<div class="payment-balance-tool">
+    <p class="eyebrow">ORGANIZER BALANCE TOOL</p>
+    <h2>Add remaining balance installment</h2>
+    <p class="muted">The portal separates the balance still owed to the property from agency-directed installments that are already on the schedule, so the default amount does not double-schedule those future payments.</p>
+
+    <div class="payment-balance-position">
+      <article><span>Booking total</span><strong>${paymentMoney_(position.bookingTotal)}</strong></article>
+      <article><span>Paid to agency</span><strong>${paymentMoney_(position.paidToAgency)}</strong></article>
+      <article><span>Booking balance left</span><strong>${paymentMoney_(position.bookingBalance)}</strong></article>
+      <article><span>Already scheduled to agency</span><strong>${paymentMoney_(position.outstandingAgencySchedule)}</strong></article>
+      <article class="payment-balance-primary"><span>Unscheduled balance</span><strong>${paymentMoney_(position.unscheduled)}</strong></article>
+    </div>
+
+    ${position.unscheduled<=0.005&&position.bookingBalance>0.005
+      ? '<div class="payment-generation-warning">The current booking balance is already fully covered by unpaid agency-directed installments. The amount below defaults to the full booking balance only in case you intentionally need a replacement or revised final installment.</div>'
+      : position.bookingBalance<=0.005
+        ? '<div class="payment-generation-warning">The booking currently has no unpaid agency balance. Add another installment only if the booking total or recorded agency payments need to be corrected.</div>'
+        : ''}
+
+    <form class="form-grid" onsubmit="savePaymentRemainingBalance_(event,'${escAttr(cabinId)}')">
+      ${field('paymentRemainingLabel','Installment label','Final booking balance','text',true)}
+      ${field('paymentRemainingDueDate','Due date','','date',true)}
+      ${field('paymentRemainingAmount','Installment amount',defaultAmount>0?defaultAmount.toFixed(2):'','number',true)}
+      <label><span>Expected payer</span><select id="paymentRemainingPayer">
+        <option value="">Any traveler</option>
+        ${bookers.map(function(id){
+          return `<option value="${escAttr(id)}">${esc(paymentTravelerName_(id))}</option>`;
+        }).join('')}
+      </select><small>Choose a booking traveler when one person is responsible for sending the property payment.</small></label>
+      ${area('paymentRemainingNotes','Notes','Calculated from the current booking balance and unpaid agency-directed schedule.')}
+      <div class="wide payment-balance-form-note">
+        <strong>Recipient:</strong> ${esc(plan['Agency Name']||cabin.Provider||'Agency / property')}
+      </div>
+      <div class="wide form-actions">
+        <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        <button>Add installment</button>
+      </div>
+    </form>
+  </div>`);
+}
+
+function savePaymentRemainingBalance_(event,cabinId){
+  event.preventDefault();
+  const plan=paymentPlan_(cabinId);
+  if(!plan){toast('Booking setup could not be found.',true);return;}
+
+  const amount=Number(val('paymentRemainingAmount')||0);
+  const dueDate=String(val('paymentRemainingDueDate')||'').trim();
+  if(!(amount>0)){toast('Remaining-balance installment must be greater than zero.',true);return;}
+  if(!dueDate){toast('Choose the due date for the remaining balance.',true);return;}
+
+  paymentOrganizerBackgroundSave_(
+    'Remaining balance installment',
+    'payment-remaining-balance:'+cabinId,
+    'savePaymentScheduleItem',
+    {
+      cabinId:cabinId,
+      label:String(val('paymentRemainingLabel')||'Final booking balance').trim(),
+      dueDate:dueDate,
+      amountDue:amount,
+      expectedPayerTravelerId:String(val('paymentRemainingPayer')||''),
+      recipientType:'Agency',
+      recipientTravelerId:'',
+      recipientName:String(plan['Agency Name']||'').trim(),
+      notes:String(val('paymentRemainingNotes')||'').trim()
+    },
+    'Remaining balance installment added'
+  );
+}
+
+renderPayments=function(){
+  let html=renderPaymentsBeforeRemainingBalance_.apply(this,arguments);
+  if(!paymentState_.loaded||!paymentOrganizerUi_()) return html;
+
+  const cabin=selectedPaymentCabin_();
+  if(!cabin||!paymentPlan_(cabin['Cabin ID'])) return html;
+
+  const add=`<button type="button" onclick="openPaymentScheduleForm_('${cabin['Cabin ID']}','')">Add installment</button>`;
+  if(html.indexOf(add)>=0){
+    html=html.replace(
+      add,
+      add+`<button type="button" class="ghost" onclick="openPaymentRemainingBalanceTool_('${escAttr(cabin['Cabin ID'])}')">Add remaining balance</button>`
+    );
+  }
+  return html;
+};
+</script>
