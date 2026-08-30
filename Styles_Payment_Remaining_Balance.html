@@ -2,12 +2,16 @@
 .payment-balance-tool{display:grid;gap:18px}
 .payment-balance-tool h2{margin:0}
 .payment-balance-position{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
-.payment-balance-position article{display:grid;gap:5px;padding:12px;border:1px solid var(--line,#d8d2c5);border-radius:12px;background:var(--paper,#fffdf7)}
-.payment-balance-position span{font-size:.78rem;color:var(--muted,#6c746f)}
-.payment-balance-position strong{font-size:1.05rem}
-.payment-balance-position .payment-balance-primary{border-color:rgba(23,63,50,.35);background:rgba(23,63,50,.06)}
-.payment-balance-position .payment-balance-primary strong{font-size:1.2rem}
+.payment-balance-position article,.payment-balance-recipient-grid article{display:grid;gap:5px;padding:12px;border:1px solid var(--line,#d8d2c5);border-radius:12px;background:var(--paper,#fffdf7)}
+.payment-balance-position span,.payment-balance-recipient-grid span{font-size:.78rem;color:var(--muted,#6c746f)}
+.payment-balance-position strong,.payment-balance-recipient-grid strong{font-size:1.05rem}
+.payment-balance-position .payment-balance-primary,.payment-balance-recipient-grid .payment-balance-primary{border-color:rgba(23,63,50,.35);background:rgba(23,63,50,.06)}
+.payment-balance-position .payment-balance-primary strong,.payment-balance-recipient-grid .payment-balance-primary strong{font-size:1.2rem}
+.payment-balance-recipient-summary{display:grid;gap:10px;padding:14px;border:1px solid rgba(23,63,50,.18);border-radius:12px;background:rgba(23,63,50,.025)}
+.payment-balance-recipient-summary .eyebrow{margin:0}
+.payment-balance-recipient-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.payment-balance-calculation-note{color:var(--muted,#6c746f);line-height:1.45}
 .payment-balance-form-note{padding:11px 13px;border-radius:10px;background:rgba(23,63,50,.055);font-size:.9rem}
-@media(max-width:900px){.payment-balance-position{grid-template-columns:repeat(2,minmax(0,1fr))}.payment-balance-position .payment-balance-primary{grid-column:1/-1}}
+@media(max-width:900px){.payment-balance-position{grid-template-columns:repeat(2,minmax(0,1fr))}.payment-balance-position .payment-balance-primary{grid-column:1/-1}.payment-balance-recipient-grid{grid-template-columns:1fr}}
 @media(max-width:560px){.payment-balance-position{grid-template-columns:1fr}}
 </style>
