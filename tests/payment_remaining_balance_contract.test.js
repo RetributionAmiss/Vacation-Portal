@@ -14,6 +14,7 @@ assert(client.includes('paymentSummary_(cabin)'), 'tool must derive booking bala
 assert(client.includes("String(row['Recipient Type']||'Agency')==='Agency'"), 'only agency-directed schedule rows should offset the unscheduled booking balance');
 assert(client.includes('paymentScheduleStatus_(row,payments).remaining'), 'tool must subtract only unpaid scheduled agency amounts');
 assert(client.includes('Math.max(0,Number(summary.remaining||0)-outstandingAgencySchedule)'), 'unscheduled balance must equal booking balance left minus unpaid agency-directed schedule');
+assert(client.includes('const defaultAmount=position.unscheduled;'), 'default installment amount must never fall back to a fully scheduled booking balance');
 assert(client.includes('Booking balance left'), 'modal must show current booking balance');
 assert(client.includes('Already scheduled to agency'), 'modal must show already scheduled agency amount');
 assert(client.includes('Unscheduled balance'), 'modal must clearly show the default unscheduled amount');
@@ -21,6 +22,7 @@ assert(client.includes("'savePaymentScheduleItem'"), 'remaining balance must reu
 assert(client.includes("recipientType:'Agency'"), 'remaining balance installment must be an agency/property obligation');
 assert(client.includes("expectedPayerTravelerId:String(val('paymentRemainingPayer')||'')"), 'Organizer must be able to optionally assign the installment to a booking traveler');
 assert(client.includes('The current booking balance is already fully covered by unpaid agency-directed installments.'), 'tool must warn instead of silently double-scheduling a fully covered balance');
+assert(client.includes('The amount is left blank to prevent duplicate scheduling'), 'fully scheduled balances must require an intentional manual override');
 
 assert(index.includes("include('Client_Payment_Remaining_Balance')"), 'AppsScriptIndex must load remaining-balance client');
 assert(index.includes("include('Styles_Payment_Remaining_Balance')"), 'AppsScriptIndex must load remaining-balance styles');
