@@ -1,0 +1,37 @@
+<style>
+.payment-generation-editor{display:grid;gap:16px;max-width:900px;margin:0 auto}
+.payment-generation-editor h2,.payment-generation-editor p{margin:0}
+.payment-generation-recipient{align-items:end}
+.payment-generation-note{display:grid;gap:4px;padding:12px 14px;border:1px solid rgba(196,154,69,.38);border-radius:12px;background:#fff8e8}
+.payment-generation-note span{color:var(--muted);font-size:12px;line-height:1.45}
+.payment-generation-section-head{display:flex;justify-content:space-between;align-items:end;gap:12px}
+.payment-generation-section-head>div{display:grid;gap:3px}
+.payment-generation-section-head small{color:var(--muted);line-height:1.4}
+.payment-generation-milestones{display:grid;gap:10px}
+.payment-generation-milestone{display:grid;grid-template-columns:minmax(160px,1.25fr) minmax(145px,.8fr) minmax(160px,.9fr) auto;gap:10px;align-items:end;padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.82)}
+.payment-generation-milestone label{min-width:0}
+.payment-generation-remove{min-height:40px}
+.payment-generation-preview{display:grid;gap:10px;padding:14px;border:1px solid var(--line);border-radius:14px;background:rgba(247,250,247,.82)}
+.payment-generation-preview-head{display:flex;gap:18px;flex-wrap:wrap}
+.payment-generation-preview-head span{display:grid;gap:2px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.payment-generation-preview-head strong{color:var(--ink);font-size:17px;text-transform:none;letter-spacing:0}
+.payment-generation-preview-copy{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px}
+.payment-generation-traveler-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.payment-generation-traveler-preview span{display:grid;gap:2px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.payment-generation-traveler-preview small{color:var(--muted)}
+.payment-generation-warning{padding:9px 10px;border-radius:10px;background:#fff1ed;color:var(--danger);font-size:12px;font-weight:700}
+.payment-generation-actions{justify-content:flex-end}
+@media(max-width:760px){
+  .payment-generation-milestone{grid-template-columns:1fr 1fr}
+  .payment-generation-milestone label:first-child{grid-column:1/-1}
+  .payment-generation-remove{width:100%}
+}
+@media(max-width:520px){
+  .payment-generation-section-head{display:grid;align-items:stretch}
+  .payment-generation-section-head button{width:100%}
+  .payment-generation-milestone{grid-template-columns:1fr}
+  .payment-generation-milestone label:first-child{grid-column:auto}
+  .payment-generation-actions{display:grid;grid-template-columns:1fr}
+  .payment-generation-actions button{width:100%;min-height:46px}
+}
+</style>
