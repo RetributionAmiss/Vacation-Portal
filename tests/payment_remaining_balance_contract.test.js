@@ -5,6 +5,7 @@ function assert(condition,message){if(!condition){console.error('FAIL',message);
 function scriptBody(source){return source.replace(/^\s*<script>\s*/,'').replace(/\s*<\/script>\s*$/,'');}
 
 const client=read('Client_Payment_Remaining_Balance.html');
+const paymentsBackend=read('Payments.gs');
 const styles=read('Styles_Payment_Remaining_Balance.html');
 const index=read('AppsScriptIndex.html');
 
@@ -19,8 +20,21 @@ assert(client.includes('Booking balance left'), 'modal must show current booking
 assert(client.includes('Unpaid installments already scheduled to agency'), 'modal must show unpaid agency schedule coverage');
 assert(client.includes('Unscheduled balance'), 'modal must clearly show the default unscheduled amount');
 assert(client.includes("'savePaymentScheduleItem'"), 'remaining balance must reuse the normal schedule-item write path');
-assert(client.includes("recipientType:'Agency'"), 'remaining balance installment must be an agency/property obligation');
-assert(client.includes("expectedPayerTravelerId:String(val('paymentRemainingPayer')||'')"), 'Organizer must be able to optionally assign the installment to a booking traveler');
+
+assert(client.includes('Pay this installment to'), 'remaining-balance form must expose recipient selection');
+assert(client.includes('Booking agency / property'), 'remaining balance must support paying the booking agency/property');
+assert(client.includes('Traveler handling the booking'), 'remaining balance must support paying a booking traveler');
+assert(client.includes('paymentRemainingRecipientType'), 'recipient type must be captured from the form');
+assert(client.includes('paymentRemainingRecipientTraveler'), 'booking-traveler recipient must be selectable');
+assert(client.includes('recipientType:recipientType'), 'selected recipient type must be sent through the normal schedule write path');
+assert(client.includes('recipientTravelerId:recipientTravelerId'), 'selected booking-traveler recipient id must be sent through the normal schedule write path');
+assert(client.includes("recipientName:recipientType==='Agency'"), 'agency recipient name must still be supplied for agency-directed installments');
+assert(client.includes('activePaymentTravelers_()'), 'expected payer choices should match normal active traveler scheduling behavior');
+assert(client.includes('A payment to a booking traveler is a reimbursement.'), 'recipient choice must explain reimbursement accounting semantics');
+
+assert(paymentsBackend.includes("bookingIds.indexOf(recipientTravelerId) < 0"), 'server must restrict traveler recipients to travelers handling the booking');
+assert(paymentsBackend.includes("return { type: 'Traveler', travelerId: recipientTravelerId"), 'server must normalize booking-traveler recipients through the existing schedule recipient contract');
+
 assert(client.includes('The current booking balance is already fully covered by unpaid agency-directed installments.'), 'tool must warn instead of silently double-scheduling a fully covered balance');
 assert(client.includes('The amount is left blank to prevent duplicate scheduling'), 'fully scheduled balances must require an intentional manual override');
 
