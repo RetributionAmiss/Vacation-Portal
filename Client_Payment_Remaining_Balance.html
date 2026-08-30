@@ -27,6 +27,12 @@ function paymentRemainingBalancePosition_(cabinId){
   };
 }
 
+function syncPaymentRemainingRecipient_(){
+  const type=String(val('paymentRemainingRecipientType')||'Agency');
+  const wrapper=document.getElementById('paymentRemainingRecipientTravelerWrap');
+  if(wrapper) wrapper.classList.toggle('hidden',type!=='Traveler');
+}
+
 function openPaymentRemainingBalanceTool_(cabinId){
   if(!paymentOrganizerUi_()){
     toast('Only the Organizer can add a remaining-balance installment.',true);
@@ -44,12 +50,14 @@ function openPaymentRemainingBalanceTool_(cabinId){
   }
 
   const bookers=paymentBookerIds_(cabinId);
+  const payers=activePaymentTravelers_();
   const defaultAmount=position.unscheduled;
+  const agencyName=String(plan['Agency Name']||cabin.Provider||'Agency / property').trim();
 
   openModal(`<div class="payment-balance-tool">
     <p class="eyebrow">ORGANIZER BALANCE TOOL</p>
     <h2>Add remaining balance installment</h2>
-    <p class="muted">The portal separates the balance still owed to the property from agency-directed installments that are already on the schedule, so the default amount does not double-schedule those future payments.</p>
+    <p class="muted">The portal separates the balance still owed to the property from agency-directed installments already on the schedule. You can then direct this installment either to the booking agency/property or to a traveler handling the booking.</p>
 
     <div class="payment-balance-position">
       <article><span>Booking total</span><strong>${paymentMoney_(position.bookingTotal)}</strong></article>
@@ -69,15 +77,30 @@ function openPaymentRemainingBalanceTool_(cabinId){
       ${field('paymentRemainingLabel','Installment label','Final booking balance','text',true)}
       ${field('paymentRemainingDueDate','Due date','','date',true)}
       ${field('paymentRemainingAmount','Installment amount',defaultAmount>0?defaultAmount.toFixed(2):'','number',true)}
-      <label><span>Expected payer</span><select id="paymentRemainingPayer">
-        <option value="">Any traveler</option>
+
+      <label><span>Pay this installment to</span><select id="paymentRemainingRecipientType" onchange="syncPaymentRemainingRecipient_()">
+        <option value="Agency">Booking agency / property · ${esc(agencyName)}</option>
+        ${bookers.length?'<option value="Traveler">Traveler handling the booking</option>':''}
+      </select></label>
+
+      <label id="paymentRemainingRecipientTravelerWrap" class="hidden"><span>Booking traveler receiving payment</span><select id="paymentRemainingRecipientTraveler">
         ${bookers.map(function(id){
           return `<option value="${escAttr(id)}">${esc(paymentTravelerName_(id))}</option>`;
         }).join('')}
-      </select><small>Choose a booking traveler when one person is responsible for sending the property payment.</small></label>
+      </select><small>Only travelers listed as handling this booking can receive the installment.</small></label>
+
+      <label><span>Expected payer</span><select id="paymentRemainingPayer">
+        <option value="">Any traveler</option>
+        ${payers.map(function(traveler){
+          const id=String(traveler['Traveler ID']||'');
+          return `<option value="${escAttr(id)}">${esc(traveler.Name||paymentTravelerName_(id))}</option>`;
+        }).join('')}
+      </select><small>Optional. Assign the installment when a specific traveler is responsible for making this payment.</small></label>
+
       ${area('paymentRemainingNotes','Notes','Calculated from the current booking balance and unpaid agency-directed schedule.')}
+
       <div class="wide payment-balance-form-note">
-        <strong>Recipient:</strong> ${esc(plan['Agency Name']||cabin.Provider||'Agency / property')}
+        <strong>Accounting:</strong> A payment to a booking traveler is a reimbursement. It counts toward that traveler’s Paid total, but the booking balance falls only when the agency/property payment is recorded.
       </div>
       <div class="wide form-actions">
         <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
@@ -95,8 +118,19 @@ function savePaymentRemainingBalance_(event,cabinId){
 
   const amount=Number(val('paymentRemainingAmount')||0);
   const dueDate=String(val('paymentRemainingDueDate')||'').trim();
+  const recipientType=String(val('paymentRemainingRecipientType')||'Agency')==='Traveler'
+    ? 'Traveler'
+    : 'Agency';
+  const recipientTravelerId=recipientType==='Traveler'
+    ? String(val('paymentRemainingRecipientTraveler')||'').trim()
+    : '';
+
   if(!(amount>0)){toast('Remaining-balance installment must be greater than zero.',true);return;}
   if(!dueDate){toast('Choose the due date for the remaining balance.',true);return;}
+  if(recipientType==='Traveler'&&!recipientTravelerId){
+    toast('Choose the booking traveler receiving this installment.',true);
+    return;
+  }
 
   paymentOrganizerBackgroundSave_(
     'Remaining balance installment',
@@ -108,9 +142,11 @@ function savePaymentRemainingBalance_(event,cabinId){
       dueDate:dueDate,
       amountDue:amount,
       expectedPayerTravelerId:String(val('paymentRemainingPayer')||''),
-      recipientType:'Agency',
-      recipientTravelerId:'',
-      recipientName:String(plan['Agency Name']||cabin.Provider||'').trim(),
+      recipientType:recipientType,
+      recipientTravelerId:recipientTravelerId,
+      recipientName:recipientType==='Agency'
+        ? String(plan['Agency Name']||cabin.Provider||'').trim()
+        : '',
       notes:String(val('paymentRemainingNotes')||'').trim()
     },
     'Remaining balance installment added'
