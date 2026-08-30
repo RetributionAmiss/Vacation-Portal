@@ -51,9 +51,7 @@ function paymentGenerationMilestonesFromForm_(){
         amountDue:Math.max(0,Number(amountInput&&amountInput.value||0))
       };
     })
-    .filter(function(row){
-      return row.label||row.dueDate||row.amountDue>0;
-    });
+    .filter(function(row){return row.label||row.dueDate||row.amountDue>0;});
 }
 
 function paymentGenerationRecipientValues_(){
@@ -211,9 +209,6 @@ function openPaymentInstallmentGenerator_(cabinId){
     </form>
   </div>`);
 
-  document.querySelectorAll('#paymentGenerationMilestones input').forEach(function(input){
-    input.addEventListener('input',updatePaymentGenerationPreview_);
-  });
   const recipient=document.getElementById('paymentGenerationRecipientTraveler');
   if(recipient) recipient.addEventListener('change',updatePaymentGenerationPreview_);
   updatePaymentGenerationPreview_();
@@ -274,6 +269,13 @@ function saveGeneratedPaymentInstallments_(event,cabinId){
       }));
   });
 }
+
+document.addEventListener('input',function(event){
+  const target=event.target;
+  if(target&&target.closest&&target.closest('#paymentGenerationMilestones')){
+    updatePaymentGenerationPreview_();
+  }
+});
 
 renderPayments=function(){
   let html=renderPaymentsBeforeInstallmentGeneration_.apply(this,arguments);
