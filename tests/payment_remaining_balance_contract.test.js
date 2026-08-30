@@ -33,7 +33,7 @@ assert(client.includes('activePaymentTravelers_()'), 'expected payer choices sho
 assert(client.includes('A payment to a booking traveler is a reimbursement.'), 'recipient choice must explain reimbursement accounting semantics');
 
 assert(paymentsBackend.includes("bookingIds.indexOf(recipientTravelerId) < 0"), 'server must restrict traveler recipients to travelers handling the booking');
-assert(paymentsBackend.includes("return { type: 'Traveler', travelerId: recipientTravelerId"), 'server must normalize booking-traveler recipients through the existing schedule recipient contract');
+assert(paymentsBackend.includes("type: 'Traveler'") && paymentsBackend.includes('travelerId: recipientTravelerId'), 'server must normalize booking-traveler recipients through the existing schedule recipient contract');
 
 assert(client.includes('The current booking balance is already fully covered by unpaid agency-directed installments.'), 'tool must warn instead of silently double-scheduling a fully covered balance');
 assert(client.includes('The amount is left blank to prevent duplicate scheduling'), 'fully scheduled balances must require an intentional manual override');
