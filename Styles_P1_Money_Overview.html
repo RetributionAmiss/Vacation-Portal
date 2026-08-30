@@ -1,0 +1,70 @@
+<style>
+.p1-money-view .panel{display:grid;gap:16px}
+.p1-money-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:20px;border:1px solid rgba(35,76,60,.12);border-radius:20px;background:radial-gradient(circle at right top,rgba(196,154,69,.14),transparent 36%),linear-gradient(135deg,rgba(255,253,248,.98),rgba(238,244,239,.95));box-shadow:0 10px 28px rgba(20,45,35,.07)}
+.p1-money-hero h2{margin:4px 0 6px;font-size:29px}
+.p1-money-hero .muted{margin:0;max-width:700px}
+.p1-money-rental-picker{display:grid;gap:5px;min-width:min(330px,42%)}
+.p1-money-rental-picker>span{color:var(--muted);font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
+.p1-money-rental-picker select{width:100%;min-height:42px}
+.p1-money-sync-note{padding:10px 12px;border:1px solid rgba(196,154,69,.25);border-radius:12px;background:#fff8e8;color:#73520c;font-size:12px;font-weight:700}
+.p1-money-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.p1-money-summary-card{display:grid;gap:5px;min-height:126px;padding:15px;border:1px solid rgba(35,76,60,.11);border-radius:16px;background:#fff;box-shadow:0 5px 16px rgba(20,45,35,.045)}
+.p1-money-summary-card>span,.p1-money-budget-metrics span,.p1-money-mini-grid span{color:var(--muted);font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
+.p1-money-summary-card strong{align-self:end;color:var(--pine);font-family:Georgia,serif;font-size:27px;line-height:1.08}
+.p1-money-summary-card small{color:var(--muted);font-size:10px;line-height:1.35}
+.p1-money-summary-card.is-complete{border-color:rgba(47,125,82,.26);background:rgba(47,125,82,.055)}
+.p1-money-progress{display:grid;gap:8px;padding:12px 14px;border:1px solid rgba(35,76,60,.1);border-radius:14px;background:rgba(255,255,255,.7)}
+.p1-money-progress>div:first-child{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.p1-money-progress strong{color:var(--pine);font-size:14px}
+.p1-money-progress span{color:var(--muted);font-size:11px}
+.p1-money-progress-track{height:9px;overflow:hidden;border-radius:999px;background:#e5ece7}
+.p1-money-progress-track>span{display:block;height:100%;border-radius:inherit;background:var(--pine);transition:width .2s ease}
+.p1-money-layout{display:grid;grid-template-columns:1.15fr .85fr;gap:12px}
+.p1-money-focus-card,.p1-money-budget-card,.p1-money-family-card{display:grid;gap:13px;padding:16px;border:1px solid rgba(35,76,60,.11);border-radius:17px;background:rgba(255,255,255,.86)}
+.p1-money-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.p1-money-section-head p,.p1-money-section-head h3{margin:0}
+.p1-money-section-head h3{margin-top:3px;font-size:19px}
+.p1-money-next-payment{display:grid;gap:9px;padding:14px;border:1px solid rgba(196,154,69,.3);border-radius:14px;background:#fffaf0}
+.p1-money-next-payment>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.p1-money-next-payment>div:first-child span{color:#73520c;font-size:12px;font-weight:800}
+.p1-money-next-payment>div:first-child strong{color:var(--pine);font-family:Georgia,serif;font-size:25px}
+.p1-money-next-payment h4,.p1-money-next-payment p{margin:0}
+.p1-money-next-payment p{color:var(--muted);font-size:11px;line-height:1.45}
+.p1-money-next-payment button{justify-self:start}
+.p1-money-callout{display:grid;gap:7px;padding:14px;border:1px solid var(--line);border-radius:14px;background:#f7f9f7}
+.p1-money-callout span{color:var(--muted);font-size:11px;line-height:1.45}
+.p1-money-callout button{justify-self:start;margin-top:3px}
+.p1-money-caught-up{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid rgba(47,125,82,.18);border-radius:14px;background:rgba(47,125,82,.07)}
+.p1-money-caught-up>span{display:grid;place-items:center;width:36px;height:36px;flex:0 0 auto;border-radius:50%;background:#2f7d52;color:#fff;font-weight:900}
+.p1-money-caught-up strong,.p1-money-caught-up small{display:block}
+.p1-money-caught-up small{margin-top:2px;color:var(--muted);font-size:10px}
+.p1-money-caught-up.compact{padding:11px 12px}
+.p1-money-caught-up.compact>span{width:30px;height:30px}
+.p1-money-mini-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.p1-money-mini-grid>div{display:grid;gap:5px;padding:12px;border:1px solid var(--line);border-radius:13px;background:#fafbfa}
+.p1-money-mini-grid strong{color:var(--pine);font-size:20px}
+.p1-money-mini-grid small{color:var(--muted);font-size:10px;line-height:1.35}
+.p1-money-mini-grid .needs-attention{border-color:rgba(196,154,69,.38);background:#fff8e8}
+.p1-money-inline-action{justify-self:start}
+.p1-money-footnote{margin:0;color:var(--muted);font-size:10px;line-height:1.45}
+.p1-money-budget-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.p1-money-family-card .p1-money-budget-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}
+.p1-money-budget-metrics>div{display:grid;gap:5px;padding:11px 12px;border-radius:12px;background:#f6f8f6}
+.p1-money-budget-metrics strong{color:var(--pine);font-size:19px}
+.p1-money-budget-items{display:grid;gap:7px}
+.p1-money-budget-items article{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 11px;border-top:1px solid var(--line)}
+.p1-money-budget-items article:first-child{border-top:0}
+.p1-money-budget-items article>div{min-width:0}
+.p1-money-budget-items article strong,.p1-money-budget-items article span{display:block}
+.p1-money-budget-items article>div>strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.p1-money-budget-items article span{margin-top:2px;color:var(--muted);font-size:10px}
+.p1-money-budget-items article>strong{flex:0 0 auto;color:var(--pine)}
+.p1-money-family-card{border-color:rgba(196,154,69,.24);background:rgba(255,248,232,.45)}
+.p1-money-actions{display:flex;justify-content:flex-end;gap:8px}
+.p1-money-empty{text-align:center;padding:30px}
+.p1-money-empty h2{margin:5px 0 7px}
+.p1-money-empty button{justify-self:center}
+@media(max-width:980px){.p1-money-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.p1-money-layout{grid-template-columns:1fr}.p1-money-family-card .p1-money-budget-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.p1-money-view .panel{gap:12px}.p1-money-hero{display:grid;gap:14px;padding:16px}.p1-money-hero h2{font-size:24px}.p1-money-rental-picker{min-width:0;width:100%}.p1-money-summary-grid{grid-template-columns:1fr 1fr;gap:7px}.p1-money-summary-card{min-height:112px;padding:12px}.p1-money-summary-card strong{font-size:22px}.p1-money-progress>div:first-child{display:grid;gap:2px}.p1-money-focus-card,.p1-money-budget-card,.p1-money-family-card{padding:13px}.p1-money-mini-grid{grid-template-columns:1fr}.p1-money-budget-metrics,.p1-money-family-card .p1-money-budget-metrics{grid-template-columns:1fr 1fr}.p1-money-section-head{align-items:center}.p1-money-actions{display:grid;grid-template-columns:1fr 1fr}.p1-money-actions button{width:100%;min-height:44px}}
+@media(max-width:390px){.p1-money-summary-grid{grid-template-columns:1fr}.p1-money-budget-metrics,.p1-money-family-card .p1-money-budget-metrics{grid-template-columns:1fr}.p1-money-next-payment>div:first-child{align-items:flex-start}.p1-money-actions{grid-template-columns:1fr}}
+</style>
