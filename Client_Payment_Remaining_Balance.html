@@ -44,9 +44,7 @@ function openPaymentRemainingBalanceTool_(cabinId){
   }
 
   const bookers=paymentBookerIds_(cabinId);
-  const defaultAmount=position.unscheduled>0.005
-    ? position.unscheduled
-    : position.bookingBalance;
+  const defaultAmount=position.unscheduled;
 
   openModal(`<div class="payment-balance-tool">
     <p class="eyebrow">ORGANIZER BALANCE TOOL</p>
@@ -62,7 +60,7 @@ function openPaymentRemainingBalanceTool_(cabinId){
     </div>
 
     ${position.unscheduled<=0.005&&position.bookingBalance>0.005
-      ? '<div class="payment-generation-warning">The current booking balance is already fully covered by unpaid agency-directed installments. The amount below defaults to the full booking balance only in case you intentionally need a replacement or revised final installment.</div>'
+      ? '<div class="payment-generation-warning">The current booking balance is already fully covered by unpaid agency-directed installments. The amount is left blank to prevent duplicate scheduling; enter an override only if you intentionally need a replacement or revised installment.</div>'
       : position.bookingBalance<=0.005
         ? '<div class="payment-generation-warning">The booking currently has no unpaid agency balance. Add another installment only if the booking total or recorded agency payments need to be corrected.</div>'
         : ''}
@@ -92,7 +90,8 @@ function openPaymentRemainingBalanceTool_(cabinId){
 function savePaymentRemainingBalance_(event,cabinId){
   event.preventDefault();
   const plan=paymentPlan_(cabinId);
-  if(!plan){toast('Booking setup could not be found.',true);return;}
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  if(!plan||!cabin){toast('Booking setup could not be found.',true);return;}
 
   const amount=Number(val('paymentRemainingAmount')||0);
   const dueDate=String(val('paymentRemainingDueDate')||'').trim();
@@ -111,7 +110,7 @@ function savePaymentRemainingBalance_(event,cabinId){
       expectedPayerTravelerId:String(val('paymentRemainingPayer')||''),
       recipientType:'Agency',
       recipientTravelerId:'',
-      recipientName:String(plan['Agency Name']||'').trim(),
+      recipientName:String(plan['Agency Name']||cabin.Provider||'').trim(),
       notes:String(val('paymentRemainingNotes')||'').trim()
     },
     'Remaining balance installment added'
