@@ -1,0 +1,290 @@
+<script>
+const renderPaymentsBeforeInstallmentGeneration_=renderPayments;
+let paymentGenerationRowCounter_=0;
+
+function paymentGenerationSavedShares_(cabinId){
+  return paymentSavedShares_(cabinId)
+    .map(function(row){
+      return {
+        travelerId:String(row['Traveler ID']||''),
+        travelerName:paymentTravelerName_(row['Traveler ID']),
+        adjustedShare:Math.max(0,Number(row['Adjusted Share']||0))
+      };
+    })
+    .filter(function(row){return row.travelerId&&row.adjustedShare>0;})
+    .sort(function(a,b){return a.travelerName.localeCompare(b.travelerName);});
+}
+
+function paymentGenerationMilestoneMarkup_(label,dueDate,amount){
+  paymentGenerationRowCounter_+=1;
+  const id='paymentGenerationMilestone'+paymentGenerationRowCounter_;
+  return `<div class="payment-generation-milestone" data-payment-generation-milestone id="${id}">
+    <label><span>Label</span><input data-generation-label value="${escAttr(label||'')}"></label>
+    <label><span>Due date</span><input type="date" data-generation-date value="${escAttr(dueDate||'')}"></label>
+    <label><span>Booking milestone amount</span><input type="number" min="0.01" step="0.01" data-generation-amount value="${amount?Number(amount).toFixed(2):''}"></label>
+    <button class="ghost tiny payment-generation-remove" type="button" onclick="removePaymentGenerationMilestone_('${id}')">Remove</button>
+  </div>`;
+}
+
+function addPaymentGenerationMilestone_(label,dueDate,amount){
+  const target=document.getElementById('paymentGenerationMilestones');
+  if(!target) return;
+  target.insertAdjacentHTML('beforeend',paymentGenerationMilestoneMarkup_(label,dueDate,amount));
+  updatePaymentGenerationPreview_();
+}
+
+function removePaymentGenerationMilestone_(id){
+  const row=document.getElementById(id);
+  if(row) row.remove();
+  updatePaymentGenerationPreview_();
+}
+
+function paymentGenerationMilestonesFromForm_(){
+  return Array.from(document.querySelectorAll('[data-payment-generation-milestone]'))
+    .map(function(row,index){
+      const amountInput=row.querySelector('[data-generation-amount]');
+      const dateInput=row.querySelector('[data-generation-date]');
+      const labelInput=row.querySelector('[data-generation-label]');
+      return {
+        label:String(labelInput&&labelInput.value||('Payment '+(index+1))).trim(),
+        dueDate:String(dateInput&&dateInput.value||'').trim(),
+        amountDue:Math.max(0,Number(amountInput&&amountInput.value||0))
+      };
+    })
+    .filter(function(row){
+      return row.label||row.dueDate||row.amountDue>0;
+    });
+}
+
+function paymentGenerationRecipientValues_(){
+  return {
+    recipientType:String(val('paymentGenerationRecipientType')||'Agency'),
+    recipientTravelerId:String(val('paymentGenerationRecipientTraveler')||'')
+  };
+}
+
+function paymentGenerationAllocateCents_(totalCents,shares){
+  const totalShares=shares.reduce(function(sum,row){return sum+Number(row.adjustedShare||0);},0);
+  if(!(totalShares>0)) return [];
+  let cumulative=0;
+  let allocated=0;
+  return shares.map(function(row,index){
+    cumulative+=Number(row.adjustedShare||0);
+    const target=index===shares.length-1
+      ? totalCents
+      : Math.round(totalCents*cumulative/totalShares);
+    const cents=Math.max(0,target-allocated);
+    allocated+=cents;
+    return cents;
+  });
+}
+
+function paymentGenerationLocalRows_(cabinId,milestones,recipient){
+  const shares=paymentGenerationSavedShares_(cabinId);
+  const plan=paymentPlan_(cabinId);
+  const agencyName=String(plan&&plan['Agency Name']||'Agency / property');
+  const rows=[];
+  const now=new Date().toISOString();
+
+  milestones.forEach(function(milestone,milestoneIndex){
+    const cents=paymentGenerationAllocateCents_(Math.round(Number(milestone.amountDue||0)*100),shares);
+    shares.forEach(function(share,index){
+      if(!(cents[index]>0)) return;
+      const reimburse=
+        recipient.recipientType==='Traveler'&&
+        share.travelerId!==recipient.recipientTravelerId;
+      rows.push({
+        'Schedule ID':'LOCAL-GEN-'+Date.now()+'-'+milestoneIndex+'-'+index,
+        'Cabin ID':cabinId,
+        'Label':milestone.label||('Payment '+(milestoneIndex+1)),
+        'Due Date':milestone.dueDate,
+        'Amount Due':cents[index]/100,
+        'Expected Payer Traveler ID':share.travelerId,
+        'Recipient Type':reimburse?'Traveler':'Agency',
+        'Recipient Traveler ID':reimburse?recipient.recipientTravelerId:'',
+        'Recipient Name':reimburse?paymentTravelerName_(recipient.recipientTravelerId):agencyName,
+        'Notes':'Generated from saved traveler payment shares.',
+        'Created At':now,
+        'Updated At':now
+      });
+    });
+  });
+  return rows;
+}
+
+function syncPaymentGenerationRecipient_(){
+  const type=String(val('paymentGenerationRecipientType')||'Agency');
+  const wrapper=document.getElementById('paymentGenerationTravelerRecipientWrap');
+  if(wrapper) wrapper.classList.toggle('hidden',type!=='Traveler');
+  updatePaymentGenerationPreview_();
+}
+
+function updatePaymentGenerationPreview_(){
+  const target=document.getElementById('paymentGenerationPreview');
+  if(!target) return;
+  const cabinId=String(target.dataset.cabinId||'');
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  if(!cabin) return;
+
+  const shares=paymentGenerationSavedShares_(cabinId);
+  const milestones=paymentGenerationMilestonesFromForm_();
+  const milestoneTotal=milestones.reduce(function(sum,row){return sum+Number(row.amountDue||0);},0);
+  const shareTotal=shares.reduce(function(sum,row){return sum+Number(row.adjustedShare||0);},0);
+  const bookingTotal=paymentSummary_(cabin).bookingTotal;
+  const fraction=shareTotal>0?milestoneTotal/shareTotal:0;
+
+  target.innerHTML=`
+    <div class="payment-generation-preview-head">
+      <span><strong>${milestones.length}</strong> milestone${milestones.length===1?'':'s'}</span>
+      <span><strong>${shares.length}</strong> traveler${shares.length===1?'':'s'}</span>
+      <span><strong>${paymentMoney_(milestoneTotal)}</strong> generated total</span>
+    </div>
+    <div class="payment-generation-preview-copy">
+      <span>Booking total: <strong>${paymentMoney_(bookingTotal)}</strong></span>
+      <span>Saved traveler shares: <strong>${paymentMoney_(shareTotal)}</strong></span>
+      <span>This batch covers <strong>${Math.max(0,fraction*100).toFixed(1)}%</strong> of the saved traveler-share total.</span>
+    </div>
+    ${shares.length&&milestoneTotal>0?`<div class="payment-generation-traveler-preview">
+      ${shares.map(function(row){
+        const batchAmount=shareTotal>0?milestoneTotal*Number(row.adjustedShare||0)/shareTotal:0;
+        return `<span><strong>${esc(row.travelerName)}</strong><small>${paymentMoney_(batchAmount)} across this batch</small></span>`;
+      }).join('')}
+    </div>`:''}
+    ${milestoneTotal>bookingTotal+0.01?'<div class="payment-generation-warning">This batch is greater than the current booking total. Review the milestone amounts before generating.</div>':''}`;
+}
+
+function openPaymentInstallmentGenerator_(cabinId){
+  if(!paymentOrganizerUi_()){
+    toast('Only the Organizer can generate traveler installments.',true);
+    return;
+  }
+
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  const plan=paymentPlan_(cabinId);
+  const shares=paymentGenerationSavedShares_(cabinId);
+  if(!cabin||!plan){
+    toast('Set up the booking before generating traveler installments.',true);
+    return;
+  }
+  if(!shares.length){
+    toast('Save traveler payment shares before generating installments.',true);
+    return;
+  }
+
+  const bookers=paymentBookerIds_(cabinId);
+  paymentGenerationRowCounter_=0;
+  openModal(`<div class="payment-generation-editor">
+    <p class="eyebrow">AUTOMATIC PAYMENT SCHEDULE</p>
+    <h2>Generate traveler installments</h2>
+    <p class="muted">Enter the property payment milestones once. The portal divides each milestone proportionally using the saved adjusted traveler shares. Generated installments stay fully editable afterward.</p>
+
+    <form onsubmit="saveGeneratedPaymentInstallments_(event,'${escAttr(cabinId)}')">
+      <div class="form-grid payment-generation-recipient">
+        <label><span>Travelers pay</span><select id="paymentGenerationRecipientType" onchange="syncPaymentGenerationRecipient_()">
+          <option value="Agency">Agency / property directly</option>
+          ${bookers.length?'<option value="Traveler">A traveler handling the booking</option>':''}
+        </select></label>
+        <label id="paymentGenerationTravelerRecipientWrap" class="hidden"><span>Reimbursement recipient</span><select id="paymentGenerationRecipientTraveler">
+          ${bookers.map(function(id){return `<option value="${escAttr(id)}">${esc(paymentTravelerName_(id))}</option>`;}).join('')}
+        </select></label>
+      </div>
+
+      <div class="payment-generation-note">
+        <strong>Existing schedule rows are left untouched.</strong>
+        <span>Generating again adds another batch, so use the preview below to check amounts before saving.</span>
+      </div>
+
+      <div class="payment-generation-section-head">
+        <div><strong>Booking milestones</strong><small>Each amount is the overall milestone amount before it is divided among travelers.</small></div>
+        <button type="button" class="ghost" onclick="addPaymentGenerationMilestone_('','','')">Add milestone</button>
+      </div>
+      <div id="paymentGenerationMilestones" class="payment-generation-milestones">
+        ${paymentGenerationMilestoneMarkup_('','','')}
+      </div>
+
+      <div id="paymentGenerationPreview" class="payment-generation-preview" data-cabin-id="${escAttr(cabinId)}"></div>
+
+      <div class="form-actions payment-generation-actions">
+        <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        <button type="submit">Generate traveler installments</button>
+      </div>
+    </form>
+  </div>`);
+
+  document.querySelectorAll('#paymentGenerationMilestones input').forEach(function(input){
+    input.addEventListener('input',updatePaymentGenerationPreview_);
+  });
+  const recipient=document.getElementById('paymentGenerationRecipientTraveler');
+  if(recipient) recipient.addEventListener('change',updatePaymentGenerationPreview_);
+  updatePaymentGenerationPreview_();
+}
+
+function saveGeneratedPaymentInstallments_(event,cabinId){
+  event.preventDefault();
+  const milestones=paymentGenerationMilestonesFromForm_();
+  if(!milestones.length){toast('Add at least one payment milestone.',true);return;}
+  if(milestones.some(function(row){return !row.dueDate||!(row.amountDue>0);})){toast('Every milestone needs a due date and amount.',true);return;}
+
+  const recipient=paymentGenerationRecipientValues_();
+  if(recipient.recipientType==='Traveler'&&!recipient.recipientTravelerId){
+    toast('Choose the traveler receiving reimbursements.',true);
+    return;
+  }
+
+  const localRows=paymentGenerationLocalRows_(cabinId,milestones,recipient);
+  if(!localRows.length){toast('No installments could be generated from the saved traveler shares.',true);return;}
+
+  withOrganizerAuthorization_(function(){
+    const previous=(paymentState_.schedule||[]).map(function(row){return Object.assign({},row);});
+    paymentState_.schedule=previous.concat(localRows);
+    paymentPersistVisibleSnapshot_();
+    closeModal();
+    if(currentView==='payments'||currentView==='money') render();
+
+    const saveId=typeof beginBackgroundSave_==='function'
+      ? beginBackgroundSave_('Traveler installments','payment-installment-generation:'+cabinId)
+      : '';
+
+    google.script.run
+      .withSuccessHandler(function(data){
+        applyPaymentData_(data||{});
+        if(currentView==='payments'||currentView==='money') render();
+        if(saveId&&typeof completeBackgroundSave_==='function'){
+          completeBackgroundSave_(saveId,'Traveler installments generated');
+        }else{
+          toast('Traveler installments generated');
+        }
+      })
+      .withFailureHandler(function(error){
+        paymentState_.schedule=previous;
+        paymentPersistVisibleSnapshot_();
+        if(currentView==='payments'||currentView==='money') render();
+        if(typeof organizerAuthError_==='function'&&organizerAuthError_(error)) saveOrganizerSession_(null);
+        if(saveId&&typeof failBackgroundSave_==='function'){
+          failBackgroundSave_(saveId,error,'Traveler installments could not be generated');
+        }else{
+          toast(error&&error.message?error.message:String(error),true);
+        }
+      })
+      .generatePaymentInstallments(organizerAuthorizationValues_({
+        cabinId:cabinId,
+        recipientType:recipient.recipientType,
+        recipientTravelerId:recipient.recipientTravelerId,
+        milestones:milestones
+      }));
+  });
+}
+
+renderPayments=function(){
+  let html=renderPaymentsBeforeInstallmentGeneration_.apply(this,arguments);
+  if(!paymentState_.loaded||!paymentOrganizerUi_()) return html;
+  const cabin=selectedPaymentCabin_();
+  if(!cabin||!paymentPlan_(cabin['Cabin ID'])||!paymentGenerationSavedShares_(cabin['Cabin ID']).length) return html;
+
+  const add=`<button type="button" onclick="openPaymentScheduleForm_('${cabin['Cabin ID']}','')">Add installment</button>`;
+  if(html.indexOf(add)>=0){
+    html=html.replace(add,add+`<button type="button" class="ghost" onclick="openPaymentInstallmentGenerator_('${escAttr(cabin['Cabin ID'])}')">Generate traveler installments</button>`);
+  }
+  return html;
+};
+</script>
