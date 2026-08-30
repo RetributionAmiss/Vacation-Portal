@@ -1,0 +1,406 @@
+<script>
+const renderBeforeP1MoneyOverview_=render;
+const openMobileSectionMenuBeforeP1Money_=openMobileSectionMenu_;
+const applyPaymentDataBeforeP1Money_=
+  typeof applyPaymentData_==='function' ? applyPaymentData_ : null;
+
+(function configureP1MoneyNavigation_(){
+  const moneyGroup=P1_NAV_GROUPS_.find(function(group){return group.id==='money';});
+  if(moneyGroup){
+    moneyGroup.defaultView='money';
+    moneyGroup.views=['money','payments','budget'];
+  }
+  P1_VIEW_LABELS_.money='Overview';
+})();
+
+function p1MoneyCabins_(){
+  if(typeof paymentVisibleCabins_==='function') return paymentVisibleCabins_();
+  return (DATA&&DATA.cabins||[]).filter(function(cabin){
+    return String(cabin.Active||'Yes').toLowerCase()!=='no';
+  });
+}
+
+function p1MoneyCabin_(){
+  const cabins=p1MoneyCabins_();
+  if(!cabins.length) return null;
+
+  const selected=String(
+    paymentPlannerCabinId_ ||
+    (DATA&&DATA.trip&&DATA.trip['Selected Cabin ID']) ||
+    ''
+  );
+
+  return cabins.find(function(cabin){
+    return String(cabin['Cabin ID']||'')===selected;
+  }) || cabins[0];
+}
+
+function p1MoneyEnsurePaymentData_(){
+  if(typeof paymentState_==='undefined') return;
+
+  if(!paymentState_.loaded && typeof paymentRestoreSnapshot_==='function'){
+    paymentRestoreSnapshot_();
+  }
+
+  if(
+    !paymentState_.loading &&
+    typeof loadPaymentData_==='function' &&
+    (!paymentState_.loaded || paymentState_.fromSnapshot)
+  ){
+    setTimeout(function(){loadPaymentData_(false);},0);
+  }
+}
+
+function p1MoneyPaymentRows_(cabinId){
+  return typeof paymentsForCabin_==='function'
+    ? paymentsForCabin_(cabinId)
+    : [];
+}
+
+function p1MoneyScheduleRows_(cabinId){
+  return typeof paymentScheduleForCabin_==='function'
+    ? paymentScheduleForCabin_(cabinId)
+    : [];
+}
+
+function p1MoneyTravelerStats_(cabin){
+  const cabinId=String(cabin&&cabin['Cabin ID']||'');
+  const travelerId=String(currentTravelerId||'');
+  const payments=p1MoneyPaymentRows_(cabinId);
+
+  const expected=
+    travelerId && typeof paymentExpectedShareForTraveler_==='function'
+      ? Number(paymentExpectedShareForTraveler_(cabin,travelerId)||0)
+      : 0;
+
+  const paid=
+    travelerId && typeof paymentTravelerPaidTotal_==='function'
+      ? Number(paymentTravelerPaidTotal_(cabinId,travelerId,'')||0)
+      : 0;
+
+  const ownPayments=payments.filter(function(row){
+    return String(row['Paid By Traveler ID']||'')===travelerId;
+  });
+
+  const agencyPaid=ownPayments
+    .filter(function(row){return String(row['Paid To Type']||'Agency')==='Agency';})
+    .reduce(function(sum,row){return sum+Number(row.Amount||0);},0);
+
+  const reimbursementsSent=ownPayments
+    .filter(function(row){return String(row['Paid To Type']||'')==='Traveler';})
+    .reduce(function(sum,row){return sum+Number(row.Amount||0);},0);
+
+  const pendingSent=ownPayments.filter(function(row){
+    return String(row['Paid To Type']||'')==='Traveler' &&
+      String(row['Confirmation Status']||'Pending')!=='Confirmed';
+  });
+
+  const pendingIncoming=payments.filter(function(row){
+    return String(row['Paid To Type']||'')==='Traveler' &&
+      String(row['Paid To Traveler ID']||'')===travelerId &&
+      String(row['Confirmation Status']||'Pending')!=='Confirmed';
+  });
+
+  return {
+    expected:expected,
+    paid:paid,
+    remaining:Math.max(0,expected-paid),
+    agencyPaid:agencyPaid,
+    reimbursementsSent:reimbursementsSent,
+    pendingSentCount:pendingSent.length,
+    pendingSentAmount:pendingSent.reduce(function(sum,row){return sum+Number(row.Amount||0);},0),
+    pendingIncomingCount:pendingIncoming.length,
+    pendingIncomingAmount:pendingIncoming.reduce(function(sum,row){return sum+Number(row.Amount||0);},0)
+  };
+}
+
+function p1MoneyNextPayment_(cabin){
+  const cabinId=String(cabin&&cabin['Cabin ID']||'');
+  const travelerId=String(currentTravelerId||'');
+  if(!cabinId||!travelerId) return null;
+
+  const payments=p1MoneyPaymentRows_(cabinId);
+  const candidates=p1MoneyScheduleRows_(cabinId)
+    .map(function(row){
+      const status=typeof paymentScheduleStatus_==='function'
+        ? paymentScheduleStatus_(row,payments)
+        : {remaining:Number(row['Amount Due']||0),paid:0,status:'Scheduled'};
+      return {row:row,status:status};
+    })
+    .filter(function(item){
+      const expected=String(item.row['Expected Payer Traveler ID']||'');
+      return expected===travelerId && Number(item.status.remaining||0)>.005;
+    })
+    .sort(function(left,right){
+      const a=String(left.row['Due Date']||'9999-12-31').slice(0,10);
+      const b=String(right.row['Due Date']||'9999-12-31').slice(0,10);
+      return a.localeCompare(b);
+    });
+
+  return candidates[0]||null;
+}
+
+function p1MoneyBudgetSummary_(){
+  const rows=(DATA&&DATA.budget||[]).slice();
+  const traveler=currentTraveler();
+  const travelerName=String(traveler&&traveler.Name||'').trim().toLowerCase();
+
+  const extras=rows.filter(function(row){
+    return String(row['Include in Rental Split']||'No')!=='Yes';
+  });
+
+  const open=extras.filter(function(row){
+    return !/paid|complete|done/i.test(String(row.Status||''));
+  });
+
+  const paidByTraveler=travelerName
+    ? extras.filter(function(row){
+        return String(row['Paid By']||'').trim().toLowerCase()===travelerName;
+      })
+    : [];
+
+  return {
+    total:extras.reduce(function(sum,row){return sum+Number(row.Amount||0);},0),
+    openAmount:open.reduce(function(sum,row){return sum+Number(row.Amount||0);},0),
+    openCount:open.length,
+    paidByTraveler:paidByTraveler.reduce(function(sum,row){return sum+Number(row.Amount||0);},0),
+    nextItems:open.slice().sort(function(left,right){
+      const a=String(left['Due Date']||'9999-12-31').slice(0,10);
+      const b=String(right['Due Date']||'9999-12-31').slice(0,10);
+      return a.localeCompare(b);
+    }).slice(0,3)
+  };
+}
+
+function p1MoneyFamilyBooking_(cabin){
+  if(typeof paymentSummary_!=='function') return null;
+  const summary=paymentSummary_(cabin);
+  return {
+    total:Number(summary.bookingTotal||0),
+    paid:Number(summary.paidToAgency||0),
+    remaining:Number(summary.remaining||0),
+    reimbursements:Number(summary.reimbursements||0)
+  };
+}
+
+function p1MoneyProgress_(paid,total){
+  if(Number(total||0)<=0) return 0;
+  return Math.max(0,Math.min(100,Number(paid||0)/Number(total||0)*100));
+}
+
+function p1MoneyDate_(value){
+  if(typeof paymentDateLabel_==='function') return paymentDateLabel_(value);
+  return String(value||'No due date');
+}
+
+function p1MoneyAmount_(value){
+  if(typeof paymentMoney_==='function') return paymentMoney_(value);
+  return money(value||0);
+}
+
+function p1ChangeMoneyCabin_(cabinId){
+  paymentPlannerCabinId_=String(cabinId||'');
+  render();
+}
+
+function p1MoneyOpenPayment_(cabinId,scheduleId){
+  if(scheduleId&&typeof openBookingPaymentForm_==='function'){
+    openBookingPaymentForm_(cabinId,'',scheduleId);
+    return;
+  }
+  navigate('payments');
+}
+
+function renderP1MoneyOverview_(){
+  p1MoneyEnsurePaymentData_();
+
+  const traveler=currentTraveler();
+  const cabin=p1MoneyCabin_();
+  const budget=p1MoneyBudgetSummary_();
+
+  if(!cabin){
+    return `<section class="view p1-money-view">
+      <div class="panel p1-money-empty">
+        <p class="eyebrow">MONEY</p>
+        <h2>Your trip money</h2>
+        <p class="muted">Add or select a rental before lodging costs can be summarized.</p>
+        <button type="button" onclick="navigate('budget')">Open shared budget</button>
+      </div>
+    </section>`;
+  }
+
+  const cabinId=String(cabin['Cabin ID']||'');
+  const stats=p1MoneyTravelerStats_(cabin);
+  const next=p1MoneyNextPayment_(cabin);
+  const family=p1MoneyFamilyBooking_(cabin);
+  const paymentReady=typeof paymentState_!=='undefined'&&paymentState_.loaded;
+  const progress=p1MoneyProgress_(stats.paid,stats.expected);
+  const cabins=p1MoneyCabins_();
+  const organizer=p1OrganizerUi_();
+
+  return `<section class="view p1-money-view">
+    <div class="panel">
+      <div class="p1-money-hero">
+        <div>
+          <p class="eyebrow">MONEY</p>
+          <h2>${esc(traveler&&traveler.Name?traveler.Name+', here is your trip money':'Your trip money')}</h2>
+          <p class="muted">Your lodging target, payments, reimbursements, and shared trip costs in one place.</p>
+        </div>
+        <label class="p1-money-rental-picker">
+          <span>Rental</span>
+          <select onchange="p1ChangeMoneyCabin_(this.value)">
+            ${cabins.map(function(item){
+              const id=String(item['Cabin ID']||'');
+              return `<option value="${escAttr(id)}" ${id===cabinId?'selected':''}>${esc(displayName(item))}</option>`;
+            }).join('')}
+          </select>
+        </label>
+      </div>
+
+      ${!paymentReady?'<div class="p1-money-sync-note" role="status">Showing the money workspace now while lodging payment data finishes syncing in the background…</div>':''}
+
+      <div class="p1-money-summary-grid">
+        <article class="p1-money-summary-card">
+          <span>Expected lodging share</span>
+          <strong>${paymentReady?p1MoneyAmount_(stats.expected):'—'}</strong>
+          <small>Your current adjusted rental-board target.</small>
+        </article>
+        <article class="p1-money-summary-card">
+          <span>Paid by you</span>
+          <strong>${paymentReady?p1MoneyAmount_(stats.paid):'—'}</strong>
+          <small>${paymentReady?p1MoneyAmount_(stats.agencyPaid)+' to agency · '+p1MoneyAmount_(stats.reimbursementsSent)+' reimbursed':'Syncing payment ledger…'}</small>
+        </article>
+        <article class="p1-money-summary-card ${paymentReady&&stats.remaining<=.005?'is-complete':''}">
+          <span>Left on lodging</span>
+          <strong>${paymentReady?p1MoneyAmount_(stats.remaining):'—'}</strong>
+          <small>${paymentReady&&stats.remaining<=.005?'Your expected lodging share is covered.':'Based on your expected share and recorded outgoing payments.'}</small>
+        </article>
+        <article class="p1-money-summary-card">
+          <span>Shared trip extras</span>
+          <strong>${p1MoneyAmount_(budget.total)}</strong>
+          <small>${budget.openCount?budget.openCount+' open shared budget item'+(budget.openCount===1?'':'s'):'No open shared budget items'}.</small>
+        </article>
+      </div>
+
+      <div class="p1-money-progress" aria-label="Lodging payment progress">
+        <div><strong>${paymentReady?Math.round(progress)+'%':'Syncing'}</strong><span>of your expected lodging share recorded</span></div>
+        <div class="p1-money-progress-track"><span style="width:${paymentReady?progress:0}%"></span></div>
+      </div>
+
+      <div class="p1-money-layout">
+        <section class="p1-money-focus-card">
+          <div class="p1-money-section-head">
+            <div><p class="eyebrow">NEXT</p><h3>Next payment</h3></div>
+            <button class="ghost tiny" type="button" onclick="navigate('payments')">Payment details</button>
+          </div>
+          ${!paymentReady
+            ? '<div class="p1-money-callout"><strong>Syncing your payment schedule…</strong><span>The rest of Money is available while this finishes.</span></div>'
+            : next
+              ? `<div class="p1-money-next-payment">
+                  <div><span>${esc(p1MoneyDate_(next.row['Due Date']))}</span><strong>${p1MoneyAmount_(next.status.remaining)}</strong></div>
+                  <h4>${esc(next.row.Label||'Scheduled lodging payment')}</h4>
+                  <p>${esc(paymentRecipientLabel_(next.row,'Recipient'))} · ${p1MoneyAmount_(next.status.paid)} already recorded</p>
+                  <button type="button" onclick="p1MoneyOpenPayment_('${escAttr(cabinId)}','${escAttr(next.row['Schedule ID'])}')">Make this payment</button>
+                </div>`
+              : stats.remaining>.005
+                ? `<div class="p1-money-callout"><strong>${p1MoneyAmount_(stats.remaining)} remains on your lodging share</strong><span>No unpaid installment is currently assigned to you.</span><button type="button" onclick="p1MoneyOpenPayment_('${escAttr(cabinId)}','')">Record a payment</button></div>`
+                : '<div class="p1-money-caught-up"><span aria-hidden="true">✓</span><div><strong>You are caught up on lodging</strong><small>No unpaid scheduled installment is assigned to you.</small></div></div>'}
+        </section>
+
+        <section class="p1-money-focus-card">
+          <div class="p1-money-section-head"><div><p class="eyebrow">REIMBURSEMENTS</p><h3>Money between travelers</h3></div></div>
+          <div class="p1-money-mini-grid">
+            <div><span>You reimbursed</span><strong>${paymentReady?p1MoneyAmount_(stats.reimbursementsSent):'—'}</strong><small>${paymentReady&&stats.pendingSentCount?stats.pendingSentCount+' awaiting recipient confirmation':'No sent payments awaiting confirmation'}</small></div>
+            <div class="${paymentReady&&stats.pendingIncomingCount?'needs-attention':''}"><span>Awaiting your confirmation</span><strong>${paymentReady?p1MoneyAmount_(stats.pendingIncomingAmount):'—'}</strong><small>${paymentReady?stats.pendingIncomingCount+' payment'+(stats.pendingIncomingCount===1?'':'s')+' to review':'Syncing reimbursements…'}</small></div>
+          </div>
+          ${paymentReady&&stats.pendingIncomingCount?'<button type="button" class="p1-money-inline-action" onclick="navigate(\'payments\')">Review payments to you</button>':''}
+          <p class="p1-money-footnote">Confirmation acknowledges receipt only; it does not change lodging totals.</p>
+        </section>
+      </div>
+
+      <section class="p1-money-budget-card">
+        <div class="p1-money-section-head">
+          <div><p class="eyebrow">SHARED BUDGET</p><h3>Trip costs outside the lodging split</h3></div>
+          <button class="ghost tiny" type="button" onclick="navigate('budget')">Open Budget</button>
+        </div>
+        <div class="p1-money-budget-metrics">
+          <div><span>Shared extras total</span><strong>${p1MoneyAmount_(budget.total)}</strong></div>
+          <div><span>Still open</span><strong>${p1MoneyAmount_(budget.openAmount)}</strong></div>
+          <div><span>Paid by you</span><strong>${p1MoneyAmount_(budget.paidByTraveler)}</strong></div>
+        </div>
+        ${budget.nextItems.length
+          ? `<div class="p1-money-budget-items">${budget.nextItems.map(function(row){
+              return `<article><div><strong>${esc(row.Description||row.Category||'Shared cost')}</strong><span>${esc(row.Category||'Trip cost')}${row['Due Date']?' · due '+esc(p1MoneyDate_(row['Due Date'])):''}</span></div><strong>${p1MoneyAmount_(row.Amount)}</strong></article>`;
+            }).join('')}</div>`
+          : '<div class="p1-money-caught-up compact"><span aria-hidden="true">✓</span><div><strong>Shared budget is caught up</strong><small>No unpaid non-lodging budget items are listed.</small></div></div>'}
+      </section>
+
+      ${organizer&&family?`<section class="p1-money-family-card">
+        <div class="p1-money-section-head"><div><p class="eyebrow">ORGANIZER</p><h3>Family booking position</h3></div></div>
+        <div class="p1-money-budget-metrics">
+          <div><span>Booking total</span><strong>${p1MoneyAmount_(family.total)}</strong></div>
+          <div><span>Paid to agency</span><strong>${p1MoneyAmount_(family.paid)}</strong></div>
+          <div><span>Left to agency</span><strong>${p1MoneyAmount_(family.remaining)}</strong></div>
+          <div><span>Reimbursements recorded</span><strong>${p1MoneyAmount_(family.reimbursements)}</strong></div>
+        </div>
+      </section>`:''}
+
+      <div class="p1-money-actions">
+        <button type="button" onclick="navigate('payments')">Payments</button>
+        <button class="ghost" type="button" onclick="navigate('budget')">Shared Budget</button>
+      </div>
+    </div>
+  </section>`;
+}
+
+p1SyncMobileNavigation_=function(){
+  const mobile=document.querySelector('.mobile-simple-nav');
+  if(!mobile) return;
+
+  const group=p1GroupForView_(currentView);
+  const moreActive=['stay','organizer'].indexOf(group.id)>=0;
+
+  mobile.classList.add('p1-mobile-nav');
+  mobile.innerHTML=`
+    <button type="button" class="${currentView==='dashboard'?'active':''}" onclick="p1NavigateView_('dashboard')"><span class="p1-mobile-nav-icon" aria-hidden="true">⌂</span><span>Home</span></button>
+    <button type="button" class="${currentView==='rentals'?'active':''}" onclick="p1NavigateView_('rentals')"><span class="p1-mobile-nav-icon" aria-hidden="true">◇</span><span>Rental</span></button>
+    <button type="button" class="${group.id==='plan'?'active':''}" onclick="p1NavigateGroup_('plan')"><span class="p1-mobile-nav-icon" aria-hidden="true">▤</span><span>Plan</span></button>
+    <button type="button" class="${group.id==='money'?'active':''}" onclick="p1NavigateGroup_('money')"><span class="p1-mobile-nav-icon" aria-hidden="true">$</span><span>Money</span></button>
+    <button type="button" class="${moreActive?'active':''}" onclick="openMobileSectionMenu_()"><span class="p1-mobile-nav-icon" aria-hidden="true">•••</span><span>More</span></button>`;
+};
+
+openMobileSectionMenu_=function(){
+  openMobileSectionMenuBeforeP1Money_.apply(this,arguments);
+
+  const sections=Array.from(document.querySelectorAll('.p1-more-menu section'));
+  const moneySection=sections.find(function(section){
+    const heading=section.querySelector('h3');
+    return heading&&heading.textContent.trim()==='Money';
+  });
+
+  if(moneySection&&!moneySection.querySelector('[data-p1-money-overview]')){
+    const heading=moneySection.querySelector('h3');
+    heading.insertAdjacentHTML('afterend',`<button type="button" data-p1-money-overview class="p1-more-item${currentView==='money'?' active':''}" onclick="selectMobileSection_('money')"><span><strong>Overview</strong><small>What you owe, paid, and need to do next</small></span>${currentView==='money'?'<span class="p1-more-current">Current</span>':'<span aria-hidden="true">›</span>'}</button>`);
+  }
+};
+
+if(applyPaymentDataBeforeP1Money_){
+  applyPaymentData_=function(data){
+    const result=applyPaymentDataBeforeP1Money_.apply(this,arguments);
+    if(currentView==='money') setTimeout(function(){render();},0);
+    return result;
+  };
+}
+
+render=function(){
+  if(currentView==='money'){
+    const root=document.getElementById('viewRoot');
+    if(root) root.innerHTML=renderP1MoneyOverview_();
+    p1SyncNavigation_();
+    if(typeof applyUiPolish_==='function') applyUiPolish_();
+    return;
+  }
+
+  return renderBeforeP1MoneyOverview_.apply(this,arguments);
+};
+</script>
