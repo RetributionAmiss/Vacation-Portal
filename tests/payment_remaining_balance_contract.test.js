@@ -16,7 +16,7 @@ assert(client.includes('paymentScheduleStatus_(row,payments).remaining'), 'tool 
 assert(client.includes('Math.max(0,Number(summary.remaining||0)-outstandingAgencySchedule)'), 'unscheduled balance must equal booking balance left minus unpaid agency-directed schedule');
 assert(client.includes('const defaultAmount=position.unscheduled;'), 'default installment amount must never fall back to a fully scheduled booking balance');
 assert(client.includes('Booking balance left'), 'modal must show current booking balance');
-assert(client.includes('Already scheduled to agency'), 'modal must show already scheduled agency amount');
+assert(client.includes('Unpaid installments already scheduled to agency'), 'modal must show unpaid agency schedule coverage');
 assert(client.includes('Unscheduled balance'), 'modal must clearly show the default unscheduled amount');
 assert(client.includes("'savePaymentScheduleItem'"), 'remaining balance must reuse the normal schedule-item write path');
 assert(client.includes("recipientType:'Agency'"), 'remaining balance installment must be an agency/property obligation');
