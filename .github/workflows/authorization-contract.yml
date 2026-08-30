@@ -46,3 +46,5 @@ jobs:
         run: node tests/p1_dashboard_navigation_contract.test.js
       - name: Run P1 Money overview contracts
         run: node tests/p1_money_overview_contract.test.js
+      - name: Run payment installment generation contracts
+        run: node tests/payment_installment_generation_contract.test.js
