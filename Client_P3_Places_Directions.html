@@ -1,0 +1,154 @@
+<script>
+/* PR #24: map-aware Places & Directions using existing trip locations. */
+(function p3PlacesRegisterView_(){
+  if(typeof P1_NAV_GROUPS_==='undefined'||typeof P1_VIEW_LABELS_==='undefined') return;
+  const home=P1_NAV_GROUPS_.find(function(group){return group.id==='home';});
+  if(home&&home.views.indexOf('places')<0) home.views.push('places');
+  P1_VIEW_LABELS_.places='Places';
+})();
+
+function p3PlacesCoord_(detail){
+  const rawLat=String(detail&&detail.Latitude||'').trim();
+  const rawLng=String(detail&&detail.Longitude||'').trim();
+  if(!rawLat||!rawLng) return '';
+  const lat=Number(rawLat);
+  const lng=Number(rawLng);
+  if(Number.isFinite(lat)&&Number.isFinite(lng)&&Math.abs(lat)<=90&&Math.abs(lng)<=180){
+    return lat+','+lng;
+  }
+  return '';
+}
+
+function p3PlacesHome_(){
+  const cabin=typeof p3TripSelectedCabin_==='function'?p3TripSelectedCabin_():null;
+  if(!cabin) return null;
+  const detail=cabin.detail||{};
+  const destination=p3PlacesCoord_(detail)||String(cabin.Location||'').trim();
+  return {
+    name:displayName(cabin),
+    destination:destination,
+    displayLocation:String(cabin.Location||'').trim(),
+    kind:'Home base'
+  };
+}
+
+function p3PlacesActivityStops_(date){
+  const groups=typeof p3TripActivityGroups_==='function'?p3TripActivityGroups_(date):[];
+  return groups.map(function(group){
+    const row=group.row||{};
+    const location=String(row.Location||'').trim();
+    const first=group.signups&&group.signups[0];
+    const time=first&&typeof p2PlannerTimeLabel_==='function'?p2PlannerTimeLabel_(first['Planned Time']):String(first&&first['Planned Time']||'');
+    return {
+      name:String(row.Activity||'Activity'),
+      destination:location,
+      displayLocation:location,
+      time:time,
+      eventUrl:String(row['Event URL']||'').trim(),
+      kind:'Activity',
+      signups:group.signups||[]
+    };
+  });
+}
+
+function p3PlacesMapsSearchUrl_(destination){
+  return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(String(destination||''));
+}
+
+function p3PlacesDirectionsUrl_(destination){
+  return 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(String(destination||''))+'&travelmode=driving';
+}
+
+function p3PlacesDayRouteUrl_(home,stops){
+  if(!home||!home.destination) return '';
+  const destinations=(stops||[]).filter(function(stop){return stop.destination;}).map(function(stop){return stop.destination;});
+  if(!destinations.length) return '';
+  return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(home.destination)+
+    '&destination='+encodeURIComponent(home.destination)+
+    '&waypoints='+encodeURIComponent(destinations.join('|'))+
+    '&travelmode=driving';
+}
+
+function p3PlacesSelectDate_(date){
+  p3TripSelectedDate_=String(date||'');
+  if(currentView==='places') render();
+}
+
+function p3PlacesDayStrip_(selected){
+  const dates=typeof p3TripDates_==='function'?p3TripDates_():[];
+  if(!dates.length) return '';
+  return `<div class="p3p-day-strip" role="listbox" aria-label="Vacation days">
+    ${dates.map(function(date){
+      const part=p3TripDayParts_(date);
+      const active=date===selected;
+      return `<button type="button" class="p3p-day ${active?'is-selected':''}" aria-selected="${active?'true':'false'}" onclick="p3PlacesSelectDate_('${escAttr(date)}')"><small>${esc(part.weekday)}</small><strong>${esc(part.day)}</strong><em>${esc(part.month)}</em></button>`;
+    }).join('')}
+  </div>`;
+}
+
+function p3PlacesStopCard_(stop,index){
+  const hasLocation=Boolean(stop.destination);
+  const attendeeNames=(stop.signups||[]).map(function(signup){
+    const mine=String(signup['Traveler ID']||'')===String(currentTravelerId||'');
+    return mine?'You':(signup.travelerName||p3TripTravelerName_(signup['Traveler ID']));
+  });
+  return `<article class="p3p-stop ${hasLocation?'':'is-missing'}">
+    <span class="p3p-stop-number">${index}</span>
+    <div class="p3p-stop-copy">
+      <small>${esc(stop.kind||'Stop')}${stop.time?' · '+esc(stop.time):''}</small>
+      <strong>${esc(stop.name||'Place')}</strong>
+      ${stop.displayLocation?`<span>${esc(stop.displayLocation)}</span>`:'<span class="p3p-missing-copy">Location needed before directions can be built.</span>'}
+      ${attendeeNames.length?`<em>${esc(attendeeNames.join(' · '))}</em>`:''}
+    </div>
+    <div class="p3p-stop-actions">
+      ${hasLocation?`<a href="${escAttr(p3PlacesDirectionsUrl_(stop.destination))}" target="_blank" rel="noopener noreferrer">Directions</a><a class="ghost" href="${escAttr(p3PlacesMapsSearchUrl_(stop.destination))}" target="_blank" rel="noopener noreferrer">Map</a>`:`<button type="button" class="ghost" onclick="navigate('itinerary')">Fix location</button>`}
+    </div>
+  </article>`;
+}
+
+function renderP3Places_(){
+  if(typeof p3TripEnsureSocialData_==='function') p3TripEnsureSocialData_();
+  const date=p3TripSelectedDateResolve_();
+  const home=p3PlacesHome_();
+  const stops=p3PlacesActivityStops_(date);
+  const located=stops.filter(function(stop){return stop.destination;});
+  const missing=stops.length-located.length;
+  const routeUrl=p3PlacesDayRouteUrl_(home,located);
+  const part=p3TripDayParts_(date);
+
+  return `<section class="view p3p-view">
+    <div class="p3p-hero">
+      <p class="eyebrow">PLACES & DIRECTIONS</p>
+      <div class="p3p-hero-line"><div><h2>${esc(part.weekday)} on the map</h2><p>${esc(p3TripDayLabel_(date))} · ${located.length} mapped stop${located.length===1?'':'s'}</p></div>${routeUrl?`<a class="p3p-route-button" href="${escAttr(routeUrl)}" target="_blank" rel="noopener noreferrer">Open day route ↗</a>`:''}</div>
+      ${p3PlacesDayStrip_(date)}
+    </div>
+
+    <div class="p3p-layout">
+      <section class="p3p-route-card">
+        <div class="p3p-section-head"><div><p class="eyebrow">DAY ROUTE</p><h3>Home base and today’s stops</h3></div><button type="button" class="ghost tiny" onclick="navigate('today')">Today</button></div>
+        ${home?p3PlacesStopCard_({name:home.name,destination:home.destination,displayLocation:home.displayLocation,kind:'Home base',signups:[]},1):'<div class="p3p-empty">Selected lodging is not available.</div>'}
+        ${stops.map(function(stop,index){return p3PlacesStopCard_(stop,index+2);}).join('')||'<div class="p3p-empty"><strong>No activity stops for this day yet.</strong><span>Sign up for an activity in Itinerary and it will appear here.</span></div>'}
+        ${missing?`<div class="p3p-location-warning"><strong>${missing} stop${missing===1?' needs':'s need'} a location.</strong><span>Add the location in Itinerary so the family route can include it.</span><button type="button" onclick="navigate('itinerary')">Open Itinerary</button></div>`:''}
+      </section>
+
+      <aside class="p3p-help-card">
+        <p class="eyebrow">QUICK DIRECTIONS</p>
+        <h3>One tap when you’re heading out</h3>
+        <p>Individual Directions buttons open the phone’s map experience for that stop. Open day route builds a round trip from the selected rental through every mapped activity for this day.</p>
+        ${home&&home.destination?`<a href="${escAttr(p3PlacesDirectionsUrl_(home.destination))}" target="_blank" rel="noopener noreferrer">Directions back to ${esc(home.name)} ↗</a>`:''}
+      </aside>
+    </div>
+  </section>`;
+}
+
+const p3PlacesRenderBefore_=render;
+render=function(){
+  const result=p3PlacesRenderBefore_.apply(this,arguments);
+  if(currentView==='places'){
+    const root=document.getElementById('viewRoot');
+    if(root) root.innerHTML=renderP3Places_();
+    if(typeof p1SyncNavigation_==='function') p1SyncNavigation_();
+  }
+  return result;
+};
+</script>

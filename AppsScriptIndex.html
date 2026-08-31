@@ -29,6 +29,7 @@
   <?!= include('Styles_P2_Planner_Experience'); ?>
   <?!= include('Styles_P2_Planner_Refinements'); ?>
   <?!= include('Styles_P3_Trip_Mode'); ?>
+  <?!= include('Styles_P3_Places_Directions'); ?>
   <?!= include('Styles_Pricing_Branch_Polish'); ?>
   <?!= include('Styles_Finalized_Rental_Mode'); ?>
   <?!= include('Styles_Payment_Remaining_Generator'); ?>
@@ -102,6 +103,23 @@
   <script>
     window.PWA_DEVICE_ID = <?!= JSON.stringify(pwaDeviceId || '') ?>;
     window.PWA_INSTALLED = <?!= pwaInstalled ? 'true' : 'false' ?>;
+    if(!window.PWA_DEVICE_ID){
+      window.PWA_DIRECT_DEVICE=true;
+      try{
+        const directDeviceKey='vacationDirectWebDeviceIdV1';
+        let directDeviceId=String(localStorage.getItem(directDeviceKey)||'').trim();
+        if(!directDeviceId){
+          const randomPart=(window.crypto&&window.crypto.randomUUID)
+            ? window.crypto.randomUUID().replace(/-/g,'')
+            : (Date.now().toString(36)+Math.random().toString(36).slice(2));
+          directDeviceId='WEB-'+randomPart;
+          localStorage.setItem(directDeviceKey,directDeviceId);
+        }
+        window.PWA_DEVICE_ID=directDeviceId;
+      }catch(error){
+        window.PWA_DEVICE_ID='WEB-'+Date.now().toString(36)+Math.random().toString(36).slice(2);
+      }
+    }
   </script>
   <?!= include('Client_Bootstrap'); ?>
   <?!= include('Client_Dashboard'); ?>
@@ -143,5 +161,7 @@
   <?!= include('Client_Payment_Remaining_Generator'); ?>
   <?!= include('Client_P2_Planner_Refinements'); ?>
   <?!= include('Client_P3_Trip_Mode'); ?>
+  <?!= include('Client_P3_Places_Directions'); ?>
+  <?!= include('Client_P3_Planner_Social_Reliability'); ?>
 </body>
 </html>
