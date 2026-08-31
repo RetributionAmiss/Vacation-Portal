@@ -1,0 +1,257 @@
+<script>
+p21FinalizedRentalId_=function(){
+  if(!DATA||!DATA.trip) return '';
+
+  const trip=DATA.trip||{};
+  const selected=String(
+    trip['Selected Cabin ID'] ||
+    DATA.finalizedRentalId ||
+    ''
+  ).trim();
+  const stage=String(trip['Portal Stage']||'').trim();
+  const closedFlag=String(trip['Final Voting Closed']||'No').trim().toLowerCase()==='yes';
+  const focused=Boolean(DATA.finalizedRentalOnly&&DATA.finalizedRentalId);
+
+  return selected&&(closedFlag||stage==='Voting Closed'||focused)
+    ? selected
+    : '';
+};
+
+function p21FinalRentalCabin_(){
+  const cabinId=p21FinalizedRentalId_();
+  if(!cabinId) return null;
+
+  return (DATA&&DATA.cabins||[]).find(function(cabin){
+    return String(cabin['Cabin ID']||'')===cabinId;
+  })||null;
+}
+
+const p21VisibleRentalCabinsBeforeFinalMode_=visibleRentalCabins_;
+visibleRentalCabins_=function(){
+  const cabin=p21FinalRentalCabin_();
+  if(cabin) return [cabin];
+  return p21VisibleRentalCabinsBeforeFinalMode_.apply(this,arguments);
+};
+
+function p21FilterPaymentDataForFinalMode_(data){
+  const cabinId=p21FinalizedRentalId_();
+  if(!cabinId||!data) return data;
+
+  const result=Object.assign({},data);
+  ['plans','shares','schedule','payments'].forEach(function(key){
+    if(!Array.isArray(result[key])) return;
+    result[key]=result[key].filter(function(row){
+      return String(row&&row['Cabin ID']||'')===cabinId;
+    });
+  });
+  result.finalizedRentalOnly=true;
+  result.finalizedRentalId=cabinId;
+  return result;
+}
+
+const p21ApplyPaymentDataBeforeFinalMode_=applyPaymentData_;
+applyPaymentData_=function(data){
+  return p21ApplyPaymentDataBeforeFinalMode_(
+    p21FilterPaymentDataForFinalMode_(data)
+  );
+};
+
+function p21FilterExistingPaymentState_(){
+  const cabinId=p21FinalizedRentalId_();
+  if(!cabinId||typeof paymentState_==='undefined') return;
+
+  ['plans','shares','schedule','payments'].forEach(function(key){
+    if(!Array.isArray(paymentState_[key])) return;
+    paymentState_[key]=paymentState_[key].filter(function(row){
+      return String(row&&row['Cabin ID']||'')===cabinId;
+    });
+  });
+
+  if(typeof paymentPlannerCabinId_!=='undefined'){
+    paymentPlannerCabinId_=cabinId;
+  }
+}
+
+function p21FinalVoteRows_(cabinId){
+  const all=(DATA&&DATA.votes||[]).filter(function(vote){
+    return String(vote['Cabin ID']||'')===String(cabinId||'');
+  });
+  const finalRows=all.filter(function(vote){
+    return String(vote['Voting Round']||'')==='Final';
+  });
+  const source=finalRows.length?finalRows:all;
+  const latestByTraveler={};
+
+  source.forEach(function(vote){
+    const travelerId=String(vote['Traveler ID']||'').trim();
+    if(!travelerId) return;
+
+    const incoming=Date.parse(String(vote['Created At']||''))||0;
+    const current=latestByTraveler[travelerId];
+    const existing=current
+      ? (Date.parse(String(current['Created At']||''))||0)
+      : -1;
+
+    if(!current||incoming>=existing){
+      latestByTraveler[travelerId]=vote;
+    }
+  });
+
+  return latestByTraveler;
+}
+
+function p21FinalVoteMethod_(){
+  return typeof votingMethod_==='function'
+    ? votingMethod_()
+    : (/rank/i.test(String(DATA&&DATA.trip&&DATA.trip['Voting Method']||''))?'Ranking':'Rating');
+}
+
+function p21FinalVoteValue_(vote,method){
+  if(!vote) return 'No final vote';
+
+  if(method==='Ranking'){
+    const rank=Number(vote.Rank||0);
+    return rank>0?'#'+rank:'No final vote';
+  }
+
+  const score=Number(vote.Score||0);
+  return score>0?score.toFixed(score%1?1:0)+' / 5':'No final vote';
+}
+
+function p21FamilyFinalVotingSummary_(cabin){
+  const cabinId=String(cabin&&cabin['Cabin ID']||'');
+  const voteMap=p21FinalVoteRows_(cabinId);
+  const method=p21FinalVoteMethod_();
+  const activeTravelers=(DATA&&DATA.travelers||[])
+    .filter(function(traveler){
+      return String(traveler.Active||'Yes').toLowerCase()!=='no';
+    })
+    .slice()
+    .sort(function(a,b){
+      return String(a.Name||'').localeCompare(String(b.Name||''));
+    });
+  const votes=Object.keys(voteMap).map(function(id){return voteMap[id];});
+
+  const numeric=method==='Ranking'
+    ? votes.map(function(vote){return Number(vote.Rank||0);}).filter(function(value){return value>0;})
+    : votes.map(function(vote){return Number(vote.Score||0);}).filter(function(value){return value>0;});
+  const average=numeric.length
+    ? numeric.reduce(function(sum,value){return sum+value;},0)/numeric.length
+    : 0;
+  const firstChoice=votes.filter(function(vote){
+    if(method==='Ranking') return Number(vote.Rank||0)===1;
+    return String(vote['First Choice']||'').toLowerCase()==='yes';
+  }).length;
+
+  return `<section class="p21-final-family-summary">
+    <div class="p21-final-family-head">
+      <div>
+        <p class="eyebrow">FAMILY VOTING SUMMARY</p>
+        <h3>How the family voted</h3>
+      </div>
+      <span class="p21-final-family-complete">${votes.length} of ${activeTravelers.length} voted</span>
+    </div>
+
+    <div class="p21-final-family-metrics">
+      <div><span>${method==='Ranking'?'Average rank':'Average rating'}</span><strong>${average?average.toFixed(1)+(method==='Ranking'?'':' / 5'):'—'}</strong></div>
+      <div><span>${method==='Ranking'?'#1 rankings':'First-choice votes'}</span><strong>${firstChoice}</strong></div>
+      <div><span>Selected rental</span><strong>${esc(displayName(cabin))}</strong></div>
+    </div>
+
+    <div class="p21-final-traveler-votes">
+      ${activeTravelers.map(function(traveler){
+        const travelerId=String(traveler['Traveler ID']||'');
+        const vote=voteMap[travelerId]||null;
+        const first=vote&&(
+          method==='Ranking'
+            ? Number(vote.Rank||0)===1
+            : String(vote['First Choice']||'').toLowerCase()==='yes'
+        );
+        return `<div class="p21-final-traveler-vote ${vote?'has-vote':'no-vote'}">
+          <span>${esc(traveler.Name||'Traveler')}</span>
+          <strong>${esc(p21FinalVoteValue_(vote,method))}${first?' · #1 choice':''}</strong>
+        </div>`;
+      }).join('')}
+    </div>
+  </section>`;
+}
+
+function p21FinalResultsBanner_(cabin){
+  return `<section class="final-voting-banner p21-final-results-banner">
+    <div>
+      <p class="eyebrow">FINAL RESULTS</p>
+      <h3>${esc(displayName(cabin))} is the selected rental</h3>
+      <p class="muted">Voting is closed. The portal is now focused on the property the family selected for the trip.</p>
+    </div>
+  </section>`;
+}
+
+function p21WinnerRentalCard_(cabin){
+  let html=cabinCard(cabin);
+  html=html.replace(/<label class="compare-checkbox"[\s\S]*?<\/label>/,'');
+  return html;
+}
+
+const p21RenderRentalsBeforeFinalMode_=renderRentals;
+renderRentals=function(){
+  const cabin=p21FinalRentalCabin_();
+  if(!cabin) return p21RenderRentalsBeforeFinalMode_.apply(this,arguments);
+
+  return `<section class="view p21-finalized-rental-view">
+    <div class="panel">
+      ${p21FinalResultsBanner_(cabin)}
+      <div id="rentalGrid" class="rental-grid p21-winning-rental-grid">
+        ${p21WinnerRentalCard_(cabin)}
+      </div>
+      ${p21FamilyFinalVotingSummary_(cabin)}
+    </div>
+  </section>`;
+};
+
+function p21ReplaceFinalizedSelector_(html,label,value,className){
+  if(!html) return html;
+  const safeLabel=label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const pattern=new RegExp(
+    '<label>\\s*<span>'+safeLabel+'<\\/span>[\\s\\S]*?<\\/label>'
+  );
+  return html.replace(
+    pattern,
+    `<div class="${className}"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`
+  );
+}
+
+const p21RenderRoomsBeforeFinalMode_=renderRooms;
+renderRooms=function(){
+  let html=p21RenderRoomsBeforeFinalMode_.apply(this,arguments);
+  const cabin=p21FinalRentalCabin_();
+  if(!cabin) return html;
+
+  return p21ReplaceFinalizedSelector_(
+    html,
+    'Property to plan',
+    displayName(cabin),
+    'p21-finalized-selector p21-finalized-room-selector'
+  );
+};
+
+const p21RenderPaymentsBeforeFinalMode_=renderPayments;
+renderPayments=function(){
+  let html=p21RenderPaymentsBeforeFinalMode_.apply(this,arguments);
+  const cabin=p21FinalRentalCabin_();
+  if(!cabin) return html;
+
+  return p21ReplaceFinalizedSelector_(
+    html,
+    'Rental / booking',
+    displayName(cabin),
+    'p21-finalized-selector p21-finalized-payment-selector'
+  );
+};
+
+const p21RenderBeforeFinalMode_=render;
+render=function(){
+  p21ApplyFinalRentalClientFocus_();
+  p21FilterExistingPaymentState_();
+  return p21RenderBeforeFinalMode_.apply(this,arguments);
+};
+</script>
