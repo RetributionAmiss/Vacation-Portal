@@ -1,0 +1,147 @@
+<script>
+/* PR #21 follow-up: remaining balance belongs inside the traveler installment generator. */
+const paymentGenerationMilestoneMarkupBeforeRemaining_ = paymentGenerationMilestoneMarkup_;
+
+paymentGenerationMilestoneMarkup_ = function(label,dueDate,amount){
+  paymentGenerationRowCounter_ += 1;
+  const id='paymentGenerationMilestone'+paymentGenerationRowCounter_;
+  return `<div class="payment-generation-milestone" data-payment-generation-milestone id="${id}">
+    <label><span>Label</span><input data-generation-label value="${escAttr(label||'')}"></label>
+    <label><span>Due date</span><input type="date" data-generation-date value="${escAttr(dueDate||'')}"></label>
+    <label class="payment-generation-amount-field">
+      <span>Booking milestone amount</span>
+      <input type="number" min="0.01" step="0.01" data-generation-amount value="${amount?Number(amount).toFixed(2):''}">
+      <button class="ghost tiny payment-generation-use-remaining" type="button" onclick="usePaymentGenerationRemainingBalance_('${id}')">Use remaining balance</button>
+      <small data-generation-remaining-note class="payment-generation-remaining-note hidden"></small>
+    </label>
+    <button class="ghost tiny payment-generation-remove" type="button" onclick="removePaymentGenerationMilestone_('${id}')">Remove</button>
+  </div>`;
+};
+
+function paymentGenerationRemainingCalculation_(cabinId){
+  const recipient=paymentGenerationRecipientValues_();
+
+  if(recipient.recipientType==='Traveler'){
+    if(!recipient.recipientTravelerId){
+      return {amount:0,label:'Choose the booking traveler receiving reimbursements first.'};
+    }
+
+    const position=paymentRemainingReimbursementPosition_(
+      cabinId,
+      recipient.recipientTravelerId,
+      ''
+    );
+
+    if(!position){
+      return {amount:0,label:'No reimbursement balance could be calculated.'};
+    }
+
+    return {
+      amount:Math.max(0,Number(position.unscheduled||0)),
+      label:'Unscheduled reimbursement to '+paymentTravelerName_(recipient.recipientTravelerId)
+    };
+  }
+
+  const position=paymentRemainingBalancePosition_(cabinId);
+  if(!position){
+    return {amount:0,label:'No agency balance could be calculated.'};
+  }
+
+  return {
+    amount:Math.max(0,Number(position.unscheduled||0)),
+    label:'Unscheduled agency / property balance'
+  };
+}
+
+function paymentGenerationCabinId_(){
+  const preview=document.getElementById('paymentGenerationPreview');
+  return preview?String(preview.dataset.cabinId||''):'';
+}
+
+function paymentGenerationApplyRemainingToRow_(row,showToast){
+  if(!row) return false;
+
+  const cabinId=paymentGenerationCabinId_();
+  if(!cabinId) return false;
+
+  const calculation=paymentGenerationRemainingCalculation_(cabinId);
+  const amountInput=row.querySelector('[data-generation-amount]');
+  const labelInput=row.querySelector('[data-generation-label]');
+  const note=row.querySelector('[data-generation-remaining-note]');
+
+  if(!amountInput) return false;
+
+  if(!(calculation.amount>0.005)){
+    row.dataset.generationAutoRemaining='';
+    amountInput.value='';
+    if(note){
+      note.classList.remove('hidden');
+      note.textContent=calculation.label+' · Nothing remains to schedule.';
+    }
+    if(showToast) toast('There is no unscheduled remaining balance for the selected recipient.',true);
+    updatePaymentGenerationPreview_();
+    return false;
+  }
+
+  row.dataset.generationAutoRemaining='true';
+  amountInput.value=calculation.amount.toFixed(2);
+  if(labelInput&&!String(labelInput.value||'').trim()){
+    labelInput.value='Final booking balance';
+  }
+  if(note){
+    note.classList.remove('hidden');
+    note.textContent=calculation.label+' · '+paymentMoney_(calculation.amount);
+  }
+
+  updatePaymentGenerationPreview_();
+  return true;
+}
+
+function usePaymentGenerationRemainingBalance_(milestoneId){
+  paymentGenerationApplyRemainingToRow_(document.getElementById(milestoneId),true);
+}
+
+function refreshPaymentGenerationAutoRemaining_(){
+  Array.from(document.querySelectorAll('[data-payment-generation-milestone]')).forEach(function(row){
+    if(String(row.dataset.generationAutoRemaining||'')==='true'){
+      paymentGenerationApplyRemainingToRow_(row,false);
+    }
+  });
+}
+
+/* Keep an auto-filled remaining row in sync if the Organizer changes who receives the batch. */
+document.addEventListener('change',function(event){
+  const target=event.target;
+  if(!target) return;
+  if(target.id==='paymentGenerationRecipientType'||target.id==='paymentGenerationRecipientTraveler'){
+    setTimeout(refreshPaymentGenerationAutoRemaining_,0);
+  }
+});
+
+/* Once the Organizer manually edits an auto-filled amount, treat it as an intentional override. */
+document.addEventListener('input',function(event){
+  const target=event.target;
+  if(!target||!target.matches||!target.matches('[data-generation-amount]')) return;
+  const row=target.closest('[data-payment-generation-milestone]');
+  if(!row||String(row.dataset.generationAutoRemaining||'')!=='true') return;
+
+  row.dataset.generationAutoRemaining='';
+  const note=row.querySelector('[data-generation-remaining-note]');
+  if(note){
+    note.classList.add('hidden');
+    note.textContent='';
+  }
+});
+
+/* Remove the old one-off remaining-balance entry point. Remaining balances now
+   generate the same traveler installment rows as every other milestone. */
+const renderPaymentsBeforeRemainingGeneratorIntegration_=renderPayments;
+renderPayments=function(){
+  let html=renderPaymentsBeforeRemainingGeneratorIntegration_.apply(this,arguments);
+  html=String(html||'').replace(
+    /<button[^>]*onclick="openPaymentRemainingBalanceTool_\('[^']*'\)"[^>]*>Add remaining balance<\/button>/,
+    ''
+  );
+  return html;
+};
+</script>

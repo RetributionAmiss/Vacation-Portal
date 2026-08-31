@@ -46,3 +46,13 @@ jobs:
         run: node tests/p1_dashboard_navigation_contract.test.js
       - name: Run P1 Money overview contracts
         run: node tests/p1_money_overview_contract.test.js
+      - name: Run payment installment generation contracts
+        run: node tests/payment_installment_generation_contract.test.js
+      - name: Run payment remaining balance contracts
+        run: node tests/payment_remaining_balance_contract.test.js
+      - name: Run planner date formatting contracts
+        run: node tests/planner_date_format_contract.test.js
+      - name: Run pricing branch polish contracts
+        run: node tests/pricing_branch_polish_contract.test.js
+      - name: Run finalized rental mode contracts
+        run: node tests/finalized_rental_mode_contract.test.js

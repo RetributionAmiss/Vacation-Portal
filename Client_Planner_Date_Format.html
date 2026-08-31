@@ -1,0 +1,59 @@
+<script>
+const plannerDisplayValueBeforeDateFormat_=plannerDisplayValue_;
+const plannerInputBeforeDateFormat_=plannerInput;
+
+function plannerDateYmd_(value){
+  if(value===null||value===undefined||value==='') return '';
+
+  if(value instanceof Date && !isNaN(value.getTime())){
+    return [
+      String(value.getFullYear()).padStart(4,'0'),
+      String(value.getMonth()+1).padStart(2,'0'),
+      String(value.getDate()).padStart(2,'0')
+    ].join('-');
+  }
+
+  const raw=String(value).trim();
+  const iso=raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:T|\s|$)/);
+  if(iso) return iso[1]+'-'+iso[2]+'-'+iso[3];
+
+  const us=raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(us){
+    return us[3]+'-'+String(us[1]).padStart(2,'0')+'-'+String(us[2]).padStart(2,'0');
+  }
+
+  const parsed=new Date(raw);
+  if(!isNaN(parsed.getTime())){
+    return [
+      String(parsed.getUTCFullYear()).padStart(4,'0'),
+      String(parsed.getUTCMonth()+1).padStart(2,'0'),
+      String(parsed.getUTCDate()).padStart(2,'0')
+    ].join('-');
+  }
+
+  return '';
+}
+
+function plannerDateDisplay_(value){
+  const ymd=plannerDateYmd_(value);
+  if(!ymd) return String(value||'');
+  const parts=ymd.split('-');
+  return parts[1]+'/'+parts[2]+'/'+parts[0];
+}
+
+plannerDisplayValue_=function(name,header,value){
+  if(header==='Date'||header==='Due Date'){
+    const formatted=plannerDateDisplay_(value);
+    return formatted ? esc(formatted) : '<span class="muted">—</span>';
+  }
+  return plannerDisplayValueBeforeDateFormat_.apply(this,arguments);
+};
+
+plannerInput=function(name,header,value){
+  if(header==='Date'||header==='Due Date'){
+    const id='plan_'+header.replace(/\W/g,'');
+    return field(id,header,plannerDateYmd_(value),'date');
+  }
+  return plannerInputBeforeDateFormat_.apply(this,arguments);
+};
+</script>

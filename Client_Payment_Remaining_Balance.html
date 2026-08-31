@@ -1,0 +1,310 @@
+<script>
+const renderPaymentsBeforeRemainingBalance_=renderPayments;
+
+function paymentRemainingBalancePosition_(cabinId){
+  const cabin=paymentVisibleCabins_().find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+  if(!cabin) return null;
+
+  const summary=paymentSummary_(cabin);
+  const payments=paymentsForCabin_(cabinId);
+  const outstandingAgencySchedule=paymentScheduleForCabin_(cabinId)
+    .filter(function(row){
+      return String(row['Recipient Type']||'Agency')==='Agency';
+    })
+    .reduce(function(sum,row){
+      return sum+Number(paymentScheduleStatus_(row,payments).remaining||0);
+    },0);
+
+  const unscheduled=Math.max(0,Number(summary.remaining||0)-outstandingAgencySchedule);
+  return {
+    bookingTotal:Number(summary.bookingTotal||0),
+    paidToAgency:Number(summary.paidToAgency||0),
+    bookingBalance:Number(summary.remaining||0),
+    outstandingAgencySchedule:outstandingAgencySchedule,
+    unscheduled:unscheduled
+  };
+}
+
+function paymentRemainingReimbursementPosition_(cabinId,recipientTravelerId,payerTravelerId){
+  const cabin=paymentVisibleCabins_().find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+  if(!cabin||!recipientTravelerId) return null;
+
+  const recipientId=String(recipientTravelerId||'');
+  const payerId=String(payerTravelerId||'');
+  const eligible=paymentAdultTravelers_().filter(function(traveler){
+    const id=String(traveler['Traveler ID']||'');
+    if(!id||id===recipientId) return false;
+    return !payerId||id===payerId;
+  });
+
+  let expected=0;
+  let paid=0;
+  let remainingShares=0;
+  eligible.forEach(function(traveler){
+    const id=String(traveler['Traveler ID']||'');
+    const travelerExpected=Math.max(0,Number(paymentExpectedShareForTraveler_(cabin,id)||0));
+    const travelerPaid=Math.max(0,Number(paymentTravelerPaidTotal_(cabinId,id,'')||0));
+    expected+=travelerExpected;
+    paid+=travelerPaid;
+    remainingShares+=Math.max(0,travelerExpected-travelerPaid);
+  });
+
+  const payments=paymentsForCabin_(cabinId);
+  const scheduledToRecipient=paymentScheduleForCabin_(cabinId)
+    .filter(function(row){
+      if(String(row['Recipient Type']||'')!=='Traveler') return false;
+      if(String(row['Recipient Traveler ID']||'')!==recipientId) return false;
+      if(!payerId) return true;
+      return String(row['Expected Payer Traveler ID']||'')===payerId;
+    })
+    .reduce(function(sum,row){
+      return sum+Number(paymentScheduleStatus_(row,payments).remaining||0);
+    },0);
+
+  return {
+    recipientTravelerId:recipientId,
+    payerTravelerId:payerId,
+    eligibleCount:eligible.length,
+    expected:expected,
+    paid:paid,
+    remainingShares:remainingShares,
+    scheduledToRecipient:scheduledToRecipient,
+    unscheduled:Math.max(0,remainingShares-scheduledToRecipient)
+  };
+}
+
+function paymentRemainingCurrentCalculation_(cabinId){
+  const recipientType=String(val('paymentRemainingRecipientType')||'Agency')==='Traveler'
+    ? 'Traveler'
+    : 'Agency';
+
+  if(recipientType==='Agency'){
+    const position=paymentRemainingBalancePosition_(cabinId);
+    return position ? {type:'Agency',position:position} : null;
+  }
+
+  const recipientTravelerId=String(val('paymentRemainingRecipientTraveler')||'').trim();
+  const payerTravelerId=String(val('paymentRemainingPayer')||'').trim();
+  const position=paymentRemainingReimbursementPosition_(
+    cabinId,
+    recipientTravelerId,
+    payerTravelerId
+  );
+  return position ? {type:'Traveler',position:position} : null;
+}
+
+function paymentRemainingCalculationMarkup_(calculation){
+  if(!calculation) return '';
+
+  if(calculation.type==='Agency'){
+    const position=calculation.position;
+    let warning='';
+    if(position.unscheduled<=0.005&&position.bookingBalance>0.005){
+      warning='<div class="payment-generation-warning">The current property balance is already fully covered by unpaid agency-directed installments. The amount is left blank to prevent duplicate scheduling; enter an override only if you intentionally need a replacement or revised installment.</div>';
+    }else if(position.bookingBalance<=0.005){
+      warning='<div class="payment-generation-warning">The booking currently has no unpaid agency balance. Choose a booking traveler recipient to calculate reimbursements that may still be owed between travelers.</div>';
+    }
+
+    return `<div class="payment-balance-recipient-summary">
+      <p class="eyebrow">CALCULATED FOR BOOKING AGENCY / PROPERTY</p>
+      <div class="payment-balance-recipient-grid">
+        <article><span>Property balance left</span><strong>${paymentMoney_(position.bookingBalance)}</strong></article>
+        <article><span>Already scheduled to agency</span><strong>${paymentMoney_(position.outstandingAgencySchedule)}</strong></article>
+        <article class="payment-balance-primary"><span>Unscheduled agency balance</span><strong>${paymentMoney_(position.unscheduled)}</strong></article>
+      </div>
+      ${warning}
+    </div>`;
+  }
+
+  const position=calculation.position;
+  const recipientName=paymentTravelerName_(position.recipientTravelerId);
+  const payerName=position.payerTravelerId
+    ? paymentTravelerName_(position.payerTravelerId)
+    : 'All travelers except '+recipientName;
+  let warning='';
+  if(position.payerTravelerId===position.recipientTravelerId){
+    warning='<div class="payment-generation-warning">A traveler cannot reimburse themselves. Choose a different expected payer or Any traveler.</div>';
+  }else if(position.unscheduled<=0.005&&position.remainingShares>0.005){
+    warning='<div class="payment-generation-warning">The remaining traveler balance is already covered by unpaid reimbursements scheduled to this booking traveler. Enter an override only if you intentionally need another installment.</div>';
+  }else if(position.remainingShares<=0.005){
+    warning='<div class="payment-generation-warning">No remaining lodging-share balance is currently owed by the selected payer group. You can still enter a manual override if the ledger needs an adjustment.</div>';
+  }
+
+  return `<div class="payment-balance-recipient-summary">
+    <p class="eyebrow">CALCULATED FOR ${esc(recipientName).toUpperCase()}</p>
+    <div class="payment-balance-recipient-grid">
+      <article><span>${esc(payerName)} · lodging share left</span><strong>${paymentMoney_(position.remainingShares)}</strong></article>
+      <article><span>Already scheduled to ${esc(recipientName)}</span><strong>${paymentMoney_(position.scheduledToRecipient)}</strong></article>
+      <article class="payment-balance-primary"><span>Unscheduled reimbursement</span><strong>${paymentMoney_(position.unscheduled)}</strong></article>
+    </div>
+    <small class="payment-balance-calculation-note">Traveler balance uses the same Money calculation: adjusted expected share minus all recorded outgoing payments. Existing unpaid reimbursements to this recipient are then subtracted to avoid duplicate scheduling.</small>
+    ${warning}
+  </div>`;
+}
+
+function syncPaymentRemainingCalculation_(){
+  const form=document.getElementById('paymentRemainingBalanceForm');
+  if(!form) return;
+  const cabinId=String(form.dataset.cabinId||'');
+  const type=String(val('paymentRemainingRecipientType')||'Agency');
+  const wrapper=document.getElementById('paymentRemainingRecipientTravelerWrap');
+  if(wrapper) wrapper.classList.toggle('hidden',type!=='Traveler');
+
+  const calculation=paymentRemainingCurrentCalculation_(cabinId);
+  const summary=document.getElementById('paymentRemainingRecipientSummary');
+  if(summary) summary.innerHTML=paymentRemainingCalculationMarkup_(calculation);
+
+  const amount=document.getElementById('paymentRemainingAmount');
+  if(amount&&calculation){
+    const nextAmount=Math.max(0,Number(calculation.position.unscheduled||0));
+    amount.value=nextAmount>0.005?nextAmount.toFixed(2):'';
+  }
+}
+
+function syncPaymentRemainingRecipient_(){
+  syncPaymentRemainingCalculation_();
+}
+
+function openPaymentRemainingBalanceTool_(cabinId){
+  if(!paymentOrganizerUi_()){
+    toast('Only the Organizer can add a remaining-balance installment.',true);
+    return;
+  }
+
+  const cabin=paymentVisibleCabins_().find(function(item){
+    return item['Cabin ID']===cabinId;
+  });
+  const plan=paymentPlan_(cabinId);
+  const position=paymentRemainingBalancePosition_(cabinId);
+  if(!cabin||!plan||!position){
+    toast('Set up the booking before adding a remaining-balance installment.',true);
+    return;
+  }
+
+  const bookers=paymentBookerIds_(cabinId);
+  const payers=activePaymentTravelers_();
+  const agencyName=String(plan['Agency Name']||cabin.Provider||'Agency / property').trim();
+
+  openModal(`<div class="payment-balance-tool">
+    <p class="eyebrow">ORGANIZER BALANCE TOOL</p>
+    <h2>Add remaining balance installment</h2>
+    <p class="muted">Choose who should receive the installment. The calculator switches between the unpaid property balance and traveler reimbursement balances automatically.</p>
+
+    <div class="payment-balance-position">
+      <article><span>Booking total</span><strong>${paymentMoney_(position.bookingTotal)}</strong></article>
+      <article><span>Paid to agency</span><strong>${paymentMoney_(position.paidToAgency)}</strong></article>
+      <article><span>Booking balance left</span><strong>${paymentMoney_(position.bookingBalance)}</strong></article>
+      <article><span>Unpaid installments already scheduled to agency</span><strong>${paymentMoney_(position.outstandingAgencySchedule)}</strong></article>
+      <article class="payment-balance-primary"><span>Unscheduled agency balance</span><strong>${paymentMoney_(position.unscheduled)}</strong></article>
+    </div>
+
+    <form id="paymentRemainingBalanceForm" data-cabin-id="${escAttr(cabinId)}" class="form-grid" onsubmit="savePaymentRemainingBalance_(event,'${escAttr(cabinId)}')">
+      ${field('paymentRemainingLabel','Installment label','Final booking balance','text',true)}
+      ${field('paymentRemainingDueDate','Due date','','date',true)}
+
+      <label><span>Pay this installment to</span><select id="paymentRemainingRecipientType" onchange="syncPaymentRemainingCalculation_()">
+        <option value="Agency">Booking agency / property · ${esc(agencyName)}</option>
+        ${bookers.length?'<option value="Traveler">Traveler handling the booking</option>':''}
+      </select></label>
+
+      <label id="paymentRemainingRecipientTravelerWrap" class="hidden"><span>Booking traveler receiving payment</span><select id="paymentRemainingRecipientTraveler" onchange="syncPaymentRemainingCalculation_()">
+        ${bookers.map(function(id){
+          return `<option value="${escAttr(id)}">${esc(paymentTravelerName_(id))}</option>`;
+        }).join('')}
+      </select><small>Only travelers listed as handling this booking can receive the installment.</small></label>
+
+      <label><span>Expected payer</span><select id="paymentRemainingPayer" onchange="syncPaymentRemainingCalculation_()">
+        <option value="">Any traveler</option>
+        ${payers.map(function(traveler){
+          const id=String(traveler['Traveler ID']||'');
+          return `<option value="${escAttr(id)}">${esc(traveler.Name||paymentTravelerName_(id))}</option>`;
+        }).join('')}
+      </select><small>Choose a traveler to calculate only that person’s remaining lodging share, or Any traveler for the combined reimbursement balance.</small></label>
+
+      <div id="paymentRemainingRecipientSummary" class="wide"></div>
+
+      ${field('paymentRemainingAmount','Installment amount',position.unscheduled>0?position.unscheduled.toFixed(2):'','number',true)}
+      ${area('paymentRemainingNotes','Notes','Calculated from the selected recipient and current traveler/payment balances.')}
+
+      <div class="wide payment-balance-form-note">
+        <strong>Accounting:</strong> A payment to a booking traveler is a reimbursement. It counts toward the payer’s Paid total, but the booking balance falls only when the agency/property payment is recorded.
+      </div>
+      <div class="wide form-actions">
+        <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        <button>Add installment</button>
+      </div>
+    </form>
+  </div>`);
+
+  syncPaymentRemainingCalculation_();
+}
+
+function savePaymentRemainingBalance_(event,cabinId){
+  event.preventDefault();
+  const plan=paymentPlan_(cabinId);
+  const cabin=paymentVisibleCabins_().find(function(item){return item['Cabin ID']===cabinId;});
+  if(!plan||!cabin){toast('Booking setup could not be found.',true);return;}
+
+  const amount=Number(val('paymentRemainingAmount')||0);
+  const dueDate=String(val('paymentRemainingDueDate')||'').trim();
+  const expectedPayerTravelerId=String(val('paymentRemainingPayer')||'').trim();
+  const recipientType=String(val('paymentRemainingRecipientType')||'Agency')==='Traveler'
+    ? 'Traveler'
+    : 'Agency';
+  const recipientTravelerId=recipientType==='Traveler'
+    ? String(val('paymentRemainingRecipientTraveler')||'').trim()
+    : '';
+
+  if(!(amount>0)){toast('Remaining-balance installment must be greater than zero.',true);return;}
+  if(!dueDate){toast('Choose the due date for the remaining balance.',true);return;}
+  if(recipientType==='Traveler'&&!recipientTravelerId){
+    toast('Choose the booking traveler receiving this installment.',true);
+    return;
+  }
+  if(recipientType==='Traveler'&&expectedPayerTravelerId===recipientTravelerId){
+    toast('A traveler cannot reimburse themselves. Choose a different expected payer or Any traveler.',true);
+    return;
+  }
+
+  paymentOrganizerBackgroundSave_(
+    'Remaining balance installment',
+    'payment-remaining-balance:'+cabinId,
+    'savePaymentScheduleItem',
+    {
+      cabinId:cabinId,
+      label:String(val('paymentRemainingLabel')||'Final booking balance').trim(),
+      dueDate:dueDate,
+      amountDue:amount,
+      expectedPayerTravelerId:expectedPayerTravelerId,
+      recipientType:recipientType,
+      recipientTravelerId:recipientTravelerId,
+      recipientName:recipientType==='Agency'
+        ? String(plan['Agency Name']||cabin.Provider||'').trim()
+        : '',
+      notes:String(val('paymentRemainingNotes')||'').trim()
+    },
+    'Remaining balance installment added'
+  );
+}
+
+renderPayments=function(){
+  let html=renderPaymentsBeforeRemainingBalance_.apply(this,arguments);
+  if(!paymentState_.loaded||!paymentOrganizerUi_()) return html;
+
+  const cabin=selectedPaymentCabin_();
+  if(!cabin||!paymentPlan_(cabin['Cabin ID'])) return html;
+
+  const add=`<button type="button" onclick="openPaymentScheduleForm_('${cabin['Cabin ID']}','')">Add installment</button>`;
+  if(html.indexOf(add)>=0){
+    html=html.replace(
+      add,
+      add+`<button type="button" class="ghost" onclick="openPaymentRemainingBalanceTool_('${escAttr(cabin['Cabin ID'])}')">Add remaining balance</button>`
+    );
+  }
+  return html;
+};
+</script>
