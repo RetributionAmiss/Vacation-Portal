@@ -8,8 +8,11 @@
 })();
 
 function p3PlacesCoord_(detail){
-  const lat=Number(detail&&detail.Latitude);
-  const lng=Number(detail&&detail.Longitude);
+  const rawLat=String(detail&&detail.Latitude||'').trim();
+  const rawLng=String(detail&&detail.Longitude||'').trim();
+  if(!rawLat||!rawLng) return '';
+  const lat=Number(rawLat);
+  const lng=Number(rawLng);
   if(Number.isFinite(lat)&&Number.isFinite(lng)&&Math.abs(lat)<=90&&Math.abs(lng)<=180){
     return lat+','+lng;
   }
