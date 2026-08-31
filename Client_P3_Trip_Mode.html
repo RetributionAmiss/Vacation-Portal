@@ -1,0 +1,277 @@
+<script>
+/* PR #23: mobile-first Trip Mode / Today hub. */
+let p3TripSelectedDate_='';
+let p3TripSocialLoading_=false;
+
+(function p3RegisterTodayView_(){
+  if(typeof P1_NAV_GROUPS_==='undefined'||typeof P1_VIEW_LABELS_==='undefined') return;
+  const home=P1_NAV_GROUPS_.find(function(group){return group.id==='home';});
+  if(home&&home.views.indexOf('today')<0) home.views.push('today');
+  P1_VIEW_LABELS_.dashboard='Overview';
+  P1_VIEW_LABELS_.today='Today';
+})();
+
+function p3TripTodayIso_(){
+  const now=new Date();
+  return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+}
+
+function p3TripDates_(){
+  if(typeof p2PlannerVacationDates_==='function') return p2PlannerVacationDates_();
+  return [];
+}
+
+function p3TripSelectedDateResolve_(){
+  const dates=p3TripDates_();
+  const today=p3TripTodayIso_();
+  if(p3TripSelectedDate_&&(!dates.length||dates.indexOf(p3TripSelectedDate_)>=0)) return p3TripSelectedDate_;
+  p3TripSelectedDate_=dates.indexOf(today)>=0?today:(dates[0]||today);
+  return p3TripSelectedDate_;
+}
+
+function p3TripSelectDate_(date){
+  p3TripSelectedDate_=String(date||'');
+  if(currentView==='today') render();
+}
+
+function p3TripPhase_(){
+  const dates=p3TripDates_();
+  const today=p3TripTodayIso_();
+  if(!dates.length) return 'planning';
+  if(today<dates[0]) return 'preview';
+  if(today>dates[dates.length-1]) return 'recap';
+  return 'active';
+}
+
+function p3TripDayNumber_(date){
+  const dates=p3TripDates_();
+  const index=dates.indexOf(date);
+  return index>=0?index+1:0;
+}
+
+function p3TripDayLabel_(date){
+  if(typeof p2PlannerDateLabel_==='function') return p2PlannerDateLabel_(date);
+  return date;
+}
+
+function p3TripDayParts_(date){
+  if(typeof p2PlannerDayParts_==='function') return p2PlannerDayParts_(date);
+  return {weekday:'Day',month:'',day:''};
+}
+
+function p3TripEnsureSocialData_(){
+  if(!DATA||p3TripSocialLoading_) return;
+  if(typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_.loaded) return;
+  if(!window.google||!google.script||!google.script.run) return;
+
+  p3TripSocialLoading_=true;
+  if(typeof p2PlannerSocialState_!=='undefined') p2PlannerSocialState_.loading=true;
+  google.script.run
+    .withSuccessHandler(function(result){
+      DATA.itinerarySignups=(result&&result.itinerarySignups)||[];
+      DATA.plannerComments=(result&&result.plannerComments)||[];
+      p3TripSocialLoading_=false;
+      if(typeof p2PlannerSocialState_!=='undefined'){
+        p2PlannerSocialState_.loaded=true;
+        p2PlannerSocialState_.loading=false;
+        p2PlannerSocialState_.lastLoaded=Date.now();
+      }
+      if(currentView==='today') render();
+    })
+    .withFailureHandler(function(){
+      p3TripSocialLoading_=false;
+      if(typeof p2PlannerSocialState_!=='undefined') p2PlannerSocialState_.loading=false;
+    })
+    .getPlannerSocialData();
+}
+
+function p3TripTravelerName_(travelerId){
+  const row=(DATA&&DATA.travelers||[]).find(function(traveler){
+    return String(traveler['Traveler ID']||'')===String(travelerId||'');
+  });
+  return row?String(row.Name||'Traveler'):'Traveler';
+}
+
+function p3TripSelectedCabin_(){
+  if(typeof p2PlannerSelectedCabin_==='function') return p2PlannerSelectedCabin_();
+  const selected=String(DATA&&DATA.trip&&DATA.trip['Selected Cabin ID']||'');
+  return (DATA&&DATA.cabins||[]).find(function(cabin){return String(cabin['Cabin ID']||'')===selected;})||null;
+}
+
+function p3TripRoomName_(cabin){
+  if(!cabin||!currentTravelerId) return '';
+  const assignment=(DATA&&DATA.assignments||[]).find(function(row){
+    return String(row['Cabin ID']||'')===String(cabin['Cabin ID']||'')&&
+      String(row['Traveler ID']||'')===String(currentTravelerId||'');
+  });
+  if(!assignment) return '';
+  const room=(cabin.bedrooms||[]).find(function(item){
+    return String(item['Bedroom ID']||'')===String(assignment['Bedroom ID']||'');
+  });
+  return room?String(room['Bedroom Name']||'Bedroom'):'';
+}
+
+function p3TripDateStrip_(selected){
+  const dates=p3TripDates_();
+  if(!dates.length) return '';
+  return `<div class="p3-day-strip" role="listbox" aria-label="Vacation days">
+    ${dates.map(function(date){
+      const parts=p3TripDayParts_(date);
+      const active=date===selected;
+      const actual=date===p3TripTodayIso_();
+      return `<button type="button" class="p3-day ${active?'is-selected':''} ${actual?'is-today':''}" aria-selected="${active?'true':'false'}" onclick="p3TripSelectDate_('${escAttr(date)}')">
+        <small>${esc(parts.weekday)}</small><strong>${esc(parts.day)}</strong><em>${esc(parts.month)}</em>${actual?'<span>Today</span>':''}
+      </button>`;
+    }).join('')}
+  </div>`;
+}
+
+function p3TripActivityGroups_(date){
+  const itinerary=(DATA&&DATA.itinerary)||[];
+  const signups=(DATA&&DATA.itinerarySignups||[]).filter(function(row){
+    return String(row['Planned Date']||'').slice(0,10)===date;
+  });
+  const groups={};
+  signups.forEach(function(signup){
+    const id=String(signup['Itinerary ID']||'');
+    if(!id) return;
+    if(!groups[id]){
+      groups[id]={
+        row:itinerary.find(function(item){return String(item['Itinerary ID']||'')===id;})||{},
+        signups:[]
+      };
+    }
+    groups[id].signups.push(signup);
+  });
+  return Object.keys(groups).map(function(id){
+    const group=groups[id];
+    group.signups.sort(function(a,b){return String(a['Planned Time']||'').localeCompare(String(b['Planned Time']||''));});
+    return group;
+  }).sort(function(a,b){
+    const at=a.signups[0]?String(a.signups[0]['Planned Time']||''):'';
+    const bt=b.signups[0]?String(b.signups[0]['Planned Time']||''):'';
+    return at.localeCompare(bt)||String(a.row.Activity||'').localeCompare(String(b.row.Activity||''));
+  });
+}
+
+function p3TripActivities_(date){
+  const groups=p3TripActivityGroups_(date);
+  return `<section class="p3-today-section">
+    <div class="p3-section-head"><div><p class="eyebrow">PLANS</p><h3>Who’s going where</h3></div><button class="ghost tiny" type="button" onclick="navigate('itinerary')">Itinerary</button></div>
+    ${groups.length?`<div class="p3-activity-list">${groups.map(function(group){
+      const row=group.row||{};
+      const link=String(row['Event URL']||'').trim();
+      return `<article class="p3-activity-card">
+        <div><strong>${esc(row.Activity||'Activity')}</strong>${row.Location?`<span>${esc(row.Location)}</span>`:''}</div>
+        <div class="p3-attendee-list">${group.signups.map(function(signup){
+          const mine=String(signup['Traveler ID']||'')===String(currentTravelerId||'');
+          const time=typeof p2PlannerTimeLabel_==='function'?p2PlannerTimeLabel_(signup['Planned Time']):String(signup['Planned Time']||'');
+          return `<span class="p3-attendee ${mine?'is-me':''}"><strong>${esc(mine?'You':(signup.travelerName||p3TripTravelerName_(signup['Traveler ID'])))}</strong><small>${esc(time)}</small></span>`;
+        }).join('')}</div>
+        ${link?`<a class="p3-inline-link" href="${escAttr(link)}" target="_blank" rel="noopener noreferrer">Take me there! ↗</a>`:''}
+      </article>`;
+    }).join('')}</div>`:`<div class="p3-empty"><strong>No one has signed up for an activity this day.</strong><span>Open Itinerary to make a plan or join somebody else.</span></div>`}
+  </section>`;
+}
+
+function p3TripMeals_(date){
+  const rows=(DATA&&DATA.meals||[]).filter(function(row){
+    const value=typeof p2PlannerIsoDate_==='function'?p2PlannerIsoDate_(row.Date):String(row.Date||'').slice(0,10);
+    return value===date;
+  });
+  return `<section class="p3-today-section">
+    <div class="p3-section-head"><div><p class="eyebrow">MEALS</p><h3>What’s cooking</h3></div><button class="ghost tiny" type="button" onclick="navigate('meals')">Meals</button></div>
+    ${rows.length?`<div class="p3-meal-list">${rows.map(function(row){
+      return `<article class="p3-meal-card"><div><strong>${esc(row.Meal||'Meal')}</strong>${row.Menu?`<span>${esc(row.Menu)}</span>`:''}</div><div class="p3-mini-facts">${row['Assigned To']?`<span><small>Cooking crew</small><strong>${esc(row['Assigned To'])}</strong></span>`:''}${row['Clean Up']?`<span><small>Clean up crew</small><strong>${esc(row['Clean Up'])}</strong></span>`:''}</div></article>`;
+    }).join('')}</div>`:`<div class="p3-empty"><strong>No meal planned yet.</strong><span>The kitchen is officially improvising.</span></div>`}
+  </section>`;
+}
+
+function p3TripGroceries_(){
+  const traveler=currentTraveler&&currentTraveler();
+  const travelerName=String(traveler&&traveler.Name||'').trim().toLowerCase();
+  const open=(DATA&&DATA.groceries||[]).filter(function(row){return String(row.Purchased||'No').toLowerCase()!=='yes';});
+  const mine=open.filter(function(row){
+    const shopper=String(row['Assigned To']||'').trim().toLowerCase();
+    const bringer=String(row['Brought By']||'').trim().toLowerCase();
+    return travelerName&&(shopper===travelerName||bringer===travelerName);
+  });
+  const featured=(mine.length?mine:open).slice(0,5);
+  return `<section class="p3-today-section">
+    <div class="p3-section-head"><div><p class="eyebrow">GROCERIES</p><h3>${mine.length?'Your shopping list':'Still needed'}</h3></div><button class="ghost tiny" type="button" onclick="navigate('groceries')">Full list</button></div>
+    <div class="p3-grocery-status"><strong>${open.length}</strong><span>item${open.length===1?'':'s'} still open</span>${mine.length?`<em>${mine.length} assigned to you</em>`:''}</div>
+    ${featured.length?`<div class="p3-grocery-list">${featured.map(function(row){
+      const bringing=String(row.Bringing||'No').toLowerCase()==='yes';
+      return `<div><strong>${esc(row.Item||'Grocery item')}</strong><span>${esc(row['Store Section']||'')}${row.Quantity?' · Qty '+esc(row.Quantity):''}</span><small>${bringing?'Coming from home':'Buy at store'}</small></div>`;
+    }).join('')}</div>`:'<div class="p3-empty compact"><strong>Shopping is all caught up.</strong></div>'}
+  </section>`;
+}
+
+function p3TripLodging_(){
+  const cabin=p3TripSelectedCabin_();
+  if(!cabin) return '';
+  const detail=cabin.detail||{};
+  const room=p3TripRoomName_(cabin);
+  const checkIn=detail['Check In']||detail['Check-in']||'';
+  const checkOut=detail['Check Out']||detail['Check-out']||'';
+  return `<section class="p3-today-section p3-lodging-section">
+    <div class="p3-section-head"><div><p class="eyebrow">HOME BASE</p><h3>${esc(displayName(cabin))}</h3></div><button class="ghost tiny" type="button" onclick="navigate('rooms')">Room Planner</button></div>
+    <div class="p3-lodging-facts">
+      ${room?`<span><small>Your room</small><strong>${esc(room)}</strong></span>`:''}
+      ${checkIn?`<span><small>Check in</small><strong>${esc(p3TripDayLabel_(checkIn))}</strong></span>`:''}
+      ${checkOut?`<span><small>Check out</small><strong>${esc(p3TripDayLabel_(checkOut))}</strong></span>`:''}
+    </div>
+  </section>`;
+}
+
+function renderP3Today_(){
+  p3TripEnsureSocialData_();
+  const date=p3TripSelectedDateResolve_();
+  const phase=p3TripPhase_();
+  const day=p3TripDayNumber_(date);
+  const parts=p3TripDayParts_(date);
+  const traveler=currentTraveler&&currentTraveler();
+  const firstName=String(traveler&&traveler.Name||'').trim().split(/\s+/)[0]||'Traveler';
+  const heroLabel=phase==='active'&&date===p3TripTodayIso_()?'TODAY':phase==='preview'?'TRIP DAY PREVIEW':phase==='recap'?'TRIP RECAP':'TRIP DAY';
+  return `<section class="view p3-today-view">
+    <div class="p3-today-hero">
+      <p class="eyebrow">${heroLabel}</p>
+      <div class="p3-hero-line"><div><h2>${esc(firstName)}, here’s the day</h2><p>${esc(parts.weekday)} · ${esc(p3TripDayLabel_(date))}${day?' · Day '+day:''}</p></div><strong>${esc(parts.day)}</strong></div>
+      ${phase==='preview'?'<p class="p3-preview-note">The trip hasn’t started yet, so you’re previewing the vacation day-by-day.</p>':''}
+      ${p3TripDateStrip_(date)}
+    </div>
+    <div class="p3-today-grid">
+      ${p3TripActivities_(date)}
+      ${p3TripMeals_(date)}
+      ${p3TripGroceries_()}
+      ${p3TripLodging_()}
+    </div>
+  </section>`;
+}
+
+if(typeof p1SyncMobileNavigation_==='function'){
+  p1SyncMobileNavigation_=function(){
+    const mobile=document.querySelector('.mobile-simple-nav');
+    if(!mobile) return;
+    const group=p1GroupForView_(currentView);
+    const moreActive=['stay','organizer'].indexOf(group.id)>=0 || currentView==='budget';
+    mobile.classList.add('p1-mobile-nav');
+    mobile.innerHTML=`
+      <button type="button" class="${group.id==='home'?'active':''}" onclick="p1NavigateGroup_('home')"><span class="p1-mobile-nav-icon" aria-hidden="true">⌂</span><span>Home</span></button>
+      <button type="button" class="${currentView==='rentals'?'active':''}" onclick="p1NavigateView_('rentals')"><span class="p1-mobile-nav-icon" aria-hidden="true">◇</span><span>Rental</span></button>
+      <button type="button" class="${group.id==='plan'?'active':''}" onclick="p1NavigateGroup_('plan')"><span class="p1-mobile-nav-icon" aria-hidden="true">▤</span><span>Plan</span></button>
+      <button type="button" class="${group.id==='money'?'active':''}" onclick="p1NavigateGroup_('money')"><span class="p1-mobile-nav-icon" aria-hidden="true">$</span><span>Money</span></button>
+      <button type="button" class="${moreActive?'active':''}" onclick="openMobileSectionMenu_()"><span class="p1-mobile-nav-icon" aria-hidden="true">•••</span><span>More</span></button>`;
+  };
+}
+
+const p3RenderBeforeTripMode_=render;
+render=function(){
+  const result=p3RenderBeforeTripMode_.apply(this,arguments);
+  if(currentView==='today'){
+    const root=document.getElementById('viewRoot');
+    if(root) root.innerHTML=renderP3Today_();
+  }
+  return result;
+};
+</script>
