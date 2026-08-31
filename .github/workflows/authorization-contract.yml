@@ -52,3 +52,5 @@ jobs:
         run: node tests/payment_remaining_balance_contract.test.js
       - name: Run planner date formatting contracts
         run: node tests/planner_date_format_contract.test.js
+      - name: Run pricing branch polish contracts
+        run: node tests/pricing_branch_polish_contract.test.js
