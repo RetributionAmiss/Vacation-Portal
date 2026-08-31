@@ -1,0 +1,50 @@
+<style>
+.p21-finalized-rental-view>.panel{display:grid;gap:14px;min-width:0}
+.p21-final-results-banner{margin:0}
+.p21-winning-rental-grid{grid-template-columns:minmax(0,1fr)!important;gap:0}
+.p21-finalized-rental-view .rental-card{width:100%;max-width:100%;min-width:0}
+.p21-finalized-rental-view .compare-checkbox{display:none!important}
+.p21-finalized-rental-view .compare-bar{display:none!important}
+
+.p21-final-family-summary{display:grid;gap:12px;padding:16px;border:1px solid rgba(35,76,60,.12);border-radius:17px;background:rgba(255,255,255,.88)}
+.p21-final-family-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.p21-final-family-head p,.p21-final-family-head h3{margin:0}
+.p21-final-family-head h3{margin-top:3px}
+.p21-final-family-complete{flex:0 0 auto;padding:6px 9px;border-radius:999px;background:#edf2ee;color:var(--pine);font-size:10px;font-weight:900}
+.p21-final-family-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.p21-final-family-metrics>div{display:grid;gap:4px;min-width:0;padding:10px 11px;border-radius:12px;background:#f6f8f6}
+.p21-final-family-metrics span{color:var(--muted);font-size:9px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
+.p21-final-family-metrics strong{color:var(--pine);font-size:16px;overflow-wrap:anywhere}
+.p21-final-traveler-votes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.p21-final-traveler-vote{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:8px 10px;border:1px solid rgba(35,76,60,.08);border-radius:10px;background:#fff}
+.p21-final-traveler-vote span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:10px}
+.p21-final-traveler-vote strong{flex:0 0 auto;color:var(--pine);font-size:10px}
+.p21-final-traveler-vote.no-vote strong{color:var(--muted);font-weight:700}
+
+.p21-finalized-selector{display:grid;gap:4px;min-width:0;padding:9px 11px;border:1px solid rgba(35,76,60,.13);border-radius:12px;background:rgba(255,255,255,.78)}
+.p21-finalized-selector>span{color:var(--muted);font-size:9px;font-weight:900;letter-spacing:.06em;text-transform:uppercase}
+.p21-finalized-selector>strong{color:var(--ink);font-size:12px;overflow-wrap:anywhere}
+.room-planner-selector>.p21-finalized-room-selector{min-width:min(430px,60%)}
+.payment-cabin-selector>.p21-finalized-payment-selector{min-width:min(360px,42%)}
+
+@media(max-width:650px){
+  .p21-finalized-rental-view>.panel{gap:10px;padding-left:10px;padding-right:10px}
+  .p21-final-results-banner{display:block;padding:13px}
+  .p21-final-results-banner h3{font-size:19px;line-height:1.15}
+  .p21-final-results-banner p.muted{font-size:10px;line-height:1.4}
+  .p21-final-family-summary{padding:12px;gap:9px}
+  .p21-final-family-head{display:grid;gap:6px}
+  .p21-final-family-complete{justify-self:start}
+  .p21-final-family-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .p21-final-family-metrics>div:last-child{grid-column:1/-1}
+  .p21-final-traveler-votes{grid-template-columns:1fr}
+  .p21-final-traveler-vote{padding:7px 9px}
+  .room-planner-selector>.p21-finalized-room-selector,
+  .payment-cabin-selector>.p21-finalized-payment-selector{width:100%;min-width:0}
+}
+
+@media(max-width:390px){
+  .p21-final-family-metrics{grid-template-columns:1fr}
+  .p21-final-family-metrics>div:last-child{grid-column:auto}
+}
+</style>
