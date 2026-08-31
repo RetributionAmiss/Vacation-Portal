@@ -78,3 +78,17 @@ function getPaymentDataFastFocused(forceFresh) {
     ? filterPaymentDataForFinalRental_(data, selectedId)
     : data;
 }
+
+function getPortalDeltaFocused(sinceIso) {
+  const result = getPortalDelta(sinceIso);
+  const selectedId = finalizedRentalFocusId_();
+  if (!selectedId) return result;
+
+  result.cabins = filterRowsForFinalRental_(result.cabins, selectedId, 'Cabin ID');
+  result.votes = filterRowsForFinalRental_(result.votes, selectedId, 'Cabin ID');
+  result.favorites = filterRowsForFinalRental_(result.favorites, selectedId, 'Cabin ID');
+  result.assignments = filterRowsForFinalRental_(result.assignments, selectedId, 'Cabin ID');
+  result.finalizedRentalOnly = true;
+  result.finalizedRentalId = selectedId;
+  return result;
+}
