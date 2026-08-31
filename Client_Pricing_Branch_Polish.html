@@ -1,0 +1,361 @@
+<script>
+function p21FinalizedRentalId_(){
+  if(!DATA||!DATA.trip) return '';
+  const closed=String(DATA.trip['Final Voting Closed']||'No').trim().toLowerCase()==='yes';
+  const selected=String(DATA.trip['Selected Cabin ID']||'').trim();
+  return closed&&selected?selected:'';
+}
+
+function p21FilterRowsForFinalRental_(rows,cabinId){
+  return (Array.isArray(rows)?rows:[]).filter(function(row){
+    return String(row&&row['Cabin ID']||'')===String(cabinId||'');
+  });
+}
+
+function p21ApplyFinalRentalClientFocus_(){
+  const selectedId=p21FinalizedRentalId_();
+  if(!selectedId||!DATA) return false;
+
+  DATA.cabins=p21FilterRowsForFinalRental_(DATA.cabins,selectedId);
+  DATA.votes=p21FilterRowsForFinalRental_(DATA.votes,selectedId);
+  DATA.favorites=p21FilterRowsForFinalRental_(DATA.favorites,selectedId);
+  DATA.assignments=p21FilterRowsForFinalRental_(DATA.assignments,selectedId);
+  DATA.imports=p21FilterRowsForFinalRental_(DATA.imports,selectedId);
+  DATA.importQueue=p21FilterRowsForFinalRental_(DATA.importQueue,selectedId);
+  DATA.finalizedRentalOnly=true;
+  DATA.finalizedRentalId=selectedId;
+  return true;
+}
+
+function p21ReimbursementGroups_(cabin){
+  if(!cabin) return [];
+  const cabinId=String(cabin['Cabin ID']||'');
+  const travelerId=String(currentTravelerId||'');
+  const payments=p1MoneyPaymentRows_(cabinId);
+  const groups={};
+
+  p1MoneyScheduleRows_(cabinId)
+    .filter(function(row){
+      return String(row['Recipient Type']||'')==='Traveler' &&
+        String(row['Recipient Traveler ID']||'').trim();
+    })
+    .forEach(function(row){
+      const recipientId=String(row['Recipient Traveler ID']||'').trim();
+      const label=String(row.Label||'Reimbursement').trim()||'Reimbursement';
+      const dueDate=String(row['Due Date']||'').slice(0,10);
+      const key=[label,dueDate,recipientId].join('|');
+      const status=paymentScheduleStatus_(row,payments);
+      const amount=Math.max(0,Number(row['Amount Due']||0));
+      const paid=Math.max(0,Number(status.paid||0));
+      const expectedPayer=String(row['Expected Payer Traveler ID']||'');
+
+      if(!groups[key]){
+        groups[key]={
+          label:label,
+          dueDate:dueDate,
+          recipientId:recipientId,
+          recipientName:paymentTravelerName_(recipientId),
+          total:0,
+          paid:0,
+          myDue:0,
+          myPaid:0,
+          myRows:0,
+          scheduleIds:[]
+        };
+      }
+
+      const group=groups[key];
+      group.total+=amount;
+      group.paid+=paid;
+      group.scheduleIds.push(String(row['Schedule ID']||''));
+
+      if(expectedPayer===travelerId){
+        group.myDue+=amount;
+        group.myPaid+=paid;
+        group.myRows+=1;
+      }
+    });
+
+  return Object.keys(groups).map(function(key){
+    const group=groups[key];
+    group.remaining=Math.max(0,group.total-group.paid);
+    group.myRemaining=Math.max(0,group.myDue-group.myPaid);
+    return group;
+  }).sort(function(left,right){
+    return String(left.dueDate||'9999-12-31').localeCompare(String(right.dueDate||'9999-12-31')) ||
+      String(left.label||'').localeCompare(String(right.label||''));
+  });
+}
+
+function p21ReimbursementPersonalStatus_(group){
+  const travelerId=String(currentTravelerId||'');
+  if(travelerId===String(group.recipientId||'')){
+    return '<span class="p21-reimbursement-personal is-recipient">You are receiving this reimbursement.</span>';
+  }
+  if(!(group.myDue>0)){
+    return '<span class="p21-reimbursement-personal is-neutral">No individual portion is assigned to you.</span>';
+  }
+  if(group.myRemaining<=.005){
+    return `<span class="p21-reimbursement-personal is-paid">Your portion · ${p1MoneyAmount_(group.myDue)} · Paid</span>`;
+  }
+  return `<span class="p21-reimbursement-personal is-due">Your portion · ${p1MoneyAmount_(group.myDue)} · ${p1MoneyAmount_(group.myRemaining)} left</span>`;
+}
+
+function p21ReimbursementBoard_(cabin){
+  const groups=p21ReimbursementGroups_(cabin);
+  return `<section class="p1-money-focus-card p21-reimbursement-board">
+    <div class="p1-money-section-head p21-reimbursement-head">
+      <div><p class="eyebrow">REIMBURSEMENTS</p><h3>Booking traveler reimbursements</h3></div>
+      <button class="ghost tiny" type="button" onclick="navigate('payments')">Payment details</button>
+    </div>
+    ${groups.length
+      ? `<div class="p21-reimbursement-list">${groups.map(function(group){
+          return `<article class="p21-reimbursement-installment ${group.remaining<=.005?'is-complete':''}">
+            <div class="p21-reimbursement-title">
+              <div><strong>${esc(group.label)}</strong><small>To ${esc(group.recipientName||'booking traveler')}${group.dueDate?' · '+esc(p1MoneyDate_(group.dueDate)):''}</small></div>
+              <div class="p21-reimbursement-owed"><span>Still owed</span><strong>${p1MoneyAmount_(group.remaining)}</strong></div>
+            </div>
+            <div class="p21-reimbursement-metrics">
+              <span>Total reimbursement <strong>${p1MoneyAmount_(group.total)}</strong></span>
+              <span>Marked paid <strong>${p1MoneyAmount_(group.paid)}</strong></span>
+            </div>
+            ${p21ReimbursementPersonalStatus_(group)}
+          </article>`;
+        }).join('')}</div>`
+      : '<div class="p1-money-caught-up compact"><span aria-hidden="true">✓</span><div><strong>No traveler reimbursements scheduled</strong><small>Reimbursement installments will appear here when a booking traveler is receiving payments on the family’s behalf.</small></div></div>'}
+  </section>`;
+}
+
+function p21ReplaceReimbursementBoard_(html,cabin){
+  const needle='<p class="eyebrow">REIMBURSEMENTS</p>';
+  const needleIndex=String(html||'').indexOf(needle);
+  if(needleIndex<0) return html;
+
+  const sectionStart=html.lastIndexOf('<section class="p1-money-focus-card">',needleIndex);
+  const sectionEnd=html.indexOf('</section>',needleIndex);
+  if(sectionStart<0||sectionEnd<0) return html;
+
+  const end=sectionEnd+'</section>'.length;
+  return html.slice(0,sectionStart)+p21ReimbursementBoard_(cabin)+html.slice(end);
+}
+
+const p21RenderMoneyOverviewBeforePolish_=renderP1MoneyOverview_;
+renderP1MoneyOverview_=function(){
+  const cabin=p1MoneyCabin_();
+  let html=p21RenderMoneyOverviewBeforePolish_.apply(this,arguments);
+  html=p21ReplaceReimbursementBoard_(html,cabin);
+
+  if(p21FinalizedRentalId_()&&cabin){
+    const pickerStart=html.indexOf('<label class="p1-money-rental-picker">');
+    if(pickerStart>=0){
+      const pickerEnd=html.indexOf('</label>',pickerStart);
+      if(pickerEnd>=0){
+        html=html.slice(0,pickerStart)+
+          `<div class="p1-money-rental-fixed"><span>Selected rental</span><strong>${esc(displayName(cabin))}</strong></div>`+
+          html.slice(pickerEnd+'</label>'.length);
+      }
+    }
+  }
+
+  return html;
+};
+
+function p21PositionNavigationHierarchy_(){
+  const shell=document.getElementById('p1NavigationShell');
+  const mobile=document.querySelector('.mobile-simple-nav');
+  const legacy=document.getElementById('mainNav');
+  if(!shell||!legacy) return;
+
+  const isMobile=window.matchMedia&&window.matchMedia('(max-width:650px)').matches;
+  shell.classList.toggle('p21-mobile-secondary-shell',Boolean(isMobile));
+
+  if(isMobile&&mobile){
+    if(mobile.nextElementSibling!==shell){
+      mobile.insertAdjacentElement('afterend',shell);
+    }
+    return;
+  }
+
+  if(legacy.previousElementSibling!==shell){
+    legacy.parentNode.insertBefore(shell,legacy);
+  }
+}
+
+const p21SyncNavigationBeforePolish_=p1SyncNavigation_;
+p1SyncNavigation_=function(){
+  p21SyncNavigationBeforePolish_.apply(this,arguments);
+  p21PositionNavigationHierarchy_();
+};
+
+window.addEventListener('resize',function(){
+  p21PositionNavigationHierarchy_();
+});
+
+const p21ScheduleRentalPollingBeforeFocus_=scheduleRentalPolling_;
+scheduleRentalPolling_=function(){
+  if(p21FinalizedRentalId_()){
+    if(rentalPollingTimer){clearTimeout(rentalPollingTimer);rentalPollingTimer=null;}
+    return;
+  }
+  return p21ScheduleRentalPollingBeforeFocus_.apply(this,arguments);
+};
+
+const p21PollRentalImportsBeforeFocus_=pollRentalImports_;
+pollRentalImports_=function(){
+  if(p21FinalizedRentalId_()){
+    rentalPollingBusy=false;
+    if(rentalPollingTimer){clearTimeout(rentalPollingTimer);rentalPollingTimer=null;}
+    return;
+  }
+  return p21PollRentalImportsBeforeFocus_.apply(this,arguments);
+};
+
+const p21StartLiveActivityBeforeFocus_=startLiveActivityPolling_;
+startLiveActivityPolling_=function(){
+  if(p21FinalizedRentalId_()){
+    if(liveActivityTimer){clearTimeout(liveActivityTimer);liveActivityTimer=null;}
+    return;
+  }
+  return p21StartLiveActivityBeforeFocus_.apply(this,arguments);
+};
+
+const p21PollLiveActivityBeforeFocus_=pollLiveActivity_;
+pollLiveActivity_=function(){
+  if(p21FinalizedRentalId_()){
+    liveActivityBusy=false;
+    if(liveActivityTimer){clearTimeout(liveActivityTimer);liveActivityTimer=null;}
+    return;
+  }
+  return p21PollLiveActivityBeforeFocus_.apply(this,arguments);
+};
+
+refreshData=function(){
+  if(!DATA){
+    startLoadingStages_();
+  }else{
+    setFastStartStatus_(true,'Refreshing trip data…');
+  }
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      DATA=data;
+      p21ApplyFinalRentalClientFocus_();
+      portalDeltaSince=data.serverTime||new Date().toISOString();
+      applyServerDeviceTravelerProfile_(data);
+      saveFastStartupSnapshot_(DATA);
+
+      stopLoadingStages_();
+      setLoading(false);
+      hydrateHeader();
+      render();
+
+      setFastStartStatus_(true,'Dashboard ready · loading full trip data…');
+      loadDeferredPortalData_();
+
+      scheduleRentalPolling_();
+      startLiveActivityPolling_(data.serverTime);
+      startPortalDeltaSync_();
+      resolveDeviceTravelerBeforePrompt_();
+
+      if(validSelectedTraveler_()) travelerChooserShown=true;
+    })
+    .withFailureHandler(function(error){
+      stopLoadingStages_();
+      if(DATA){
+        setFastStartStatus_(true,'Using the most recent saved view. Fresh data could not be loaded.');
+        toast('Fresh portal data could not be loaded. Showing the last saved view.',true);
+      }else{
+        showFatal(error);
+      }
+    })
+    .getPortalStartupDataFocused(PWA_DEVICE_ID_);
+};
+
+loadDeferredPortalData_=function(){
+  if(portalDeferredLoadBusy_) return;
+  portalDeferredLoadBusy_=true;
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      portalDeferredLoadBusy_=false;
+
+      const paymentData=data&&data.paymentData?data.paymentData:null;
+      if(data&&Object.prototype.hasOwnProperty.call(data,'paymentData')) delete data.paymentData;
+
+      DATA=data;
+      p21ApplyFinalRentalClientFocus_();
+      portalDeltaSince=data.serverTime||portalDeltaSince;
+      portalFastStartFromSnapshot_=false;
+
+      if(paymentData) applyPaymentData_(paymentData);
+
+      hydrateHeader();
+      render();
+      setFastStartStatus_(false);
+      scheduleRentalPolling_();
+    })
+    .withFailureHandler(function(){
+      portalDeferredLoadBusy_=false;
+      setFastStartStatus_(true,'Dashboard is ready. Some detailed sections could not finish loading.');
+    })
+    .getPortalDeferredDataWithPaymentsFocused();
+};
+
+loadPaymentData_=function(force){
+  if(!paymentState_.loaded){
+    const restored=paymentRestoreSnapshot_();
+    if(restored&&(currentView==='payments'||currentView==='money')) render();
+  }
+
+  if(paymentState_.loading) return;
+  if(!force&&paymentDataIsFresh_()) return;
+
+  paymentState_.loading=true;
+  google.script.run
+    .withSuccessHandler(function(data){
+      applyPaymentData_(data);
+      if(currentView==='payments'||currentView==='money') render();
+    })
+    .withFailureHandler(function(error){
+      paymentState_.loading=false;
+      if(!paymentState_.loaded){
+        toast('Payment schedule could not be loaded: '+(error&&error.message?error.message:String(error)),true);
+      }
+      if(currentView==='payments'||currentView==='money') render();
+    })
+    .getPaymentDataFastFocused(Boolean(force));
+};
+
+pollPortalDelta_=function(){
+  if(portalDeltaBusy){
+    portalDeltaTimer=setTimeout(pollPortalDelta_,15000);
+    return;
+  }
+
+  portalDeltaBusy=true;
+  google.script.run
+    .withSuccessHandler(function(result){
+      portalDeltaBusy=false;
+      portalDeltaSince=result.serverTime||new Date().toISOString();
+      if(result.cabins&&result.cabins.length){
+        mergePortalDelta_(result);
+        p21ApplyFinalRentalClientFocus_();
+        render();
+      }
+      portalDeltaTimer=setTimeout(pollPortalDelta_,15000);
+    })
+    .withFailureHandler(function(){
+      portalDeltaBusy=false;
+      portalDeltaTimer=setTimeout(pollPortalDelta_,25000);
+    })
+    .getPortalDeltaFocused(portalDeltaSince);
+};
+
+const p21RenderBeforeFinalFocus_=render;
+render=function(){
+  p21ApplyFinalRentalClientFocus_();
+  const result=p21RenderBeforeFinalFocus_.apply(this,arguments);
+  p21PositionNavigationHierarchy_();
+  return result;
+};
+</script>
