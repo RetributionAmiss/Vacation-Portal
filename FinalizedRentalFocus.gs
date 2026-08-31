@@ -1,6 +1,8 @@
 function finalizedRentalFocusIdFromTrip_(trip) {
   trip = trip || {};
-  const closed = String(trip['Final Voting Closed'] || 'No').trim().toLowerCase() === 'yes';
+  const stage = String(trip['Portal Stage'] || '').trim();
+  const closedFlag = String(trip['Final Voting Closed'] || 'No').trim().toLowerCase() === 'yes';
+  const closed = closedFlag || stage === 'Voting Closed';
   const selectedId = String(trip['Selected Cabin ID'] || '').trim();
   return closed && selectedId ? selectedId : '';
 }
