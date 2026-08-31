@@ -64,3 +64,5 @@ jobs:
         run: node tests/p3_trip_mode_contract.test.js
       - name: Run P3 Places and Directions contracts
         run: node tests/p3_places_directions_contract.test.js
+      - name: Run planner social reliability contracts
+        run: node tests/planner_social_reliability_contract.test.js
