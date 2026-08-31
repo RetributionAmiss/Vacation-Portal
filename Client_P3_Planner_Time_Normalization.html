@@ -1,0 +1,37 @@
+<script>
+/* Normalize Sheets time-only values that Apps Script serializes as 1899-12-30 ISO timestamps. */
+const p2PlannerTimeLabelBeforeP3Normalize_=
+  typeof p2PlannerTimeLabel_==='function' ? p2PlannerTimeLabel_ : null;
+
+function p3PlannerTimeParts_(value){
+  if(value instanceof Date && !isNaN(value.getTime())){
+    return {hour:value.getUTCHours(),minute:value.getUTCMinutes()};
+  }
+
+  const text=String(value||'').trim();
+  if(!text) return null;
+
+  let match=text.match(/^(\d{1,2}):(\d{2})/);
+  if(match) return {hour:Number(match[1]),minute:Number(match[2])};
+
+  match=text.match(/T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i);
+  if(match) return {hour:Number(match[1]),minute:Number(match[2])};
+
+  return null;
+}
+
+function p3PlannerTimeDisplay_(value){
+  const parts=p3PlannerTimeParts_(value);
+  if(!parts||parts.hour<0||parts.hour>23||parts.minute<0||parts.minute>59){
+    return p2PlannerTimeLabelBeforeP3Normalize_
+      ? p2PlannerTimeLabelBeforeP3Normalize_(value)
+      : String(value||'');
+  }
+
+  const suffix=parts.hour>=12?'PM':'AM';
+  const hour12=((parts.hour+11)%12)+1;
+  return hour12+':'+String(parts.minute).padStart(2,'0')+' '+suffix;
+}
+
+p2PlannerTimeLabel_=p3PlannerTimeDisplay_;
+</script>
