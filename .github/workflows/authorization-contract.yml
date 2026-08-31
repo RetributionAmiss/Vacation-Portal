@@ -54,3 +54,5 @@ jobs:
         run: node tests/planner_date_format_contract.test.js
       - name: Run pricing branch polish contracts
         run: node tests/pricing_branch_polish_contract.test.js
+      - name: Run finalized rental mode contracts
+        run: node tests/finalized_rental_mode_contract.test.js
