@@ -68,3 +68,5 @@ jobs:
         run: node tests/planner_social_reliability_contract.test.js
       - name: Run P3 traveler reminder contracts
         run: node tests/p3_traveler_reminders_contract.test.js
+      - name: Run P3 mobile containment contracts
+        run: node tests/p3_mobile_containment_contract.test.js
