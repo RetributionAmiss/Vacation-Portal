@@ -1,0 +1,230 @@
+<script>
+/* PR #25: personalized traveler reminders from existing portal data. */
+let p3ReminderSocialLoading_=false;
+
+(function p3ReminderRegisterView_(){
+  if(typeof P1_NAV_GROUPS_==='undefined'||typeof P1_VIEW_LABELS_==='undefined') return;
+  const home=P1_NAV_GROUPS_.find(function(group){return group.id==='home';});
+  if(home&&home.views.indexOf('reminders')<0) home.views.push('reminders');
+  P1_VIEW_LABELS_.reminders='Reminders';
+})();
+
+function p3ReminderToday_(){
+  if(typeof p3TripTodayIso_==='function') return p3TripTodayIso_();
+  const now=new Date();
+  return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+}
+
+function p3ReminderIso_(value){
+  if(typeof p2PlannerIsoDate_==='function') return p2PlannerIsoDate_(value);
+  const match=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match?match[1]+'-'+match[2]+'-'+match[3]:'';
+}
+
+function p3ReminderDateLabel_(value){
+  if(typeof p2PlannerDateLabel_==='function') return p2PlannerDateLabel_(value);
+  const iso=p3ReminderIso_(value);
+  if(!iso) return 'No date';
+  const parts=iso.split('-');
+  return parts[1]+'/'+parts[2]+'/'+parts[0];
+}
+
+function p3ReminderEnsureSocialData_(){
+  if(!DATA||p3ReminderSocialLoading_) return;
+  if(typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_.loaded) return;
+  if(!window.google||!google.script||!google.script.run) return;
+  p3ReminderSocialLoading_=true;
+  google.script.run
+    .withSuccessHandler(function(result){
+      DATA.itinerarySignups=(result&&result.itinerarySignups)||[];
+      DATA.plannerComments=(result&&result.plannerComments)||[];
+      p3ReminderSocialLoading_=false;
+      if(typeof p2PlannerSocialState_!=='undefined'){
+        p2PlannerSocialState_.loaded=true;
+        p2PlannerSocialState_.loading=false;
+        p2PlannerSocialState_.lastLoaded=Date.now();
+      }
+      if(currentView==='reminders'||currentView==='dashboard') render();
+    })
+    .withFailureHandler(function(){p3ReminderSocialLoading_=false;})
+    .getPlannerSocialData();
+}
+
+function p3ReminderNameMatches_(value,name){
+  const text=String(value||'').trim().toLowerCase();
+  const full=String(name||'').trim().toLowerCase();
+  if(!text||!full) return false;
+  if(text===full||text.indexOf(full)>=0) return true;
+  const first=full.split(/\s+/)[0];
+  return text.split(/[,;&/+]|\band\b/i).map(function(part){return part.trim();}).some(function(part){
+    return part===first||part===full;
+  });
+}
+
+function p3ReminderUrgency_(date,type){
+  const today=p3ReminderToday_();
+  if(!date) return {rank:80,label:'Upcoming',tone:'later'};
+  if(date<today) return type==='payment'
+    ? {rank:0,label:'Overdue',tone:'overdue'}
+    : {rank:99,label:'Past',tone:'past'};
+  if(date===today) return {rank:5,label:'Today',tone:'today'};
+  const a=new Date(today+'T00:00:00');
+  const b=new Date(date+'T00:00:00');
+  const days=Math.round((b-a)/86400000);
+  if(days===1) return {rank:10,label:'Tomorrow',tone:'soon'};
+  if(days<=7) return {rank:20,label:'In '+days+' days',tone:'soon'};
+  return {rank:40+Math.min(days,30),label:p3ReminderDateLabel_(date),tone:'later'};
+}
+
+function p3ReminderPaymentItems_(){
+  if(typeof p1MoneyEnsurePaymentData_==='function') p1MoneyEnsurePaymentData_();
+  if(typeof paymentState_==='undefined'||!paymentState_.loaded||!currentTravelerId) return [];
+  const cabin=typeof p1MoneyCabin_==='function'?p1MoneyCabin_():null;
+  if(!cabin) return [];
+  const cabinId=String(cabin['Cabin ID']||'');
+  const payments=typeof paymentsForCabin_==='function'?paymentsForCabin_(cabinId):[];
+  const rows=typeof paymentScheduleForCabin_==='function'?paymentScheduleForCabin_(cabinId):[];
+  return rows.map(function(row){
+    const expected=String(row['Expected Payer Traveler ID']||'');
+    if(expected!==String(currentTravelerId||'')) return null;
+    const status=typeof paymentScheduleStatus_==='function'
+      ? paymentScheduleStatus_(row,payments)
+      : {remaining:Number(row['Amount Due']||0)};
+    const remaining=Number(status.remaining||0);
+    if(remaining<=.005) return null;
+    const date=p3ReminderIso_(row['Due Date']);
+    const urgency=p3ReminderUrgency_(date,'payment');
+    const amount=typeof paymentMoney_==='function'?paymentMoney_(remaining):money(remaining);
+    const recipient=typeof paymentRecipientLabel_==='function'?paymentRecipientLabel_(row,'Recipient'):'Booking payment';
+    return {
+      type:'payment',marker:'PAY',date:date,time:'',urgency:urgency,
+      title:String(row.Label||'Lodging installment'),
+      detail:amount+' still due · '+recipient,
+      view:'payments',cta:'Open payment',
+      scheduleId:String(row['Schedule ID']||''),cabinId:cabinId
+    };
+  }).filter(Boolean);
+}
+
+function p3ReminderMealItems_(){
+  const traveler=typeof currentTraveler==='function'?currentTraveler():null;
+  const name=String(traveler&&traveler.Name||'').trim();
+  if(!name) return [];
+  const today=p3ReminderToday_();
+  return ((DATA&&DATA.meals)||[]).map(function(row){
+    const date=p3ReminderIso_(row.Date);
+    if(!date||date<today) return null;
+    const cooking=p3ReminderNameMatches_(row['Assigned To'],name);
+    const cleanup=p3ReminderNameMatches_(row['Clean Up'],name);
+    if(!cooking&&!cleanup) return null;
+    const roles=[];
+    if(cooking) roles.push('Cooking crew');
+    if(cleanup) roles.push('Clean up crew');
+    return {
+      type:'meal',marker:'MEAL',date:date,time:'',urgency:p3ReminderUrgency_(date,'meal'),
+      title:String(row.Meal||'Meal'),
+      detail:roles.join(' + ')+(row.Menu?' · '+String(row.Menu):''),
+      view:'meals',cta:'View meal'
+    };
+  }).filter(Boolean);
+}
+
+function p3ReminderActivityItems_(){
+  if(!currentTravelerId) return [];
+  const today=p3ReminderToday_();
+  const itinerary=(DATA&&DATA.itinerary)||[];
+  return ((DATA&&DATA.itinerarySignups)||[]).map(function(signup){
+    if(String(signup['Traveler ID']||'')!==String(currentTravelerId||'')) return null;
+    const date=p3ReminderIso_(signup['Planned Date']);
+    if(!date||date<today) return null;
+    const row=itinerary.find(function(item){return String(item['Itinerary ID']||'')===String(signup['Itinerary ID']||'');})||{};
+    const time=String(signup['Planned Time']||'').slice(0,5);
+    const timeLabel=typeof p2PlannerTimeLabel_==='function'?p2PlannerTimeLabel_(time):time;
+    return {
+      type:'activity',marker:'GO',date:date,time:time,urgency:p3ReminderUrgency_(date,'activity'),
+      title:String(row.Activity||'Activity plan'),
+      detail:(timeLabel?timeLabel+' · ':'')+String(row.Location||'Location not set'),
+      view:'itinerary',cta:'View activity'
+    };
+  }).filter(Boolean);
+}
+
+function p3ReminderItems_(){
+  p3ReminderEnsureSocialData_();
+  return [].concat(p3ReminderPaymentItems_(),p3ReminderMealItems_(),p3ReminderActivityItems_())
+    .filter(function(item){return item.urgency.tone!=='past';})
+    .sort(function(a,b){
+      const dateCompare=String(a.date||'9999-12-31').localeCompare(String(b.date||'9999-12-31'));
+      if(dateCompare) return dateCompare;
+      const urgency=Number(a.urgency.rank||0)-Number(b.urgency.rank||0);
+      if(urgency) return urgency;
+      return String(a.time||'').localeCompare(String(b.time||''));
+    });
+}
+
+function p3ReminderOpen_(view,cabinId,scheduleId){
+  if(view==='payments'&&scheduleId&&typeof p1MoneyOpenPayment_==='function'){
+    p1MoneyOpenPayment_(cabinId,scheduleId);
+    return;
+  }
+  navigate(view);
+}
+
+function p3ReminderCard_(item){
+  return `<article class="p3r-item ${escAttr(item.urgency.tone)}">
+    <div class="p3r-marker">${esc(item.marker)}</div>
+    <div class="p3r-copy">
+      <div class="p3r-meta"><span>${esc(item.urgency.label)}</span><small>${esc(p3ReminderDateLabel_(item.date))}</small></div>
+      <strong>${esc(item.title)}</strong>
+      <p>${esc(item.detail)}</p>
+    </div>
+    <button type="button" onclick="p3ReminderOpen_('${escAttr(item.view)}','${escAttr(item.cabinId||'')}','${escAttr(item.scheduleId||'')}')">${esc(item.cta)}</button>
+  </article>`;
+}
+
+function renderP3Reminders_(){
+  const traveler=typeof currentTraveler==='function'?currentTraveler():null;
+  const firstName=String(traveler&&traveler.Name||'Traveler').trim().split(/\s+/)[0]||'Traveler';
+  const items=p3ReminderItems_();
+  const urgent=items.filter(function(item){return ['overdue','today','soon'].indexOf(item.urgency.tone)>=0;});
+  const later=items.filter(function(item){return ['overdue','today','soon'].indexOf(item.urgency.tone)<0;});
+  const paymentsSyncing=typeof paymentState_!=='undefined'&&!paymentState_.loaded;
+  const socialSyncing=p3ReminderSocialLoading_;
+
+  return `<section class="view p3r-view">
+    <div class="p3r-hero">
+      <p class="eyebrow">YOUR REMINDERS</p>
+      <h2>${esc(firstName)}, here’s what’s coming up</h2>
+      <p>Only things tied to you show here: unpaid lodging installments, your meal jobs, and activities you signed up for.</p>
+      <div class="p3r-counts"><span><strong>${urgent.length}</strong> needs attention soon</span><span><strong>${later.length}</strong> later</span></div>
+    </div>
+    ${(paymentsSyncing||socialSyncing)?'<div class="p3r-sync" role="status">Checking the latest payment and activity details…</div>':''}
+    ${items.length?`<div class="p3r-list">${items.map(p3ReminderCard_).join('')}</div>`:`<div class="p3r-empty"><span aria-hidden="true">✓</span><div><strong>You’re all caught up.</strong><p>No personal payment, meal, or activity reminders are waiting right now.</p></div></div>`}
+  </section>`;
+}
+
+function p3ReminderDashboardCard_(){
+  const items=p3ReminderItems_().slice(0,3);
+  if(!items.length) return '';
+  return `<section class="p3r-dashboard-card">
+    <div class="p3r-dashboard-head"><div><p class="eyebrow">COMING UP</p><h3>Your reminders</h3></div><button type="button" class="ghost tiny" onclick="navigate('reminders')">See all</button></div>
+    <div class="p3r-dashboard-list">${items.map(function(item){
+      return `<button type="button" onclick="p3ReminderOpen_('${escAttr(item.view)}','${escAttr(item.cabinId||'')}','${escAttr(item.scheduleId||'')}')"><span>${esc(item.marker)}</span><div><strong>${esc(item.title)}</strong><small>${esc(item.urgency.label)} · ${esc(item.detail)}</small></div><em>›</em></button>`;
+    }).join('')}</div>
+  </section>`;
+}
+
+const p3ReminderRenderBefore_=render;
+render=function(){
+  const result=p3ReminderRenderBefore_.apply(this,arguments);
+  const root=document.getElementById('viewRoot');
+  if(currentView==='reminders'){
+    if(root) root.innerHTML=renderP3Reminders_();
+    if(typeof p1SyncNavigation_==='function') p1SyncNavigation_();
+  }else if(currentView==='dashboard'&&root&&!root.querySelector('.p3r-dashboard-card')){
+    const card=p3ReminderDashboardCard_();
+    if(card) root.insertAdjacentHTML('beforeend',card);
+  }
+  return result;
+};
+</script>
