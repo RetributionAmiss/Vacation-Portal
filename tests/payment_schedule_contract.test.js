@@ -22,11 +22,11 @@ const stylesV2 = read('Styles_Payments_V2.html');
 const archive = read('Archive.gs');
 
 assert(
-  config.includes("const PORTAL_SCHEMA_VERSION = '4.4.1'") &&
+  /const PORTAL_SCHEMA_VERSION = '4\.4\.[1-9]\d*'/.test(config) &&
     config.includes("'Booking Plans': [") &&
     config.includes("'Payment Schedule': [") &&
     config.includes('Payments: ['),
-  'Payment feature must version and declare its base persistent sheets.'
+  'Payment feature must remain versioned and declare its base persistent sheets.'
 );
 
 [

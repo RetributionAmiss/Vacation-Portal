@@ -13,11 +13,20 @@ function plannerDefinitionForDelete_(plannerName) {
 
 function deletePlannerItem(plannerName, id) {
   const definition = plannerDefinitionForDelete_(plannerName);
-  return deletePlannerRecordFast_(
+  const result = deletePlannerRecordFast_(
     definition.sheet,
     definition.idHeader,
     id
   );
+
+  if (
+    (definition.sheet === 'Itinerary' || definition.sheet === 'Meals') &&
+    typeof clearPlannerSocialForItem_ === 'function'
+  ) {
+    clearPlannerSocialForItem_(definition.sheet, id);
+  }
+
+  return result;
 }
 
 function deletePlannerRecord_(sheetName, idHeader, id) {
@@ -68,7 +77,7 @@ function savePlannerRecordFast_(sheetName, idHeader, prefix, values) {
   if (rowNumber) {
     sheet.getRange(rowNumber, 1, 1, headers.length).setValues([row]);
   } else {
-    sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([row]);
+    sheet.getRange(sheet.getLastRow() + 1, 1, headers.length).setValues([row]);
   }
 
   const response = {};

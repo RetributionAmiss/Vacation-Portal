@@ -1,0 +1,591 @@
+<script>
+const renderPlannerBeforeP2Experience_=renderPlanner;
+const openPlannerFormBeforeP2Experience_=openPlannerForm;
+
+let p2PlannerSocialState_={loaded:false,loading:false,lastLoaded:0};
+
+function p2PlannerEnsureSocialData_(){
+  if(!DATA) return;
+  const now=Date.now();
+  if(p2PlannerSocialState_.loading) return;
+  if(p2PlannerSocialState_.loaded && now-p2PlannerSocialState_.lastLoaded<15000) return;
+
+  p2PlannerSocialState_.loading=true;
+  google.script.run
+    .withSuccessHandler(function(result){
+      DATA.itinerarySignups=(result&&result.itinerarySignups)||[];
+      DATA.plannerComments=(result&&result.plannerComments)||[];
+      p2PlannerSocialState_.loaded=true;
+      p2PlannerSocialState_.loading=false;
+      p2PlannerSocialState_.lastLoaded=Date.now();
+      if(['itinerary','meals'].indexOf(currentView)>=0) render();
+    })
+    .withFailureHandler(function(error){
+      p2PlannerSocialState_.loading=false;
+      console.warn('Planner social data could not be refreshed.',error);
+    })
+    .getPlannerSocialData();
+}
+
+function p2PlannerIsoDate_(value){
+  const text=String(value||'').trim();
+  const match=text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(match) return match[1]+'-'+match[2]+'-'+match[3];
+  return '';
+}
+
+function p2PlannerDateLabel_(value){
+  const iso=p2PlannerIsoDate_(value);
+  if(!iso) return '';
+  const parts=iso.split('-');
+  return parts[1]+'/'+parts[2]+'/'+parts[0];
+}
+
+function p2PlannerTimeLabel_(value){
+  const text=String(value||'').trim();
+  const match=text.match(/^(\d{1,2}):(\d{2})/);
+  if(!match) return text;
+  const hour24=Number(match[1]);
+  const minute=match[2];
+  const suffix=hour24>=12?'PM':'AM';
+  const hour12=((hour24+11)%12)+1;
+  return hour12+':'+minute+' '+suffix;
+}
+
+function p2PlannerSelectedCabin_(){
+  const cabins=(DATA&&DATA.cabins)||[];
+  if(!cabins.length) return null;
+  const selected=String(DATA&&DATA.trip&&DATA.trip['Selected Cabin ID']||'');
+  return cabins.find(function(cabin){
+    return String(cabin['Cabin ID']||'')===selected;
+  })||cabins[0];
+}
+
+function p2PlannerVacationDates_(){
+  const trip=(DATA&&DATA.trip)||{};
+  const cabin=p2PlannerSelectedCabin_();
+  const detail=cabin&&cabin.detail||{};
+
+  const start=p2PlannerIsoDate_(
+    trip['Vacation Start Date']||trip['Trip Start Date']||trip['Start Date']||
+    detail['Check In']||''
+  );
+  const end=p2PlannerIsoDate_(
+    trip['Vacation End Date']||trip['Trip End Date']||trip['End Date']||
+    detail['Check Out']||''
+  );
+
+  if(start&&end){
+    const a=start.split('-').map(Number);
+    const b=end.split('-').map(Number);
+    let current=Date.UTC(a[0],a[1]-1,a[2]);
+    const finish=Date.UTC(b[0],b[1]-1,b[2]);
+    const dates=[];
+    while(current<=finish&&dates.length<32){
+      const d=new Date(current);
+      dates.push(
+        d.getUTCFullYear()+'-'+
+        String(d.getUTCMonth()+1).padStart(2,'0')+'-'+
+        String(d.getUTCDate()).padStart(2,'0')
+      );
+      current+=86400000;
+    }
+    if(dates.length) return dates;
+  }
+
+  const collected=[];
+  ((DATA&&DATA.meals)||[]).forEach(function(row){
+    const date=p2PlannerIsoDate_(row.Date);
+    if(date) collected.push(date);
+  });
+  ((DATA&&DATA.itinerarySignups)||[]).forEach(function(row){
+    const date=p2PlannerIsoDate_(row['Planned Date']);
+    if(date) collected.push(date);
+  });
+  ((DATA&&DATA.itinerary)||[]).forEach(function(row){
+    const date=p2PlannerIsoDate_(row.Date);
+    if(date) collected.push(date);
+  });
+  return Array.from(new Set(collected)).sort();
+}
+
+function p2PlannerDayParts_(iso){
+  const parts=String(iso||'').split('-').map(Number);
+  if(parts.length!==3) return {weekday:'Day',month:'',day:''};
+  const date=new Date(Date.UTC(parts[0],parts[1]-1,parts[2]));
+  return {
+    weekday:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][date.getUTCDay()],
+    month:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][date.getUTCMonth()],
+    day:String(date.getUTCDate())
+  };
+}
+
+function p2PlannerCalendarStrip_(selected,interactive,inputId){
+  const dates=p2PlannerVacationDates_();
+  const chosen=p2PlannerIsoDate_(selected);
+  if(!dates.length){
+    if(!interactive) return chosen?`<span class="p2-date-fallback">${esc(p2PlannerDateLabel_(chosen))}</span>`:'';
+    return `<input id="${escAttr(inputId)}" type="date" value="${escAttr(chosen)}" required>`;
+  }
+
+  return `<div class="p2-calendar-strip ${interactive?'is-interactive':''}" role="${interactive?'listbox':'group'}" aria-label="Vacation days">
+    ${dates.map(function(iso){
+      const part=p2PlannerDayParts_(iso);
+      const active=iso===chosen;
+      if(!interactive){
+        return `<span class="p2-calendar-day ${active?'is-selected':''}" aria-current="${active?'date':'false'}">
+          <small>${esc(part.weekday)}</small><strong>${esc(part.day)}</strong><em>${esc(part.month)}</em>
+        </span>`;
+      }
+      return `<button type="button" class="p2-calendar-day ${active?'is-selected':''}" onclick="p2PlannerChooseDate_('${escAttr(inputId)}','${escAttr(iso)}',this)" aria-selected="${active?'true':'false'}">
+        <small>${esc(part.weekday)}</small><strong>${esc(part.day)}</strong><em>${esc(part.month)}</em>
+      </button>`;
+    }).join('')}
+    ${interactive?`<input id="${escAttr(inputId)}" type="hidden" value="${escAttr(chosen||dates[0])}">`:''}
+  </div>`;
+}
+
+function p2PlannerChooseDate_(inputId,iso,button){
+  const input=document.getElementById(inputId);
+  if(input) input.value=iso;
+  const strip=button&&button.closest('.p2-calendar-strip');
+  if(strip){
+    strip.querySelectorAll('.p2-calendar-day').forEach(function(day){
+      const selected=day===button;
+      day.classList.toggle('is-selected',selected);
+      day.setAttribute('aria-selected',selected?'true':'false');
+    });
+  }
+}
+
+function p2PlannerComments_(type,itemId){
+  return ((DATA&&DATA.plannerComments)||[])
+    .filter(function(row){
+      return String(row['Planner Type']||'')===type&&String(row['Item ID']||'')===String(itemId||'');
+    })
+    .sort(function(a,b){
+      return String(a['Created At']||'').localeCompare(String(b['Created At']||''));
+    });
+}
+
+function p2PlannerCommentSection_(type,itemId,label){
+  const comments=p2PlannerComments_(type,itemId);
+  const visible=comments.slice(-3);
+  return `<div class="p2-comment-section">
+    <div class="p2-mini-head"><strong>${esc(label)}</strong><button type="button" class="ghost tiny" onclick="openP2PlannerComment_('${escAttr(type)}','${escAttr(itemId)}')">+ Comment</button></div>
+    ${visible.length?`<div class="p2-comments">
+      ${visible.map(function(row){
+        return `<div class="p2-comment"><strong>${esc(row.travelerName||row['Traveler Name']||'Traveler')}</strong><span>${esc(row.Comment||'')}</span></div>`;
+      }).join('')}
+    </div>`:`<p class="p2-empty-mini">No comments yet.</p>`}
+    ${comments.length>3?`<small class="muted">Showing the latest 3 of ${comments.length} comments.</small>`:''}
+  </div>`;
+}
+
+function openP2PlannerComment_(type,itemId){
+  const prompt=type==='Meals'?'Requests for the chef':'Trip chatter';
+  openModal(`<div class="p2-comment-modal">
+    <p class="eyebrow">${esc(prompt.toUpperCase())}</p>
+    <h2>${type==='Meals'?'Leave a request for the chef':'Add to the conversation'}</h2>
+    <form onsubmit="saveP2PlannerComment_(event,'${escAttr(type)}','${escAttr(itemId)}')">
+      <label><span>${type==='Meals'?'Request or idea':'Comment'}</span><textarea id="p2PlannerCommentText" maxlength="800" rows="4" required></textarea></label>
+      <div class="form-actions"><button type="button" class="ghost" onclick="closeModal()">Cancel</button><button>Post comment</button></div>
+    </form>
+  </div>`);
+}
+
+function saveP2PlannerComment_(event,type,itemId){
+  event.preventDefault();
+  const comment=String(val('p2PlannerCommentText')||'').trim();
+  if(!comment) return;
+  const traveler=currentTraveler();
+  if(!traveler||!currentTravelerId){toast('Choose your saved traveler profile first.',true);return;}
+
+  const tempId='LOCAL-COM-'+Date.now();
+  const local={
+    'Planner Comment ID':tempId,
+    'Planner Type':type,
+    'Item ID':itemId,
+    'Traveler ID':String(currentTravelerId),
+    'Traveler Name':String(traveler.Name||''),
+    travelerName:String(traveler.Name||''),
+    Comment:comment,
+    'Created At':new Date().toISOString()
+  };
+  if(!DATA.plannerComments) DATA.plannerComments=[];
+  DATA.plannerComments.push(local);
+  closeModal();
+  render();
+
+  const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Planner comment','planner-comment:'+itemId):'';
+  google.script.run
+    .withSuccessHandler(function(saved){
+      const index=(DATA.plannerComments||[]).findIndex(function(row){return row['Planner Comment ID']===tempId;});
+      if(index>=0) DATA.plannerComments[index]=saved;
+      p2PlannerSocialState_.lastLoaded=Date.now();
+      if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'Comment posted');
+      if(['itinerary','meals'].indexOf(currentView)>=0) render();
+    })
+    .withFailureHandler(function(error){
+      DATA.plannerComments=(DATA.plannerComments||[]).filter(function(row){return row['Planner Comment ID']!==tempId;});
+      if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Comment could not be posted');
+      else toast(error&&error.message?error.message:String(error),true);
+      if(['itinerary','meals'].indexOf(currentView)>=0) render();
+    })
+    .savePlannerComment({
+      deviceId:String(PWA_DEVICE_ID_||''),
+      travelerId:String(currentTravelerId||''),
+      plannerType:type,
+      itemId:itemId,
+      comment:comment
+    });
+}
+
+function p2ItinerarySignups_(itemId){
+  return ((DATA&&DATA.itinerarySignups)||[])
+    .filter(function(row){return String(row['Itinerary ID']||'')===String(itemId||'');})
+    .sort(function(a,b){
+      return (String(a['Planned Date']||'')+' '+String(a['Planned Time']||''))
+        .localeCompare(String(b['Planned Date']||'')+' '+String(b['Planned Time']||''));
+    });
+}
+
+function p2ItineraryMySignup_(itemId){
+  return p2ItinerarySignups_(itemId).find(function(row){
+    return String(row['Traveler ID']||'')===String(currentTravelerId||'');
+  })||null;
+}
+
+function p2ItinerarySignupSection_(row){
+  const id=String(row['Itinerary ID']||'');
+  const signups=p2ItinerarySignups_(id);
+  const mine=p2ItineraryMySignup_(id);
+
+  return `<div class="p2-signup-section">
+    <div class="p2-mini-head"><strong>Who’s going to be there?</strong><span>${signups.length?signups.length+' interested':'Be the first'}</span></div>
+    ${signups.length?`<div class="p2-signup-list">
+      ${signups.map(function(signup){
+        return `<span class="p2-signup-chip ${String(signup['Traveler ID']||'')===String(currentTravelerId||'')?'is-me':''}">
+          <strong>${esc(signup.travelerName||paymentTravelerName_&&paymentTravelerName_(signup['Traveler ID'])||signup['Traveler ID']||'Traveler')}</strong>
+          <small>${esc(p2PlannerDateLabel_(signup['Planned Date']))} · ${esc(p2PlannerTimeLabel_(signup['Planned Time']))}</small>
+        </span>`;
+      }).join('')}
+    </div>`:'<p class="p2-empty-mini">Nobody has picked a time yet.</p>'}
+    <button type="button" class="p2-interest-button" onclick="openP2ItineraryInterest_('${escAttr(id)}')">${mine?'Update my plan':'I’m interested'}</button>
+  </div>`;
+}
+
+function openP2ItineraryInterest_(itemId){
+  const row=((DATA&&DATA.itinerary)||[]).find(function(item){return String(item['Itinerary ID']||'')===String(itemId||'');});
+  if(!row) return;
+  const existing=p2ItineraryMySignup_(itemId);
+  const dates=p2PlannerVacationDates_();
+  const selected=p2PlannerIsoDate_(existing&&existing['Planned Date']||row.Date||dates[0]||'');
+  const time=String(existing&&existing['Planned Time']||'12:00').slice(0,5);
+
+  openModal(`<div class="p2-interest-modal">
+    <p class="eyebrow">I’M INTERESTED</p>
+    <h2>${esc(row.Activity||'Activity')}</h2>
+    <p class="muted">Pick the day and time you’re thinking. Other travelers will get a notification so they can join you.</p>
+    <form onsubmit="saveP2ItineraryInterest_(event,'${escAttr(itemId)}')">
+      <label class="wide"><span>What day?</span>${p2PlannerCalendarStrip_(selected,true,'p2InterestDate')}</label>
+      <label><span>What time are you thinking?</span><input id="p2InterestTime" type="time" value="${escAttr(time)}" required></label>
+      <div class="form-actions">
+        ${existing?`<button type="button" class="planner-delete" onclick="removeP2ItineraryInterest_('${escAttr(itemId)}')">I’m out</button>`:''}
+        <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        <button>${existing?'Update my plan':'Count me in'}</button>
+      </div>
+    </form>
+  </div>`);
+}
+
+function saveP2ItineraryInterest_(event,itemId){
+  event.preventDefault();
+  const traveler=currentTraveler();
+  if(!traveler||!currentTravelerId){toast('Choose your saved traveler profile first.',true);return;}
+  const plannedDate=String(val('p2InterestDate')||'');
+  const plannedTime=String(val('p2InterestTime')||'');
+  if(!plannedDate||!plannedTime){toast('Choose a day and time.',true);return;}
+
+  if(!DATA.itinerarySignups) DATA.itinerarySignups=[];
+  const previous=DATA.itinerarySignups.map(function(row){return Object.assign({},row);});
+  const existingIndex=DATA.itinerarySignups.findIndex(function(row){
+    return String(row['Itinerary ID']||'')===itemId&&String(row['Traveler ID']||'')===String(currentTravelerId||'');
+  });
+  const local={
+    'Signup ID':existingIndex>=0?DATA.itinerarySignups[existingIndex]['Signup ID']:'LOCAL-SIGNUP-'+Date.now(),
+    'Itinerary ID':itemId,
+    'Traveler ID':String(currentTravelerId),
+    'Planned Date':plannedDate,
+    'Planned Time':plannedTime,
+    travelerName:String(traveler.Name||''),
+    'Created At':existingIndex>=0?DATA.itinerarySignups[existingIndex]['Created At']:new Date().toISOString(),
+    'Updated At':new Date().toISOString()
+  };
+  if(existingIndex>=0) DATA.itinerarySignups[existingIndex]=local;
+  else DATA.itinerarySignups.push(local);
+
+  closeModal();
+  render();
+  const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Activity signup','itinerary-interest:'+itemId):'';
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      const saved=result&&result.signup;
+      if(saved){
+        const index=(DATA.itinerarySignups||[]).findIndex(function(row){
+          return String(row['Itinerary ID']||'')===itemId&&String(row['Traveler ID']||'')===String(currentTravelerId||'');
+        });
+        if(index>=0) DATA.itinerarySignups[index]=saved;
+      }
+      p2PlannerSocialState_.lastLoaded=Date.now();
+      if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'You’re on the activity list');
+      if(currentView==='itinerary') render();
+    })
+    .withFailureHandler(function(error){
+      DATA.itinerarySignups=previous;
+      if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Signup could not be saved');
+      else toast(error&&error.message?error.message:String(error),true);
+      if(currentView==='itinerary') render();
+    })
+    .saveItineraryInterest({
+      deviceId:String(PWA_DEVICE_ID_||''),
+      travelerId:String(currentTravelerId||''),
+      itineraryId:itemId,
+      plannedDate:plannedDate,
+      plannedTime:plannedTime
+    });
+}
+
+function removeP2ItineraryInterest_(itemId){
+  if(!currentTravelerId) return;
+  const previous=(DATA.itinerarySignups||[]).map(function(row){return Object.assign({},row);});
+  DATA.itinerarySignups=(DATA.itinerarySignups||[]).filter(function(row){
+    return !(String(row['Itinerary ID']||'')===itemId&&String(row['Traveler ID']||'')===String(currentTravelerId||''));
+  });
+  closeModal();
+  render();
+
+  google.script.run
+    .withSuccessHandler(function(){if(currentView==='itinerary') render();})
+    .withFailureHandler(function(error){
+      DATA.itinerarySignups=previous;
+      toast(error&&error.message?error.message:String(error),true);
+      if(currentView==='itinerary') render();
+    })
+    .removeItineraryInterest({
+      deviceId:String(PWA_DEVICE_ID_||''),
+      travelerId:String(currentTravelerId||''),
+      itineraryId:itemId
+    });
+}
+
+function p2PlannerStickyAdd_(name){
+  const label=name==='Itinerary'?'Add an activity':name==='Meals'?'Add a meal':name==='Grocery List'?'Add grocery item':'Add item';
+  return `<button type="button" class="p2-sticky-add" onclick="openPlannerForm('${escAttr(name)}')"><span aria-hidden="true">＋</span>${esc(label)}</button>`;
+}
+
+function p2ItineraryCost_(row){
+  const amount=Number(row.Cost||0);
+  const per=String(row['Cost Per']||'Person')==='Group'?'group':'person';
+  return paymentMoney_?paymentMoney_(amount)+' per '+per:money(amount)+' per '+per;
+}
+
+function renderP2Itinerary_(){
+  p2PlannerEnsureSocialData_();
+  const rows=plannerRows_('Itinerary');
+  return `<section class="view p2-planner-view">
+    <div class="panel p2-planner-panel">
+      <div class="p2-planner-title"><div><p class="eyebrow">PLAN SOMETHING FUN</p><h2>Itinerary ideas</h2><p class="muted">Add something interesting, then pick the day and time you want to go. Everyone else can jump in too.</p></div></div>
+      ${!p2PlannerSocialState_.loaded?'<div class="p2-social-sync">Loading sign-ups and comments…</div>':''}
+      <div class="p2-planner-list">
+        ${rows.map(function(row){
+          const id=String(row['Itinerary ID']||'');
+          const link=String(row['Event URL']||'').trim();
+          const notes=String(row.Notes||'').trim();
+          const location=String(row.Location||'').trim();
+          return `<article class="p2-planner-card p2-activity-card">
+            <div class="p2-card-head"><div><p class="eyebrow">ADVENTURE IDEA</p><h3>${esc(row.Activity||'Untitled activity')}</h3></div><button class="ghost tiny" onclick="openPlannerForm('Itinerary','${escAttr(id)}')">Edit</button></div>
+            <div class="p2-inline-facts">
+              ${location?`<span><small>Where</small><strong>${esc(location)}</strong></span>`:''}
+              <span><small>Cost</small><strong>${esc(p2ItineraryCost_(row))}</strong></span>
+              ${link?`<a href="${escAttr(link)}" target="_blank" rel="noopener noreferrer"><small>Take me there!</small><strong>Open link ↗</strong></a>`:''}
+            </div>
+            ${notes?`<p class="p2-card-note">${esc(notes)}</p>`:''}
+            ${p2ItinerarySignupSection_(row)}
+            ${p2PlannerCommentSection_('Itinerary',id,'Trip chatter')}
+          </article>`;
+        }).join('')||'<div class="p2-empty-card"><strong>No adventure ideas yet.</strong><span>Add something the family might want to try.</span></div>'}
+      </div>
+    </div>
+    ${p2PlannerStickyAdd_('Itinerary')}
+  </section>`;
+}
+
+function openP2ItineraryForm_(id){
+  const row=id?(DATA.itinerary||[]).find(function(item){return String(item['Itinerary ID']||'')===String(id);})||{}:{};
+  openModal(`<div class="p2-planner-form"><p class="eyebrow">${id?'EDIT IDEA':'NEW ADVENTURE IDEA'}</p><h2>${id?'Update activity':'What looks fun?'}</h2>
+    <form onsubmit="savePlannerForm(event,'Itinerary')" class="form-grid">
+      <input id="plannerId" type="hidden" value="${escAttr(id||'')}">
+      <input id="plan_Date" type="hidden" value="${escAttr(row.Date||'')}">
+      <input id="plan_StartTime" type="hidden" value="${escAttr(row['Start Time']||'')}">
+      <input id="plan_EndTime" type="hidden" value="${escAttr(row['End Time']||'')}">
+      <input id="plan_AssignedTo" type="hidden" value="${escAttr(row['Assigned To']||'')}">
+      <label class="wide"><span>Activity</span><input id="plan_Activity" value="${escAttr(row.Activity||'')}" required></label>
+      <label><span>Location</span><input id="plan_Location" value="${escAttr(row.Location||'')}"></label>
+      <label><span>Take me there! link</span><input id="plan_EventURL" type="url" value="${escAttr(row['Event URL']||'')}"></label>
+      <label class="wide"><span>Cost</span><div class="p2-cost-editor"><input id="plan_Cost" type="number" min="0" step="0.01" value="${escAttr(row.Cost||'0')}"><select id="plan_CostPer"><option value="Person" ${String(row['Cost Per']||'Person')!=='Group'?'selected':''}>per person</option><option value="Group" ${String(row['Cost Per']||'')==='Group'?'selected':''}>per group</option></select></div></label>
+      <label class="wide"><span>Why it looks fun</span><textarea id="plan_Notes" rows="3">${esc(row.Notes||'')}</textarea></label>
+      <div class="wide form-actions">${id?`<button type="button" class="planner-delete" onclick="deletePlannerItem_('Itinerary','${escAttr(id)}')">Delete activity</button>`:''}<button>Save activity</button></div>
+    </form></div>`);
+}
+
+function renderP2Meals_(){
+  p2PlannerEnsureSocialData_();
+  const rows=plannerRows_('Meals');
+  return `<section class="view p2-planner-view">
+    <div class="panel p2-planner-panel">
+      <div class="p2-planner-title"><div><p class="eyebrow">WHAT’S COOKING?</p><h2>Meals</h2><p class="muted">Pick a vacation day, build the cooking crew, and leave requests for the chef.</p></div></div>
+      <div class="p2-planner-list">
+        ${rows.map(function(row){
+          const id=String(row['Meal ID']||'');
+          const menu=String(row.Menu||'').trim();
+          const cooking=String(row['Assigned To']||'').trim();
+          const cleanup=String(row['Clean Up']||'').trim();
+          const notes=String(row.Notes||'').trim();
+          return `<article class="p2-planner-card p2-meal-card">
+            <div class="p2-card-head"><div><p class="eyebrow">MEAL</p><h3>${esc(row.Meal||'Meal')}</h3></div><button class="ghost tiny" onclick="openPlannerForm('Meals','${escAttr(id)}')">Edit</button></div>
+            <div class="p2-meal-calendar">${p2PlannerCalendarStrip_(row.Date,false,'')}</div>
+            ${menu?`<div class="p2-feature-copy"><small>On the menu</small><strong>${esc(menu)}</strong></div>`:''}
+            <div class="p2-inline-facts p2-meal-facts">
+              ${cooking?`<span><small>Cooking crew</small><strong>${esc(cooking)}</strong></span>`:''}
+              ${cleanup?`<span><small>Clean up crew</small><strong>${esc(cleanup)}</strong></span>`:''}
+            </div>
+            ${notes?`<div class="p2-feature-copy"><small>Notes from the kitchen</small><span>${esc(notes)}</span></div>`:''}
+            ${p2PlannerCommentSection_('Meals',id,'Requests for the chef')}
+          </article>`;
+        }).join('')||'<div class="p2-empty-card"><strong>No meals planned yet.</strong><span>Add the first meal and recruit a cooking crew.</span></div>'}
+      </div>
+    </div>
+    ${p2PlannerStickyAdd_('Meals')}
+  </section>`;
+}
+
+function openP2MealForm_(id){
+  const row=id?(DATA.meals||[]).find(function(item){return String(item['Meal ID']||'')===String(id);})||{}:{};
+  const dates=p2PlannerVacationDates_();
+  const selected=p2PlannerIsoDate_(row.Date||dates[0]||'');
+  openModal(`<div class="p2-planner-form"><p class="eyebrow">${id?'EDIT MEAL':'ADD A MEAL'}</p><h2>${id?'What’s changing?':'What’s cooking?'}</h2>
+    <form onsubmit="savePlannerForm(event,'Meals')" class="form-grid">
+      <input id="plannerId" type="hidden" value="${escAttr(id||'')}">
+      <label class="wide"><span>Vacation day</span>${p2PlannerCalendarStrip_(selected,true,'plan_Date')}</label>
+      <label class="wide"><span>Meal</span><input id="plan_Meal" value="${escAttr(row.Meal||'')}" required></label>
+      <label class="wide"><span>Menu</span><textarea id="plan_Menu" rows="3">${esc(row.Menu||'')}</textarea></label>
+      <label><span>Cooking crew</span><input id="plan_AssignedTo" value="${escAttr(row['Assigned To']||'')}"></label>
+      <label><span>Clean up crew</span><input id="plan_CleanUp" value="${escAttr(row['Clean Up']||'')}"></label>
+      <label class="wide"><span>Notes from the kitchen</span><textarea id="plan_Notes" rows="3">${esc(row.Notes||'')}</textarea></label>
+      <div class="wide form-actions">${id?`<button type="button" class="planner-delete" onclick="deletePlannerItem_('Meals','${escAttr(id)}')">Delete meal</button>`:''}<button>Save meal</button></div>
+    </form></div>`);
+}
+
+function quickSetP2GroceryPurchased_(id,purchased){
+  const rows=DATA.groceries||[];
+  const index=rows.findIndex(function(row){return String(row['Grocery ID']||'')===String(id);});
+  if(index<0) return;
+  const previous=Object.assign({},rows[index]);
+  const updated=Object.assign({},rows[index],{Purchased:purchased?'Yes':'No'});
+  rows[index]=updated;
+  render();
+
+  const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Grocery checklist','grocery-purchased:'+id):'';
+  google.script.run
+    .withSuccessHandler(function(saved){
+      const nextIndex=(DATA.groceries||[]).findIndex(function(row){return String(row['Grocery ID']||'')===String(id)||String(row['Grocery ID']||'')===String(saved['Grocery ID']||'');});
+      if(nextIndex>=0) DATA.groceries[nextIndex]=saved;
+      if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,purchased?'Marked purchased':'Returned to shopping list');
+      if(currentView==='groceries') render();
+    })
+    .withFailureHandler(function(error){
+      const restore=(DATA.groceries||[]).findIndex(function(row){return String(row['Grocery ID']||'')===String(id);});
+      if(restore>=0) DATA.groceries[restore]=previous;
+      if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Grocery item could not be updated');
+      else toast(error&&error.message?error.message:String(error),true);
+      if(currentView==='groceries') render();
+    })
+    .saveGrocery(updated);
+}
+
+function renderP2Groceries_(){
+  const rows=plannerRows_('Grocery List');
+  return `<section class="view p2-planner-view p2-grocery-view">
+    <div class="panel p2-planner-panel">
+      <div class="p2-planner-title"><div><p class="eyebrow">SHOPPING MODE</p><h2>Grocery list</h2><p class="muted">Check things off as they hit the cart. Items coming from home stay visually separate.</p></div>
+        <label class="p2-brought-filter"><input type="checkbox" ${groceryShowBringing_?'checked':''} onchange="toggleGroceryBringing_(this.checked)"><span>Show items coming from home</span></label>
+      </div>
+      <div class="p2-grocery-list">
+        ${rows.map(function(row){
+          const id=String(row['Grocery ID']||'');
+          const bringing=String(row.Bringing||'No').toLowerCase()==='yes';
+          const purchased=String(row.Purchased||'No').toLowerCase()==='yes';
+          const broughtBy=String(row['Brought By']||'').trim();
+          const assigned=String(row['Assigned To']||'').trim();
+          const notes=String(row.Notes||'').trim();
+          return `<article class="p2-grocery-card ${bringing?'is-brought':''} ${purchased?'is-purchased':''}">
+            <label class="p2-purchase-check"><input type="checkbox" ${purchased?'checked':''} onchange="quickSetP2GroceryPurchased_('${escAttr(id)}',this.checked)"><span aria-hidden="true"></span></label>
+            <div class="p2-grocery-main">
+              <div class="p2-grocery-head"><div><strong>${esc(row.Item||'Grocery item')}</strong><small>${[row['Store Section'],row.Category].filter(Boolean).map(esc).join(' · ')}</small></div><button class="ghost tiny" onclick="openPlannerForm('Grocery List','${escAttr(id)}')">Edit</button></div>
+              <div class="p2-grocery-meta">
+                ${row.Quantity?`<span><small>Qty</small><strong>${esc(row.Quantity)}</strong></span>`:''}
+                ${assigned?`<span><small>Shopper</small><strong>${esc(assigned)}</strong></span>`:''}
+                ${bringing&&broughtBy?`<span><small>Brought by</small><strong>${esc(broughtBy)}</strong></span>`:''}
+              </div>
+              <label class="p2-bringing-toggle"><input type="checkbox" ${bringing?'checked':''} onchange="quickSetGroceryBringing_('${escAttr(id)}',this.checked)"><span>${bringing?'Coming from home':'Buy at store'}</span></label>
+              ${notes?`<p class="p2-grocery-note">${esc(notes)}</p>`:''}
+            </div>
+          </article>`;
+        }).join('')||'<div class="p2-empty-card"><strong>The grocery list is empty.</strong><span>Add something before somebody gets sent back to the store.</span></div>'}
+      </div>
+    </div>
+    ${p2PlannerStickyAdd_('Grocery List')}
+  </section>`;
+}
+
+function p2SyncGroceryBringForm_(){
+  const checkbox=document.getElementById('plan_Bringing');
+  const wrap=document.getElementById('p2BroughtByWrap');
+  if(wrap) wrap.classList.toggle('hidden',!(checkbox&&checkbox.checked));
+}
+
+function openP2GroceryForm_(id){
+  const row=id?(DATA.groceries||[]).find(function(item){return String(item['Grocery ID']||'')===String(id);})||{}:{};
+  const bringing=String(row.Bringing||'No').toLowerCase()==='yes';
+  openModal(`<div class="p2-planner-form"><p class="eyebrow">${id?'EDIT ITEM':'ADD TO THE LIST'}</p><h2>${id?'Update grocery item':'What do we need?'}</h2>
+    <form onsubmit="savePlannerForm(event,'Grocery List')" class="form-grid">
+      <input id="plannerId" type="hidden" value="${escAttr(id||'')}">
+      <input id="plan_Purchased" type="hidden" value="${escAttr(row.Purchased||'No')}">
+      <label class="wide"><span>Item</span><input id="plan_Item" value="${escAttr(row.Item||'')}" required></label>
+      <label><span>Store section</span><input id="plan_StoreSection" value="${escAttr(row['Store Section']||'')}"></label>
+      <label><span>Category / meal</span><input id="plan_Category" value="${escAttr(row.Category||'')}"></label>
+      <label><span>Quantity</span><input id="plan_Quantity" value="${escAttr(row.Quantity||'')}"></label>
+      <label><span>Assigned shopper</span><input id="plan_AssignedTo" value="${escAttr(row['Assigned To']||'')}"></label>
+      <label class="wide p2-bring-form"><span>How is it getting there?</span><span class="traveler-checkbox-line"><input id="plan_Bringing" type="checkbox" ${bringing?'checked':''} onchange="p2SyncGroceryBringForm_()"><strong>Bring this item from home instead of buying it</strong></span></label>
+      <label id="p2BroughtByWrap" class="wide ${bringing?'':'hidden'}"><span>Who is bringing it?</span><input id="plan_BroughtBy" value="${escAttr(row['Brought By']||'')}"></label>
+      <label class="wide"><span>Notes</span><textarea id="plan_Notes" rows="3">${esc(row.Notes||'')}</textarea></label>
+      <div class="wide form-actions">${id?`<button type="button" class="planner-delete" onclick="deletePlannerItem_('Grocery List','${escAttr(id)}')">Delete item</button>`:''}<button>Save item</button></div>
+    </form></div>`);
+}
+
+renderPlanner=function(name){
+  if(name==='Itinerary') return renderP2Itinerary_();
+  if(name==='Meals') return renderP2Meals_();
+  if(name==='Grocery List') return renderP2Groceries_();
+  return `<div class="p2-planner-shell">${renderPlannerBeforeP2Experience_.apply(this,arguments)}${p2PlannerStickyAdd_(name)}</div>`;
+};
+
+openPlannerForm=function(name,id){
+  if(name==='Itinerary') return openP2ItineraryForm_(id);
+  if(name==='Meals') return openP2MealForm_(id);
+  if(name==='Grocery List') return openP2GroceryForm_(id);
+  return openPlannerFormBeforeP2Experience_.apply(this,arguments);
+};
+</script>

@@ -15,12 +15,12 @@ function startNewVacation() {
     )
   );
 
-  ['Trip','Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Shares','Payment Schedule','Payments','Meals','Grocery List','Itinerary','Rental Import'].forEach(function(name) {
+  ['Trip','Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Shares','Payment Schedule','Payments','Meals','Grocery List','Itinerary','Itinerary Signups','Planner Comments','Rental Import'].forEach(function(name) {
     const source = ss.getSheetByName(name);
     if (source) source.copyTo(archive).setName(name);
   });
 
-  ['Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Shares','Payment Schedule','Payments','Meals','Grocery List','Itinerary','Rental Import'].forEach(function(name) {
+  ['Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Shares','Payment Schedule','Payments','Meals','Grocery List','Itinerary','Itinerary Signups','Planner Comments','Rental Import'].forEach(function(name) {
     const sheet = ss.getSheetByName(name);
     if (sheet && sheet.getLastRow() > 1) {
       sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
@@ -71,7 +71,7 @@ function resetPlanningPortalToGathering(values) {
     APP_TITLE + ' Planning Reset Archive ' + stamp
   );
 
-  ['Trip','Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Shares','Payment Schedule','Payments','Meals','Grocery List','Itinerary']
+  ['Trip','Votes','Comments','Favorites','Assignments','Budget','Booking Plans','Payment Shares','Payment Schedule','Payments','Meals','Grocery List','Itinerary','Itinerary Signups','Planner Comments']
     .forEach(function(name) {
       const source = ss.getSheetByName(name);
       if (source) source.copyTo(archive).setName(name);
@@ -89,6 +89,13 @@ function resetPlanningPortalToGathering(values) {
     }
   });
 
+  if (requested.indexOf('Itinerary') >= 0) {
+    clearPlannerSocialSectionRows_('Itinerary');
+  }
+  if (requested.indexOf('Meals') >= 0) {
+    clearPlannerSocialSectionRows_('Meals');
+  }
+
   setSetting_('Trip', 'Portal Stage', 'Gathering');
   setSetting_('Trip', 'Voting Round', 'Preliminary');
   setSetting_('Trip', 'Finalist Cabin IDs', '');
@@ -101,4 +108,37 @@ function resetPlanningPortalToGathering(values) {
     archiveUrl: archive.getUrl(),
     clearedSections: requested
   };
+}
+
+function clearPlannerSocialSectionRows_(plannerType) {
+  const ss = getSpreadsheet_();
+  const type = String(plannerType || '').trim();
+
+  if (type === 'Itinerary') {
+    const signupSheet = ss.getSheetByName('Itinerary Signups');
+    if (signupSheet && signupSheet.getLastRow() > 1) {
+      signupSheet.getRange(
+        2,
+        1,
+        signupSheet.getLastRow() - 1,
+        signupSheet.getLastColumn()
+      ).clearContent();
+    }
+  }
+
+  const commentSheet = ss.getSheetByName('Planner Comments');
+  if (!commentSheet || commentSheet.getLastRow() <= 1) return;
+
+  const values = commentSheet.getDataRange().getValues();
+  const headers = values[0].map(function(value) {
+    return String(value || '').trim();
+  });
+  const typeIndex = headers.indexOf('Planner Type');
+  if (typeIndex < 0) return;
+
+  for (let r = values.length - 1; r >= 1; r--) {
+    if (String(values[r][typeIndex] || '') === type) {
+      commentSheet.deleteRow(r + 1);
+    }
+  }
 }

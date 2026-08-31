@@ -1,0 +1,211 @@
+<script>
+/* PR #22 follow-up: grocery sort controls and day-focused meal planning. */
+let p22GrocerySortMode_='department';
+let p22MealsSelectedDate_='';
+
+function p22TextCompare_(a,b){
+  return String(a||'').localeCompare(String(b||''),undefined,{sensitivity:'base',numeric:true});
+}
+
+function p22GrocerySortLabel_(mode){
+  if(mode==='meal') return 'Meal';
+  if(mode==='shopper') return 'Shopper';
+  return 'Store Dept';
+}
+
+function p22GroceryGroupValue_(row,mode){
+  if(mode==='meal') return String(row.Category||'').trim()||'No meal assigned';
+  if(mode==='shopper') return String(row['Assigned To']||'').trim()||'No shopper assigned';
+  return String(row['Store Section']||'').trim()||'Other / Unassigned';
+}
+
+function p22SetGrocerySort_(mode){
+  if(['department','meal','shopper'].indexOf(mode)<0) mode='department';
+  p22GrocerySortMode_=mode;
+  if(currentView==='groceries') render();
+}
+
+function p22SortedGroceryRows_(rows){
+  const mode=p22GrocerySortMode_||'department';
+  return (rows||[]).slice().sort(function(a,b){
+    const groupCompare=p22TextCompare_(p22GroceryGroupValue_(a,mode),p22GroceryGroupValue_(b,mode));
+    if(groupCompare) return groupCompare;
+    if(mode!=='department'){
+      const departmentCompare=p22TextCompare_(a['Store Section'],b['Store Section']);
+      if(departmentCompare) return departmentCompare;
+    }
+    return p22TextCompare_(a.Item,b.Item);
+  });
+}
+
+function p22GroceryCard_(row){
+  const id=String(row['Grocery ID']||'');
+  const bringing=String(row.Bringing||'No').toLowerCase()==='yes';
+  const purchased=String(row.Purchased||'No').toLowerCase()==='yes';
+  const broughtBy=String(row['Brought By']||'').trim();
+  const assigned=String(row['Assigned To']||'').trim();
+  const notes=String(row.Notes||'').trim();
+  const meal=String(row.Category||'').trim();
+
+  return `<article class="p2-grocery-card ${bringing?'is-brought':''} ${purchased?'is-purchased':''}">
+    <label class="p2-purchase-check" aria-label="Mark ${escAttr(row.Item||'grocery item')} purchased"><input type="checkbox" ${purchased?'checked':''} onchange="quickSetP2GroceryPurchased_('${escAttr(id)}',this.checked)"><span aria-hidden="true"></span></label>
+    <div class="p2-grocery-main">
+      <div class="p2-grocery-head"><div><strong>${esc(row.Item||'Grocery item')}</strong><small>${[row['Store Section'],meal].filter(Boolean).map(esc).join(' · ')}</small></div><button class="ghost tiny" onclick="openPlannerForm('Grocery List','${escAttr(id)}')">Edit</button></div>
+      <div class="p2-grocery-meta">
+        ${row.Quantity?`<span><small>Qty</small><strong>${esc(row.Quantity)}</strong></span>`:''}
+        ${assigned?`<span><small>Shopper</small><strong>${esc(assigned)}</strong></span>`:''}
+        ${bringing&&broughtBy?`<span><small>Brought by</small><strong>${esc(broughtBy)}</strong></span>`:''}
+      </div>
+      <label class="p2-bringing-toggle"><input type="checkbox" ${bringing?'checked':''} onchange="quickSetGroceryBringing_('${escAttr(id)}',this.checked)"><span>${bringing?'Coming from home':'Buy at store'}</span></label>
+      ${notes?`<p class="p2-grocery-note">${esc(notes)}</p>`:''}
+    </div>
+  </article>`;
+}
+
+renderP2Groceries_=function(){
+  const rows=p22SortedGroceryRows_(plannerRows_('Grocery List'));
+  const mode=p22GrocerySortMode_||'department';
+  const groups=[];
+  rows.forEach(function(row){
+    const label=p22GroceryGroupValue_(row,mode);
+    let group=groups.length?groups[groups.length-1]:null;
+    if(!group||group.label!==label){
+      group={label:label,rows:[]};
+      groups.push(group);
+    }
+    group.rows.push(row);
+  });
+
+  return `<section class="view p2-planner-view p2-grocery-view p22-grocery-view">
+    <div class="panel p2-planner-panel">
+      <div class="p2-planner-title"><div><p class="eyebrow">SHOPPING MODE</p><h2>Grocery list</h2><p class="muted">Check things off as they hit the cart. Sort the live list around the way you are shopping.</p></div>
+        <label class="p2-brought-filter"><input type="checkbox" ${groceryShowBringing_?'checked':''} onchange="toggleGroceryBringing_(this.checked)"><span>Show items coming from home</span></label>
+      </div>
+      <div class="p22-grocery-toolbar" aria-label="Sort grocery list">
+        <span>Sort by</span>
+        <div class="p22-sort-options" role="group" aria-label="Grocery sort options">
+          ${['department','meal','shopper'].map(function(option){
+            return `<button type="button" class="${mode===option?'is-active':''}" aria-pressed="${mode===option?'true':'false'}" onclick="p22SetGrocerySort_('${option}')">${esc(p22GrocerySortLabel_(option))}</button>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="p22-grocery-groups">
+        ${groups.map(function(group){
+          return `<section class="p22-grocery-group">
+            <div class="p22-grocery-group-head"><strong>${esc(group.label)}</strong><span>${group.rows.length} item${group.rows.length===1?'':'s'}</span></div>
+            <div class="p2-grocery-list">${group.rows.map(p22GroceryCard_).join('')}</div>
+          </section>`;
+        }).join('')||'<div class="p2-empty-card"><strong>The grocery list is empty.</strong><span>Add something before somebody gets sent back to the store.</span></div>'}
+      </div>
+    </div>
+    ${p2PlannerStickyAdd_('Grocery List')}
+  </section>`;
+};
+
+function p22MealRowsByDate_(rows,date){
+  return (rows||[]).filter(function(row){return p2PlannerIsoDate_(row.Date)===date;});
+}
+
+function p22MealSort_(rows){
+  return (rows||[]).slice().sort(function(a,b){
+    const dateCompare=p22TextCompare_(p2PlannerIsoDate_(a.Date),p2PlannerIsoDate_(b.Date));
+    if(dateCompare) return dateCompare;
+    return p22TextCompare_(a.Meal,b.Meal);
+  });
+}
+
+function p22MealsResolveSelectedDate_(rows){
+  const vacationDates=p2PlannerVacationDates_();
+  if(p22MealsSelectedDate_&&vacationDates.indexOf(p22MealsSelectedDate_)>=0) return p22MealsSelectedDate_;
+
+  const mealDates=p22MealSort_(rows).map(function(row){return p2PlannerIsoDate_(row.Date);}).filter(Boolean);
+  const firstMealDate=mealDates.find(function(date){return !vacationDates.length||vacationDates.indexOf(date)>=0;});
+  p22MealsSelectedDate_=firstMealDate||vacationDates[0]||mealDates[0]||'';
+  return p22MealsSelectedDate_;
+}
+
+function p22SelectMealDate_(date){
+  p22MealsSelectedDate_=String(date||'');
+  if(currentView==='meals') render();
+}
+
+function p22MealDayNavigator_(rows,selected){
+  const dates=p2PlannerVacationDates_();
+  if(!dates.length){
+    return selected?`<div class="p22-meal-date-fallback"><strong>${esc(p2PlannerDateLabel_(selected))}</strong></div>`:'';
+  }
+
+  return `<div class="p22-meal-day-nav" role="listbox" aria-label="Vacation meal days">
+    ${dates.map(function(iso){
+      const part=p2PlannerDayParts_(iso);
+      const count=p22MealRowsByDate_(rows,iso).length;
+      const active=iso===selected;
+      return `<button type="button" class="p22-meal-day ${active?'is-selected':''}" aria-selected="${active?'true':'false'}" onclick="p22SelectMealDate_('${escAttr(iso)}')">
+        <small>${esc(part.weekday)}</small><strong>${esc(part.day)}</strong><em>${esc(part.month)}</em>${count?`<span>${count}</span>`:''}
+      </button>`;
+    }).join('')}
+  </div>`;
+}
+
+function p22MealDetailCard_(row){
+  const id=String(row['Meal ID']||'');
+  const menu=String(row.Menu||'').trim();
+  const cooking=String(row['Assigned To']||'').trim();
+  const cleanup=String(row['Clean Up']||'').trim();
+  const notes=String(row.Notes||'').trim();
+
+  return `<article class="p2-planner-card p2-meal-card p22-meal-focus-card">
+    <div class="p2-card-head"><div><p class="eyebrow">MEAL</p><h3>${esc(row.Meal||'Meal')}</h3></div><button class="ghost tiny" onclick="openPlannerForm('Meals','${escAttr(id)}')">Edit</button></div>
+    ${menu?`<div class="p2-feature-copy"><small>On the menu</small><strong>${esc(menu)}</strong></div>`:''}
+    <div class="p2-inline-facts p2-meal-facts">
+      ${cooking?`<span><small>Cooking crew</small><strong>${esc(cooking)}</strong></span>`:''}
+      ${cleanup?`<span><small>Clean up crew</small><strong>${esc(cleanup)}</strong></span>`:''}
+    </div>
+    ${notes?`<div class="p2-feature-copy"><small>Notes from the kitchen</small><span>${esc(notes)}</span></div>`:''}
+    ${p2PlannerCommentSection_('Meals',id,'Requests for the chef')}
+  </article>`;
+}
+
+function p22MealSummary_(rows,selected){
+  const sorted=p22MealSort_(rows);
+  return `<section class="p22-meal-summary">
+    <div class="p22-meal-summary-head"><div><p class="eyebrow">VACATION MEALS</p><h3>The week at a glance</h3></div><span>${sorted.length} meal${sorted.length===1?'':'s'} planned</span></div>
+    <div class="p22-meal-summary-list">
+      ${sorted.map(function(row){
+        const date=p2PlannerIsoDate_(row.Date);
+        const cooking=String(row['Assigned To']||'').trim();
+        return `<button type="button" class="p22-meal-summary-row ${date===selected?'is-selected':''}" onclick="p22SelectMealDate_('${escAttr(date)}')">
+          <span class="p22-meal-summary-date">${esc(p2PlannerDateLabel_(date)||'Date TBD')}</span>
+          <strong>${esc(row.Meal||'Meal')}</strong>
+          ${cooking?`<small>${esc(cooking)}</small>`:'<small>Crew TBD</small>'}
+        </button>`;
+      }).join('')||'<div class="p2-empty-mini">No meals planned yet.</div>'}
+    </div>
+  </section>`;
+}
+
+renderP2Meals_=function(){
+  p2PlannerEnsureSocialData_();
+  const rows=plannerRows_('Meals');
+  const selected=p22MealsResolveSelectedDate_(rows);
+  const dayRows=p22MealRowsByDate_(rows,selected);
+
+  return `<section class="view p2-planner-view p22-meals-view">
+    <div class="panel p2-planner-panel">
+      <div class="p2-planner-title"><div><p class="eyebrow">WHAT’S COOKING?</p><h2>Meals</h2><p class="muted">Tap a vacation day to see what is cooking, who is on duty, and what the kitchen needs to know.</p></div></div>
+      <section class="p22-meal-calendar-shell">
+        <div class="p22-meal-calendar-head"><strong>Vacation meal calendar</strong><span>${selected?esc(p2PlannerDateLabel_(selected)):''}</span></div>
+        ${p22MealDayNavigator_(rows,selected)}
+      </section>
+      <section class="p22-meal-day-focus">
+        <div class="p22-meal-day-head"><div><p class="eyebrow">SELECTED DAY</p><h3>${selected?esc(p2PlannerDateLabel_(selected)):'Pick a vacation day'}</h3></div><span>${dayRows.length?dayRows.length+' meal'+(dayRows.length===1?'':'s'):'Nothing planned yet'}</span></div>
+        <div class="p22-meal-focus-list">
+          ${dayRows.map(p22MealDetailCard_).join('')||'<div class="p2-empty-card"><strong>No meal is planned for this day yet.</strong><span>Use Add meal whenever the family decides what sounds good.</span></div>'}
+        </div>
+      </section>
+      ${p22MealSummary_(rows,selected)}
+    </div>
+    ${p2PlannerStickyAdd_('Meals')}
+  </section>`;
+};
+</script>

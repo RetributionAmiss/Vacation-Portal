@@ -1,0 +1,105 @@
+<style>
+.p2-planner-view{padding-bottom:98px}
+.p2-planner-panel{display:grid;gap:18px}
+.p2-planner-title{display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
+.p2-planner-title h2{margin:2px 0 4px}
+.p2-planner-title p{margin:0}
+.p2-planner-list,.p2-grocery-list{display:grid;gap:14px}
+.p2-planner-card,.p2-grocery-card{border:1px solid var(--line,#d9d1c1);border-radius:18px;background:var(--paper,#fffdf7);padding:18px;box-shadow:0 7px 24px rgba(33,48,42,.045)}
+.p2-card-head,.p2-grocery-head,.p2-mini-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.p2-card-head h3,.p2-grocery-head strong{margin:0;color:var(--pine,#173f32)}
+.p2-card-head h3{font-size:1.55rem;line-height:1.08}
+.p2-card-head .eyebrow{margin:0 0 4px}
+.p2-inline-facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.p2-inline-facts>span,.p2-inline-facts>a{display:grid;gap:2px;min-width:145px;flex:1;padding:9px 11px;border-radius:11px;background:rgba(23,63,50,.055);text-decoration:none;color:inherit}
+.p2-inline-facts small,.p2-feature-copy small,.p2-grocery-meta small{font-size:.72rem;text-transform:uppercase;letter-spacing:.055em;color:var(--muted,#6b746e);font-weight:700}
+.p2-inline-facts strong{font-size:.92rem}
+.p2-inline-facts a strong{color:var(--pine,#173f32)}
+.p2-card-note,.p2-grocery-note{margin:11px 0 0;padding:10px 12px;border-left:3px solid rgba(23,63,50,.28);background:rgba(23,63,50,.035);border-radius:0 9px 9px 0}
+.p2-signup-section,.p2-comment-section{display:grid;gap:10px;margin-top:14px;padding-top:13px;border-top:1px solid rgba(23,63,50,.12)}
+.p2-mini-head{align-items:center}
+.p2-mini-head>span{font-size:.78rem;color:var(--muted,#6b746e)}
+.p2-signup-list{display:flex;flex-wrap:wrap;gap:7px}
+.p2-signup-chip{display:grid;gap:1px;padding:7px 9px;border:1px solid rgba(23,63,50,.13);border-radius:999px;background:rgba(23,63,50,.035)}
+.p2-signup-chip.is-me{background:rgba(23,63,50,.1);border-color:rgba(23,63,50,.26)}
+.p2-signup-chip strong{font-size:.82rem}
+.p2-signup-chip small{font-size:.72rem;color:var(--muted,#6b746e)}
+.p2-interest-button{justify-self:start;padding:8px 13px;font-size:.86rem}
+.p2-comments{display:grid;gap:7px}
+.p2-comment{display:grid;grid-template-columns:minmax(85px,auto) 1fr;gap:8px;padding:8px 10px;border-radius:10px;background:rgba(23,63,50,.035)}
+.p2-comment strong{font-size:.8rem;color:var(--pine,#173f32)}
+.p2-comment span{font-size:.86rem;min-width:0;overflow-wrap:anywhere}
+.p2-empty-mini{margin:0;font-size:.84rem;color:var(--muted,#6b746e)}
+.p2-social-sync{padding:9px 11px;border-radius:10px;background:rgba(23,63,50,.05);color:var(--muted,#6b746e);font-size:.84rem}
+.p2-calendar-strip{display:flex;gap:6px;overflow-x:auto;padding:2px 1px 5px;scrollbar-width:none}
+.p2-calendar-strip::-webkit-scrollbar{display:none}
+.p2-calendar-day{display:grid;justify-items:center;align-content:center;gap:0;min-width:50px;padding:7px 8px;border:1px solid rgba(23,63,50,.12);border-radius:12px;background:rgba(23,63,50,.025);color:var(--muted,#6b746e);font-style:normal;box-shadow:none}
+button.p2-calendar-day{cursor:pointer}
+.p2-calendar-day small{font-size:.67rem;text-transform:uppercase;letter-spacing:.04em}
+.p2-calendar-day strong{font-size:1rem;color:var(--pine,#173f32)}
+.p2-calendar-day em{font-size:.65rem;font-style:normal}
+.p2-calendar-day.is-selected{background:var(--pine,#173f32);border-color:var(--pine,#173f32);color:white}
+.p2-calendar-day.is-selected strong{color:white}
+.p2-meal-calendar{margin-top:12px}
+.p2-feature-copy{display:grid;gap:4px;margin-top:12px}
+.p2-feature-copy>strong,.p2-feature-copy>span{font-size:.94rem}
+.p2-meal-facts{margin-top:10px}
+.p2-cost-editor{display:grid;grid-template-columns:1fr 150px;gap:8px}
+.p2-planner-form{display:grid;gap:12px}
+.p2-planner-form h2{margin:0}
+.p2-comment-modal,.p2-interest-modal{display:grid;gap:12px}
+.p2-comment-modal h2,.p2-interest-modal h2{margin:0}
+.p2-comment-modal form,.p2-interest-modal form{display:grid;gap:14px}
+.p2-grocery-card{display:grid;grid-template-columns:42px 1fr;gap:12px;padding:14px}
+.p2-grocery-card.is-brought{background:rgba(190,168,91,.09);border-color:rgba(150,124,48,.26)}
+.p2-grocery-card.is-purchased{opacity:.62}
+.p2-grocery-card.is-purchased .p2-grocery-head strong{text-decoration:line-through}
+.p2-purchase-check{display:flex;align-items:flex-start;justify-content:center;padding-top:3px}
+.p2-purchase-check input{position:absolute;opacity:0;pointer-events:none}
+.p2-purchase-check span{width:30px;height:30px;border:2px solid rgba(23,63,50,.35);border-radius:9px;background:white;display:grid;place-items:center}
+.p2-purchase-check input:checked+span{background:var(--pine,#173f32);border-color:var(--pine,#173f32)}
+.p2-purchase-check input:checked+span:after{content:'✓';color:white;font-weight:800;font-size:1.1rem}
+.p2-grocery-main{min-width:0;display:grid;gap:9px}
+.p2-grocery-head strong{font-family:Georgia,serif;font-size:1.18rem}
+.p2-grocery-head small{display:block;margin-top:2px;color:var(--muted,#6b746e)}
+.p2-grocery-meta{display:flex;flex-wrap:wrap;gap:6px}
+.p2-grocery-meta>span{display:grid;gap:1px;padding:5px 8px;border-radius:8px;background:rgba(23,63,50,.045)}
+.p2-grocery-meta strong{font-size:.82rem}
+.p2-bringing-toggle{display:flex;align-items:center;gap:8px;font-size:.83rem;font-weight:700;color:var(--pine,#173f32)}
+.p2-bringing-toggle input{width:20px;height:20px}
+.p2-grocery-note{font-size:.84rem;margin:0}
+.p2-brought-filter{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(23,63,50,.13);border-radius:10px;background:rgba(23,63,50,.035);font-size:.82rem;font-weight:700}
+.p2-brought-filter input{width:20px;height:20px}
+.p2-bring-form .traveler-checkbox-line{display:flex;align-items:center;gap:9px}
+.p2-empty-card{display:grid;gap:3px;padding:20px;border:1px dashed rgba(23,63,50,.22);border-radius:15px;text-align:center;color:var(--muted,#6b746e)}
+.p2-empty-card strong{color:var(--pine,#173f32)}
+.p2-sticky-add{position:fixed;z-index:40;left:50%;transform:translateX(-50%);bottom:max(18px,env(safe-area-inset-bottom));width:min(420px,calc(100vw - 36px));box-shadow:0 12px 32px rgba(23,63,50,.28);border-radius:999px;padding:13px 20px;display:flex;align-items:center;justify-content:center;gap:7px}
+.p2-sticky-add span{font-size:1.15rem;line-height:1}
+.p2-planner-shell .planner-head-actions>button{display:none}
+.p2-planner-shell{padding-bottom:82px}
+.p2-date-fallback{display:inline-flex;padding:6px 9px;border-radius:8px;background:rgba(23,63,50,.05)}
+
+@media(max-width:760px){
+  .p2-planner-card{padding:15px;border-radius:16px}
+  .p2-card-head h3{font-size:1.35rem}
+  .p2-inline-facts{display:grid;grid-template-columns:1fr 1fr}
+  .p2-inline-facts>span,.p2-inline-facts>a{min-width:0}
+  .p2-planner-title{display:grid;align-items:start}
+  .p2-brought-filter{width:100%}
+  .p2-sticky-add{bottom:max(14px,env(safe-area-inset-bottom));width:calc(100vw - 30px)}
+}
+
+@media(max-width:520px){
+  .p2-planner-view{padding-bottom:88px}
+  .p2-planner-panel{gap:13px}
+  .p2-planner-card{padding:13px}
+  .p2-inline-facts{grid-template-columns:1fr}
+  .p2-comment{grid-template-columns:1fr;gap:2px}
+  .p2-grocery-card{grid-template-columns:36px 1fr;gap:9px;padding:12px}
+  .p2-purchase-check span{width:28px;height:28px}
+  .p2-grocery-head strong{font-size:1.08rem}
+  .p2-cost-editor{grid-template-columns:1fr}
+  .p2-calendar-day{min-width:46px;padding:6px}
+  .p2-sticky-add{font-size:.94rem;padding:12px 16px}
+}
+</style>
