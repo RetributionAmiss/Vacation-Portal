@@ -1,0 +1,183 @@
+<script>
+/* PR #24 follow-up: reliable traveler-authenticated planner social writes. */
+function p3PlannerSocialWriteError_(error,fallback){
+  const message=error&&error.message?error.message:String(error||fallback||'Planner update could not be saved.');
+  return message;
+}
+
+function p3PlannerSocialEnsureDevice_(onReady,onFailure){
+  const deviceId=String(PWA_DEVICE_ID_||'').trim();
+  if(!deviceId){
+    onFailure(new Error('TRAVELER_AUTH_REQUIRED: Save your traveler profile to this device first.'));
+    return;
+  }
+
+  if(!window.PWA_DIRECT_DEVICE){
+    onReady(deviceId);
+    return;
+  }
+
+  const savedId=String(savedDeviceTravelerProfile_&&savedDeviceTravelerProfile_.travelerId||'').trim();
+  const currentId=String(currentTravelerId||'').trim();
+  if(!savedId||savedId!==currentId){
+    onFailure(new Error('TRAVELER_AUTH_REQUIRED: Return to the traveler saved on this device before signing up or commenting.'));
+    return;
+  }
+
+  const traveler=currentTraveler();
+  google.script.run
+    .withSuccessHandler(function(){onReady(deviceId);})
+    .withFailureHandler(function(error){onFailure(error);})
+    .saveDeviceTravelerBinding(
+      deviceId,
+      savedId,
+      traveler?String(traveler.Name||''):'',
+      false
+    );
+}
+
+saveP2ItineraryInterest_=function(event,itemId){
+  event.preventDefault();
+  const traveler=currentTraveler();
+  if(!traveler||!currentTravelerId){toast('Choose your saved traveler profile first.',true);return;}
+  const plannedDate=String(val('p2InterestDate')||'');
+  const plannedTime=String(val('p2InterestTime')||'');
+  if(!plannedDate||!plannedTime){toast('Choose a day and time.',true);return;}
+
+  if(!DATA.itinerarySignups) DATA.itinerarySignups=[];
+  const previous=DATA.itinerarySignups.map(function(row){return Object.assign({},row);});
+  const existingIndex=DATA.itinerarySignups.findIndex(function(row){
+    return String(row['Itinerary ID']||'')===itemId&&String(row['Traveler ID']||'')===String(currentTravelerId||'');
+  });
+  const local={
+    'Signup ID':existingIndex>=0?DATA.itinerarySignups[existingIndex]['Signup ID']:'LOCAL-SIGNUP-'+Date.now(),
+    'Itinerary ID':itemId,
+    'Traveler ID':String(currentTravelerId),
+    'Planned Date':plannedDate,
+    'Planned Time':plannedTime,
+    travelerName:String(traveler.Name||''),
+    'Created At':existingIndex>=0?DATA.itinerarySignups[existingIndex]['Created At']:new Date().toISOString(),
+    'Updated At':new Date().toISOString()
+  };
+  if(existingIndex>=0) DATA.itinerarySignups[existingIndex]=local;
+  else DATA.itinerarySignups.push(local);
+
+  closeModal();
+  render();
+  const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Activity signup','itinerary-interest:'+itemId):'';
+
+  const fail=function(error){
+    DATA.itinerarySignups=previous;
+    if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Signup could not be saved');
+    else toast(p3PlannerSocialWriteError_(error,'Signup could not be saved'),true);
+    if(currentView==='itinerary'||currentView==='today'||currentView==='places') render();
+  };
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    google.script.run
+      .withSuccessHandler(function(result){
+        const saved=result&&result.signup;
+        if(saved){
+          const index=(DATA.itinerarySignups||[]).findIndex(function(row){
+            return String(row['Itinerary ID']||'')===itemId&&String(row['Traveler ID']||'')===String(currentTravelerId||'');
+          });
+          if(index>=0) DATA.itinerarySignups[index]=saved;
+        }
+        p2PlannerSocialState_.loaded=true;
+        p2PlannerSocialState_.lastLoaded=Date.now();
+        if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'You’re on the activity list');
+        if(currentView==='itinerary'||currentView==='today'||currentView==='places') render();
+      })
+      .withFailureHandler(fail)
+      .saveItineraryInterest({
+        deviceId:deviceId,
+        travelerId:String(currentTravelerId||''),
+        itineraryId:itemId,
+        plannedDate:plannedDate,
+        plannedTime:plannedTime
+      });
+  },fail);
+};
+
+removeP2ItineraryInterest_=function(itemId){
+  if(!currentTravelerId) return;
+  const previous=(DATA.itinerarySignups||[]).map(function(row){return Object.assign({},row);});
+  DATA.itinerarySignups=(DATA.itinerarySignups||[]).filter(function(row){
+    return !(String(row['Itinerary ID']||'')===itemId&&String(row['Traveler ID']||'')===String(currentTravelerId||''));
+  });
+  closeModal();
+  render();
+
+  const fail=function(error){
+    DATA.itinerarySignups=previous;
+    toast(p3PlannerSocialWriteError_(error,'Signup could not be removed'),true);
+    if(currentView==='itinerary'||currentView==='today'||currentView==='places') render();
+  };
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    google.script.run
+      .withSuccessHandler(function(){
+        p2PlannerSocialState_.lastLoaded=Date.now();
+        if(currentView==='itinerary'||currentView==='today'||currentView==='places') render();
+      })
+      .withFailureHandler(fail)
+      .removeItineraryInterest({
+        deviceId:deviceId,
+        travelerId:String(currentTravelerId||''),
+        itineraryId:itemId
+      });
+  },fail);
+};
+
+saveP2PlannerComment_=function(event,type,itemId){
+  event.preventDefault();
+  const comment=String(val('p2PlannerCommentText')||'').trim();
+  if(!comment) return;
+  const traveler=currentTraveler();
+  if(!traveler||!currentTravelerId){toast('Choose your saved traveler profile first.',true);return;}
+
+  const tempId='LOCAL-COM-'+Date.now();
+  const local={
+    'Planner Comment ID':tempId,
+    'Planner Type':type,
+    'Item ID':itemId,
+    'Traveler ID':String(currentTravelerId),
+    'Traveler Name':String(traveler.Name||''),
+    travelerName:String(traveler.Name||''),
+    Comment:comment,
+    'Created At':new Date().toISOString()
+  };
+  if(!DATA.plannerComments) DATA.plannerComments=[];
+  DATA.plannerComments.push(local);
+  closeModal();
+  render();
+
+  const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Planner comment','planner-comment:'+itemId):'';
+  const fail=function(error){
+    DATA.plannerComments=(DATA.plannerComments||[]).filter(function(row){return row['Planner Comment ID']!==tempId;});
+    if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Comment could not be posted');
+    else toast(p3PlannerSocialWriteError_(error,'Comment could not be posted'),true);
+    if(['itinerary','meals','today'].indexOf(currentView)>=0) render();
+  };
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    google.script.run
+      .withSuccessHandler(function(saved){
+        const index=(DATA.plannerComments||[]).findIndex(function(row){return row['Planner Comment ID']===tempId;});
+        if(index>=0) DATA.plannerComments[index]=saved;
+        p2PlannerSocialState_.loaded=true;
+        p2PlannerSocialState_.lastLoaded=Date.now();
+        if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'Comment posted');
+        if(['itinerary','meals','today'].indexOf(currentView)>=0) render();
+      })
+      .withFailureHandler(fail)
+      .savePlannerComment({
+        deviceId:deviceId,
+        travelerId:String(currentTravelerId||''),
+        plannerType:type,
+        itemId:itemId,
+        comment:comment
+      });
+  },fail);
+};
+</script>
