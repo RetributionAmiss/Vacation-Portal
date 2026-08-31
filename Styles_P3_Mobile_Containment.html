@@ -1,0 +1,78 @@
+<style>
+@media(max-width:760px){
+  html,body{max-width:100%;overflow-x:hidden}
+  .app,#viewRoot,.view,.panel,
+  .p2-planner-view,.p2-planner-panel,.p2-planner-list,.p2-planner-card,
+  .p22-meal-calendar-shell,.p22-meal-day-focus,.p22-meal-focus-list,.p22-meal-summary,.p22-meal-summary-list,
+  .p3p-view,.p3p-hero,.p3p-layout,.p3p-route-card,.p3p-help-card,
+  .p3-today-view,.p3-today-grid,.p3-today-section{
+    min-width:0;
+    width:100%;
+    max-width:100%;
+  }
+
+  .p2-planner-title>*,.p2-card-head>*,.p2-card-head>div,
+  .p2-inline-facts>*,.p2-signup-section,.p2-comment-section,
+  .p22-meal-calendar-head>*,.p22-meal-day-head>*,.p22-meal-summary-head>*,
+  .p22-meal-summary-row>*,.p3p-section-head>*,.p3p-stop-copy,
+  .p3p-stop-actions,.p3p-help-card>*{min-width:0;max-width:100%}
+
+  .p2-planner-title h2,.p2-planner-title p,
+  .p2-card-head h3,.p2-inline-facts strong,.p2-card-note,
+  .p2-signup-chip,.p2-signup-chip strong,.p2-signup-chip small,
+  .p2-comment,.p2-comment span,
+  .p22-meal-day-head h3,.p22-meal-summary-head h3,
+  .p22-meal-summary-row strong,.p22-meal-summary-row small,
+  .p3p-section-head h3,.p3p-stop-copy strong,.p3p-stop-copy span,
+  .p3p-help-card h3,.p3p-help-card p,.p3p-help-card a{
+    overflow-wrap:anywhere;
+    word-break:break-word;
+  }
+
+  .p2-card-note{max-width:100%;white-space:normal}
+  .p2-signup-list{min-width:0;max-width:100%}
+  .p2-signup-chip{max-width:100%;border-radius:18px}
+  .p2-signup-chip small{white-space:normal}
+
+  .p2-calendar-strip,.p22-meal-day-nav,.p3p-day-strip{
+    min-width:0;
+    width:100%;
+    max-width:100%;
+    overflow-x:auto;
+    overscroll-behavior-x:contain;
+    -webkit-overflow-scrolling:touch;
+  }
+  .p2-calendar-day,.p22-meal-day,.p3p-day{flex:0 0 auto}
+
+  .p22-meal-calendar-shell{overflow:hidden}
+  .p22-meal-calendar-head,.p22-meal-day-head,.p22-meal-summary-head{min-width:0}
+  .p22-meal-day-head>span,.p22-meal-summary-head>span{white-space:normal;text-align:right}
+  .p22-meal-summary-row{min-width:0;width:100%;max-width:100%}
+  .p22-meal-summary-row strong,.p22-meal-summary-row small{white-space:normal;overflow:visible;text-overflow:clip}
+
+  .p3p-hero-line,.p3p-section-head{min-width:0}
+  .p3p-stop{min-width:0;width:100%;max-width:100%;grid-template-columns:32px minmax(0,1fr)}
+  .p3p-stop-actions{grid-column:2;width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;justify-content:stretch}
+  .p3p-stop-actions a,.p3p-stop-actions button{
+    min-width:0!important;
+    width:100%;
+    max-width:100%;
+    padding-left:8px;
+    padding-right:8px;
+    white-space:normal;
+    text-align:center;
+  }
+  .p3p-help-card a{width:100%;white-space:normal;text-align:center}
+  .p3p-route-button{max-width:100%;white-space:normal;text-align:center}
+
+  .p3-section-head>*,.p3-activity-card>*,.p3-meal-card>*{min-width:0;max-width:100%}
+  .p3-activity-card strong,.p3-activity-card span,.p3-meal-card strong,.p3-meal-card span{overflow-wrap:anywhere;word-break:break-word}
+}
+
+@media(max-width:430px){
+  .p3p-stop-actions{grid-template-columns:1fr}
+  .p2-card-head h3{font-size:1.22rem}
+  .p3p-stop-copy strong{font-size:1rem}
+  .p22-meal-summary-row{grid-template-columns:78px minmax(0,1fr)}
+}
+</style>
