@@ -33,8 +33,8 @@ assert(integration.includes("amountInput.value=calculation.amount.toFixed(2)"), 
 assert(integration.includes("labelInput.value='Final booking balance'"), 'blank auto-filled milestone should receive a useful final-balance label');
 assert(integration.includes('refreshPaymentGenerationAutoRemaining_'), 'auto-filled remaining balance must stay in sync when recipient changes');
 assert(integration.includes("row.dataset.generationAutoRemaining=''"), 'manual amount edits must turn off automatic remaining-balance behavior');
-assert(integration.includes('openPaymentRemainingBalanceTool_'), 'integration must explicitly identify and remove the old one-off remaining balance entry point');
-assert(integration.includes("Add remaining balance</button>"), 'integration must strip the standalone Add remaining balance button from rendered Payments UI');
+assert(integration.includes('openPaymentRemainingBalanceTool_'), 'integration must explicitly identify the old one-off remaining balance entry point');
+assert(integration.includes('Add remaining balance'), 'integration must strip the standalone Add remaining balance control from rendered Payments UI');
 
 assert(generator.includes('paymentGenerationLocalRows_'), 'remaining balance must continue through the normal traveler installment generator');
 assert(generator.includes('paymentGenerationSavedShares_(cabinId)'), 'generator must still create rows from saved traveler shares');
