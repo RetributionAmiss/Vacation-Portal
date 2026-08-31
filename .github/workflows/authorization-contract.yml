@@ -60,3 +60,5 @@ jobs:
         run: node tests/p2_planner_experience_contract.test.js
       - name: Run P2 planner refinement contracts
         run: node tests/p2_planner_refinements_contract.test.js
+      - name: Run P3 Trip Mode contracts
+        run: node tests/p3_trip_mode_contract.test.js
