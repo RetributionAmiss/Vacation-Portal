@@ -58,3 +58,5 @@ jobs:
         run: node tests/finalized_rental_mode_contract.test.js
       - name: Run P2 planner experience contracts
         run: node tests/p2_planner_experience_contract.test.js
+      - name: Run P2 planner refinement contracts
+        run: node tests/p2_planner_refinements_contract.test.js
