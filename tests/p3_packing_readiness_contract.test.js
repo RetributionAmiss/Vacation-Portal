@@ -46,6 +46,14 @@ must(/withSuccessHandler\(function\(result\)[\s\S]*DATA\.packingItems=\(result&&
 must(/DATA\.packingItems=previousRows/.test(optimistic),'Failed save must roll back the optimistic packing change.');
 must(/p3PackingPending_/.test(optimistic)&&/p3PackingCanToggle_/.test(optimistic),'Pending local packing items must block racing checkbox interactions.');
 
+must(/p3PackingDelete_=function\(id\)/.test(optimistic),'Packing delete must be overridden by the optimistic layer.');
+must(/DATA\.packingItems=rows\.filter/.test(optimistic),'Delete must remove the packing row from local data immediately.');
+must(/beginBackgroundSave_\('Packing item','packing-delete:'\+id\)/.test(optimistic),'Delete must use the shared background-save indicator.');
+must(/render\(\);\s*\n\s*function rollbackDelete[\s\S]*p3PlannerSocialEnsureDevice_/.test(optimistic),'Delete must render before waiting for device/server persistence.');
+must(/\.deletePackingItem\(\{[\s\S]*deviceId:deviceId[\s\S]*travelerId:String\(currentTravelerId\|\|''\)[\s\S]*id:id/.test(optimistic),'Optimistic delete must still persist through the authenticated server delete endpoint.');
+must(/function rollbackDelete\(error\)[\s\S]*DATA\.packingItems=previousRows/.test(optimistic),'Failed delete must restore the removed packing row.');
+must(/completeBackgroundSave_\(saveId,'Packing item removed'\)/.test(optimistic),'Successful delete must finish the background-save state.');
+
 must(index.includes("include('Styles_P3_Packing_Readiness')"),'Packing styles must be loaded by AppsScriptIndex.');
 must(index.includes("include('Client_P3_Packing_Readiness')"),'Packing client must be loaded by AppsScriptIndex.');
 must(index.includes("include('Client_P3_Packing_Optimistic')"),'Optimistic packing layer must be loaded after the packing client.');
