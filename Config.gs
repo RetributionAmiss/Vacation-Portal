@@ -1,4 +1,4 @@
-const PORTAL_SCHEMA_VERSION = '4.4.3';
+const PORTAL_SCHEMA_VERSION = '4.4.4';
 const SPREADSHEET_ID = '16FJTnkhexYLFRC2NaIK6izIeH5wfbdXgJvdISt7X06A';
 const APP_TITLE = 'Smoky Mountain Family Vacation Portal';
 const GEMINI_MODEL = 'gemini-3.6-flash';
@@ -96,6 +96,11 @@ const SCHEMAS = {
     'Packing ID', 'Scope', 'Owner Traveler ID', 'Bringing Traveler ID',
     'Category', 'Item', 'Quantity', 'Packed', 'Notes',
     'Created At', 'Updated At'
+  ],
+  'Travel Plans': [
+    'Travel Plan ID', 'Traveler ID', 'Mode', 'Leaving From',
+    'Departure Date', 'Departure Time', 'Arrival Date', 'Arrival Time',
+    'Travel Details', 'Notes', 'Created At', 'Updated At'
   ],
   'Rental Import': [
     'Import ID', 'Original URL', 'Canonical URL', 'Provider',
