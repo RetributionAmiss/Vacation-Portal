@@ -1,5 +1,6 @@
 const SMART_REMINDER_TRIGGER_HANDLER_ = 'processTravelerReminderPushes_';
 const SMART_REMINDER_LEDGER_PROPERTY_ = 'SMART_REMINDER_PUSH_LEDGER_V1';
+const SMART_REMINDER_RUN_STATUS_PROPERTY_ = 'SMART_REMINDER_PUSH_STATUS_V1';
 
 function smartReminderPushEnabled_() {
   return String(getSettings_('Trip')['Smart Reminder Push Enabled'] || 'No') === 'Yes';
@@ -251,20 +252,57 @@ function smartReminderPruneLedger_(ledger, nowMs) {
   return ledger;
 }
 
-function smartReminderSendPush_(context, travelerId, items) {
-  const appId = String(context.trip['OneSignal App ID'] || '').trim();
-  const apiKey = String(PropertiesService.getScriptProperties().getProperty('ONESIGNAL_APP_API_KEY') || '').trim();
-  if (!appId || !apiKey) return {ok: false, reason: 'push-not-configured'};
+function smartReminderReadRunStatus_() {
+  try {
+    return JSON.parse(
+      PropertiesService.getScriptProperties().getProperty(SMART_REMINDER_RUN_STATUS_PROPERTY_) || 'null'
+    );
+  } catch (error) {
+    return null;
+  }
+}
 
-  const ordered = items.slice().sort(function(a, b) { return a.priority - b.priority; });
+function smartReminderWriteRunStatus_(status) {
+  try {
+    const safe = Object.assign({}, status || {}, {
+      ranAt: new Date().toISOString()
+    });
+    if (Array.isArray(safe.failures)) {
+      safe.failures = safe.failures.slice(0, 20).map(function(failure) {
+        return {
+          travelerId: String(failure && failure.travelerId || ''),
+          reason: String(failure && failure.reason || 'Delivery failed.').slice(0, 180)
+        };
+      });
+    }
+    PropertiesService.getScriptProperties().setProperty(
+      SMART_REMINDER_RUN_STATUS_PROPERTY_,
+      JSON.stringify(safe)
+    );
+    return true;
+  } catch (error) {
+    console.warn('Traveler reminder run status could not be recorded.', error);
+    return false;
+  }
+}
+
+function smartReminderBuildPushPayload_(context, travelerId, items) {
+  const ordered = (items || []).slice().sort(function(a, b) {
+    return Number(a.priority || 0) - Number(b.priority || 0);
+  });
   const shown = ordered.slice(0, 3);
-  let message = shown.map(function(item) { return item.line; }).join(' • ');
-  if (ordered.length > shown.length) message += ' • Plus ' + (ordered.length - shown.length) + ' more reminder' + (ordered.length - shown.length === 1 ? '' : 's') + ' in the portal.';
+  let message = shown.map(function(item) { return String(item.line || ''); }).join(' • ');
+  if (ordered.length > shown.length) {
+    message += ' • Plus ' + (ordered.length - shown.length) + ' more reminder' +
+      (ordered.length - shown.length === 1 ? '' : 's') + ' in the portal.';
+  }
   message = message.slice(0, 220);
 
-  const title = ordered.length === 1 ? ordered[0].heading : 'You have ' + ordered.length + ' vacation reminders';
+  const title = ordered.length === 1
+    ? String(ordered[0].heading || 'Vacation reminder')
+    : 'You have ' + ordered.length + ' vacation reminders';
   const payload = {
-    app_id: appId,
+    app_id: String(context.trip['OneSignal App ID'] || '').trim(),
     target_channel: 'push',
     include_aliases: {external_id: [travelerId]},
     headings: {en: title},
@@ -274,11 +312,25 @@ function smartReminderSendPush_(context, travelerId, items) {
   const pwaUrl = String(context.trip['PWA URL'] || '').trim();
   if (/^https:\/\//i.test(pwaUrl)) payload.url = pwaUrl;
 
+  return {
+    payload: payload,
+    title: title,
+    message: message,
+    count: ordered.length
+  };
+}
+
+function smartReminderSendPush_(context, travelerId, items) {
+  const appId = String(context.trip['OneSignal App ID'] || '').trim();
+  const apiKey = String(PropertiesService.getScriptProperties().getProperty('ONESIGNAL_APP_API_KEY') || '').trim();
+  if (!appId || !apiKey) return {ok: false, reason: 'push-not-configured'};
+
+  const built = smartReminderBuildPushPayload_(context, travelerId, items);
   const response = UrlFetchApp.fetch('https://api.onesignal.com/notifications', {
     method: 'post',
     contentType: 'application/json',
     headers: {Authorization: 'Key ' + apiKey},
-    payload: JSON.stringify(payload),
+    payload: JSON.stringify(built.payload),
     muteHttpExceptions: true
   });
 
@@ -286,17 +338,45 @@ function smartReminderSendPush_(context, travelerId, items) {
   if (code < 200 || code >= 300) {
     throw new Error('OneSignal returned HTTP ' + code + ' for traveler reminder push.');
   }
-  return {ok: true, count: ordered.length};
+  return {ok: true, count: built.count};
+}
+
+function smartReminderRunResult_(values) {
+  const result = Object.assign({
+    enabled: false,
+    configured: false,
+    sent: 0,
+    reminders: 0,
+    considered: 0,
+    attemptedPushes: 0,
+    failedPushes: 0,
+    failures: []
+  }, values || {});
+  smartReminderWriteRunStatus_(result);
+  return result;
 }
 
 function processTravelerReminderPushes_() {
   setupVacationPortalSilent_();
-  if (!smartReminderPushEnabled_()) return {enabled: false, sent: 0, reminders: 0};
+
+  if (!smartReminderPushEnabled_()) {
+    return smartReminderRunResult_({
+      enabled: false,
+      configured: false,
+      outcome: 'disabled'
+    });
+  }
 
   const trip = getSettings_('Trip');
   const appId = String(trip['OneSignal App ID'] || '').trim();
   const apiKey = String(PropertiesService.getScriptProperties().getProperty('ONESIGNAL_APP_API_KEY') || '').trim();
-  if (!appId || !apiKey) return {enabled: true, configured: false, sent: 0, reminders: 0};
+  if (!appId || !apiKey) {
+    return smartReminderRunResult_({
+      enabled: true,
+      configured: false,
+      outcome: 'not-configured'
+    });
+  }
 
   const context = {
     trip: trip,
@@ -321,17 +401,28 @@ function processTravelerReminderPushes_() {
 
   let sent = 0;
   let deliveredReminders = 0;
-  Object.keys(byTraveler).forEach(function(travelerId) {
+  const failures = [];
+  const travelerIds = Object.keys(byTraveler);
+
+  travelerIds.forEach(function(travelerId) {
     const items = byTraveler[travelerId];
     try {
       const result = smartReminderSendPush_(context, travelerId, items);
-      if (!result.ok) return;
+      if (!result.ok) {
+        failures.push({travelerId: travelerId, reason: String(result.reason || 'Delivery failed.')});
+        return;
+      }
       sent++;
       deliveredReminders += items.length;
+      const deliveredAt = Date.now();
       items.forEach(function(item) {
-        ledger[smartReminderLedgerKey_(item)] = Date.now();
+        ledger[smartReminderLedgerKey_(item)] = deliveredAt;
       });
     } catch (error) {
+      failures.push({
+        travelerId: travelerId,
+        reason: String(error && error.message ? error.message : error || 'Delivery failed.')
+      });
       console.warn('Traveler reminder push failed for ' + travelerId + '.', error);
     }
   });
@@ -342,11 +433,19 @@ function processTravelerReminderPushes_() {
     JSON.stringify(ledger)
   );
 
-  return {
+  const outcome = failures.length
+    ? (sent ? 'partial-failure' : 'failed')
+    : (sent ? 'delivered' : 'nothing-due');
+
+  return smartReminderRunResult_({
     enabled: true,
     configured: true,
+    outcome: outcome,
     sent: sent,
     reminders: deliveredReminders,
-    considered: due.length
-  };
+    considered: due.length,
+    attemptedPushes: travelerIds.length,
+    failedPushes: failures.length,
+    failures: failures
+  });
 }
