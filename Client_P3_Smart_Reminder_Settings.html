@@ -2,6 +2,77 @@
 /* PR #26: Organizer opt-in for proactive reminder pushes. */
 const p3SmartReminderRenderSettingsBefore_=renderSettings;
 
+function smartReminderStatusLabel_(status){
+  if(!status||status.state==='off') return 'Off';
+  if(status.state==='needs-setup') return 'Needs OneSignal setup';
+  if(status.state==='trigger-missing') return 'Trigger missing';
+  if(status.state==='due-now') return status.dueNow+' reminder'+(status.dueNow===1?'':'s')+' due now';
+  return 'Ready';
+}
+
+function smartReminderStatusTime_(value){
+  if(!value) return 'No successful delivery recorded yet';
+  const date=new Date(value);
+  if(isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function renderSmartReminderDeliveryStatus_(status){
+  status=status||{};
+  const setupLines=[
+    status.enabled?'✓ Smart reminders enabled':'○ Smart reminders off',
+    status.appIdConfigured?'✓ OneSignal App ID configured':'✕ OneSignal App ID missing',
+    status.apiKeyConfigured?'✓ OneSignal API key configured':'✕ OneSignal API key missing',
+    status.triggerInstalled?'✓ Hourly reminder trigger installed':'✕ Hourly reminder trigger missing'
+  ];
+  const previews=(status.previews||[]).map(function(preview){
+    return `<div class="notice" style="margin-top:10px">
+      <strong>${esc(preview.travelerName||'Traveler')}</strong>
+      <div style="margin-top:6px"><strong>${esc(preview.title||'Vacation reminder')}</strong></div>
+      <div class="muted" style="margin-top:4px">${esc(preview.message||'')}</div>
+      <small class="muted">${Number(preview.reminderCount||0)} reminder${Number(preview.reminderCount||0)===1?'':'s'} bundled into this push.</small>
+    </div>`;
+  }).join('');
+
+  return `<div class="smart-reminder-status-dialog">
+    <p class="eyebrow">REMINDER DELIVERY</p>
+    <h2>${esc(smartReminderStatusLabel_(status))}</h2>
+    <p class="muted">Read-only preview. Opening this screen does not send a push or mark any reminder delivered.</p>
+    <div class="push-status-list">${setupLines.map(function(line){return `<div>${esc(line)}</div>`;}).join('')}</div>
+    <div class="notice" style="margin-top:12px">
+      <strong>Delivery history</strong><br>
+      Last recorded successful delivery: ${esc(smartReminderStatusTime_(status.lastDeliveredAt))}<br>
+      ${Number(status.deliveredStagesRecorded||0)} delivered reminder stage${Number(status.deliveredStagesRecorded||0)===1?'':'s'} currently retained in the dedupe ledger.
+    </div>
+    <h3 style="margin-top:16px">What would send right now?</h3>
+    ${previews||'<p class="muted">Nothing is due right now. The next hourly run would have no reminder push to send.</p>'}
+    <p class="muted" style="margin-top:14px"><small>Only successful pushes are written to the reminder ledger. Failed OneSignal requests stay eligible for a later retry and are not shown as delivered here.</small></p>
+    <div class="form-actions">
+      <button class="ghost" type="button" onclick="loadSmartReminderDeliveryStatus_(true)">Refresh</button>
+      <button type="button" onclick="closeModal()">Done</button>
+    </div>
+  </div>`;
+}
+
+function loadSmartReminderDeliveryStatus_(force){
+  withOrganizerAuthorization_(function(){
+    if(force||!document.querySelector('.smart-reminder-status-dialog')){
+      openModal('<div class="smart-reminder-status-dialog"><p class="eyebrow">REMINDER DELIVERY</p><h2>Checking reminder delivery…</h2><p class="muted">Reading configuration, delivery history, and reminders due right now.</p></div>');
+    }
+    google.script.run
+      .withSuccessHandler(function(status){
+        const root=document.getElementById('modalContent');
+        if(root) root.innerHTML=renderSmartReminderDeliveryStatus_(status||{});
+      })
+      .withFailureHandler(function(error){
+        if(typeof organizerAuthError_==='function'&&organizerAuthError_(error)) saveOrganizerSession_(null);
+        const root=document.getElementById('modalContent');
+        if(root) root.innerHTML='<div class="notice"><strong>Reminder delivery status could not load.</strong><br>'+esc(error&&error.message?error.message:String(error))+'</div>';
+      })
+      .getTravelerReminderDeliveryStatus(organizerAuthorizationValues_({}));
+  });
+}
+
 renderSettings=function(){
   let html=p3SmartReminderRenderSettingsBefore_.apply(this,arguments);
   const organizer=typeof p1OrganizerUi_==='function'
@@ -18,7 +89,12 @@ renderSettings=function(){
         <option value="Yes" ${enabled?'selected':''}>On — send useful reminder pushes</option>
       </select>
       <small class="muted">Payment: 7 days, 1 day, due day, then one overdue nudge. Meals: evening before crew duty. Activities: once on the day, roughly within 3 hours of your signup time. Duplicate stages are never resent.</small>
-    </label>`;
+    </label>
+    <div class="wide notice">
+      <strong>Reminder delivery status & preview</strong><br>
+      <span class="muted">See whether smart pushes are ready, the last recorded successful delivery, and the exact bundled push each traveler would receive right now.</span>
+      <div style="margin-top:10px"><button class="ghost" type="button" onclick="loadSmartReminderDeliveryStatus_(true)">Open delivery preview</button></div>
+    </div>`;
 
   return html.replace('<div class="wide form-actions">',control+'<div class="wide form-actions">');
 };
