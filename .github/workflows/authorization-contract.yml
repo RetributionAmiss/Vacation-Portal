@@ -72,6 +72,8 @@ jobs:
         run: node tests/p3_mobile_containment_contract.test.js
       - name: Run P3 smart push reminder contracts
         run: node tests/p3_smart_push_reminders_contract.test.js
+      - name: Run P3 reminder delivery status and preview contracts
+        run: node tests/p3_reminder_delivery_status_preview_contract.test.js
       - name: Run P3 packing readiness contracts
         run: node tests/p3_packing_readiness_contract.test.js
       - name: Run P3 travel and arrival contracts
