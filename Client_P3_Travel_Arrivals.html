@@ -1,0 +1,404 @@
+<script>
+/* PR #28: traveler travel plans + family arrival board. */
+const p3TravelArrivalState_={loaded:false,loading:false,lastLoaded:0};
+const p3TravelArrivalPending_={};
+
+(function p3TravelArrivalRegisterView_(){
+  if(typeof P1_NAV_GROUPS_==='undefined'||typeof P1_VIEW_LABELS_==='undefined') return;
+  const home=P1_NAV_GROUPS_.find(function(group){return group.id==='home';});
+  if(home&&home.views.indexOf('travel')<0) home.views.push('travel');
+  P1_VIEW_LABELS_.travel='Travel';
+})();
+
+function p3TravelArrivalSelfId_(){
+  if(typeof savedDeviceTravelerProfile_!=='undefined'&&savedDeviceTravelerProfile_&&savedDeviceTravelerProfile_.travelerId){
+    return String(savedDeviceTravelerProfile_.travelerId||'');
+  }
+  return String(currentTravelerId||'');
+}
+
+function p3TravelArrivalTraveler_(travelerId){
+  const id=String(travelerId||'');
+  return (DATA&&DATA.travelers||[]).find(function(row){
+    return String(row['Traveler ID']||'')===id;
+  })||null;
+}
+
+function p3TravelArrivalTravelerName_(travelerId){
+  const traveler=p3TravelArrivalTraveler_(travelerId);
+  return traveler?String(traveler.Name||'Traveler'):'Traveler';
+}
+
+function p3TravelArrivalLoad_(force){
+  if(p3TravelArrivalState_.loading) return;
+  if(!force&&p3TravelArrivalState_.loaded&&Date.now()-p3TravelArrivalState_.lastLoaded<15000) return;
+  if(!window.google||!google.script||!google.script.run) return;
+
+  p3TravelArrivalState_.loading=true;
+  google.script.run
+    .withSuccessHandler(function(result){
+      DATA.travelPlans=(result&&result.plans)||[];
+      p3TravelArrivalState_.loaded=true;
+      p3TravelArrivalState_.loading=false;
+      p3TravelArrivalState_.lastLoaded=Date.now();
+      if(currentView==='travel'||currentView==='dashboard') render();
+    })
+    .withFailureHandler(function(error){
+      p3TravelArrivalState_.loading=false;
+      if(currentView==='travel') toast(error&&error.message?error.message:String(error),true);
+    })
+    .getTravelArrivalData();
+}
+
+function p3TravelArrivalPlans_(){
+  p3TravelArrivalLoad_(false);
+  return (DATA&&DATA.travelPlans)||[];
+}
+
+function p3TravelArrivalPlanFor_(travelerId){
+  const id=String(travelerId||'');
+  return p3TravelArrivalPlans_().find(function(row){
+    return String(row['Traveler ID']||'')===id;
+  })||null;
+}
+
+function p3TravelArrivalActiveTravelers_(){
+  return (DATA&&DATA.travelers||[]).filter(function(row){
+    return String(row.Active||'Yes').toLowerCase()!=='no';
+  });
+}
+
+function p3TravelArrivalDateText_(value){
+  const text=String(value||'').trim();
+  const match=text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match?match[2]+'/'+match[3]+'/'+match[1]:text;
+}
+
+function p3TravelArrivalTimeText_(value){
+  const text=String(value||'').trim();
+  const match=text.match(/^(\d{1,2}):(\d{2})/);
+  if(!match) return text;
+  let hour=Number(match[1]);
+  const minute=match[2];
+  const suffix=hour>=12?'PM':'AM';
+  hour=hour%12||12;
+  return hour+':'+minute+' '+suffix;
+}
+
+function p3TravelArrivalWhen_(dateValue,timeValue){
+  const date=p3TravelArrivalDateText_(dateValue);
+  const time=p3TravelArrivalTimeText_(timeValue);
+  return [date,time].filter(Boolean).join(' · ');
+}
+
+function p3TravelArrivalSortKey_(plan){
+  const date=String(plan&&plan['Arrival Date']||'9999-12-31');
+  const time=String(plan&&plan['Arrival Time']||'23:59');
+  return date+'T'+time;
+}
+
+function p3TravelArrivalModeIcon_(mode){
+  switch(String(mode||'')){
+    case 'Flying': return '✈️';
+    case 'Train': return '🚆';
+    case 'Other': return '🧭';
+    default: return '🚗';
+  }
+}
+
+function p3TravelArrivalPendingFor_(travelerId){
+  return Boolean(p3TravelArrivalPending_[String(travelerId||'')]);
+}
+
+function p3TravelArrivalOwnCard_(){
+  const travelerId=p3TravelArrivalSelfId_();
+  if(!travelerId){
+    return `<section class="p3-travel-own"><p>Save a traveler profile to this device before sharing a travel plan.</p></section>`;
+  }
+
+  const plan=p3TravelArrivalPlanFor_(travelerId);
+  const travelerName=p3TravelArrivalTravelerName_(travelerId);
+  const pending=p3TravelArrivalPendingFor_(travelerId);
+
+  if(!plan){
+    return `<section class="p3-travel-own p3-travel-own-empty">
+      <div><p class="eyebrow">MY TRAVEL PLAN</p><h3>${esc(travelerName)}, how are you getting there?</h3><p>Share your departure and estimated arrival so the family knows when to expect you.</p></div>
+      <button type="button" ${pending?'disabled':''} onclick="p3TravelArrivalOpenForm_()">Share my plan</button>
+    </section>`;
+  }
+
+  const depart=p3TravelArrivalWhen_(plan['Departure Date'],plan['Departure Time']);
+  const arrive=p3TravelArrivalWhen_(plan['Arrival Date'],plan['Arrival Time']);
+  const leaving=String(plan['Leaving From']||'').trim();
+  const details=String(plan['Travel Details']||'').trim();
+
+  return `<section class="p3-travel-own${pending?' is-saving':''}">
+    <div class="p3-travel-own-head">
+      <div><p class="eyebrow">MY TRAVEL PLAN</p><h3>${p3TravelArrivalModeIcon_(plan.Mode)} ${esc(plan.Mode||'Driving')}</h3></div>
+      ${pending?'<span class="p3-travel-saving">Saving…</span>':''}
+    </div>
+    <div class="p3-travel-own-grid">
+      ${leaving?`<div><span>Leaving from</span><strong>${esc(leaving)}</strong></div>`:''}
+      ${depart?`<div><span>Departing</span><strong>${esc(depart)}</strong></div>`:''}
+      <div><span>Estimated arrival</span><strong>${esc(arrive||'Not set')}</strong></div>
+      ${details?`<div><span>Travel details</span><strong>${esc(details)}</strong></div>`:''}
+    </div>
+    <div class="p3-travel-own-actions">
+      <button type="button" class="ghost" ${pending?'disabled':''} onclick="p3TravelArrivalOpenForm_()">Edit plan</button>
+      <button type="button" class="ghost danger" ${pending?'disabled':''} onclick="p3TravelArrivalConfirmDelete_()">Delete plan</button>
+    </div>
+  </section>`;
+}
+
+function p3TravelArrivalFamilyCard_(traveler,plan){
+  const name=String(traveler.Name||'Traveler');
+  const arrive=p3TravelArrivalWhen_(plan['Arrival Date'],plan['Arrival Time']);
+  const depart=p3TravelArrivalWhen_(plan['Departure Date'],plan['Departure Time']);
+  const leaving=String(plan['Leaving From']||'').trim();
+  const details=String(plan['Travel Details']||'').trim();
+  const notes=String(plan.Notes||'').trim();
+
+  return `<article class="p3-travel-person">
+    <div class="p3-travel-person-main">
+      <span class="p3-travel-mode" aria-hidden="true">${p3TravelArrivalModeIcon_(plan.Mode)}</span>
+      <div><strong>${esc(name)}</strong><span>${esc(plan.Mode||'Driving')}</span></div>
+    </div>
+    <div class="p3-travel-arrival"><span>Arriving</span><strong>${esc(arrive||'Time not set')}</strong></div>
+    <div class="p3-travel-person-meta">
+      ${leaving?`<span>From ${esc(leaving)}</span>`:''}
+      ${depart?`<span>Leaves ${esc(depart)}</span>`:''}
+      ${details?`<span>${esc(details)}</span>`:''}
+    </div>
+    ${notes?`<p>${esc(notes)}</p>`:''}
+  </article>`;
+}
+
+function p3TravelArrivalBoard_(){
+  const travelers=p3TravelArrivalActiveTravelers_();
+  const plans=p3TravelArrivalPlans_();
+  const byTraveler={};
+  plans.forEach(function(plan){byTraveler[String(plan['Traveler ID']||'')]=plan;});
+
+  const withPlans=travelers.filter(function(row){return Boolean(byTraveler[String(row['Traveler ID']||'')]);});
+  withPlans.sort(function(a,b){
+    return p3TravelArrivalSortKey_(byTraveler[String(a['Traveler ID']||'')]).localeCompare(
+      p3TravelArrivalSortKey_(byTraveler[String(b['Traveler ID']||'')])
+    )||String(a.Name||'').localeCompare(String(b.Name||''));
+  });
+
+  const missing=travelers.filter(function(row){return !byTraveler[String(row['Traveler ID']||'')];});
+
+  return `<section class="p3-travel-board">
+    <div class="p3-travel-board-head">
+      <div><p class="eyebrow">FAMILY ARRIVALS</p><h3>Who’s arriving when?</h3></div>
+      <strong>${withPlans.length}/${travelers.length} shared</strong>
+    </div>
+    ${withPlans.length?`<div class="p3-travel-people">${withPlans.map(function(row){return p3TravelArrivalFamilyCard_(row,byTraveler[String(row['Traveler ID']||'')]);}).join('')}</div>`:'<div class="p3-travel-empty">No travel plans have been shared yet.</div>'}
+    ${missing.length?`<div class="p3-travel-missing"><span>Still waiting on</span><div>${missing.map(function(row){return `<span>${esc(row.Name||'Traveler')}</span>`;}).join('')}</div></div>`:''}
+  </section>`;
+}
+
+function p3TravelArrivalOpenForm_(){
+  const travelerId=p3TravelArrivalSelfId_();
+  if(!travelerId){toast('Choose and save your traveler profile to this device first.',true);return;}
+  if(p3TravelArrivalPendingFor_(travelerId)){toast('Your travel plan is still saving.');return;}
+
+  const plan=p3TravelArrivalPlanFor_(travelerId)||{};
+  const mode=String(plan.Mode||'Driving');
+  openModal(`<form class="p3-travel-form" onsubmit="p3TravelArrivalSave_(event)">
+    <p class="eyebrow">MY TRAVEL PLAN</p>
+    <h2>${plan['Travel Plan ID']?'Edit travel plan':'Share travel plan'}</h2>
+    <label><span>How are you traveling?</span><select id="p3TravelMode">
+      ${['Driving','Flying','Train','Other'].map(function(value){return `<option ${value===mode?'selected':''}>${value}</option>`;}).join('')}
+    </select></label>
+    <label><span>Leaving from</span><input id="p3TravelFrom" maxlength="120" placeholder="Home, airport, city…" value="${escAttr(plan['Leaving From']||'')}"></label>
+    <label><span>Departure date</span><input id="p3TravelDepartureDate" type="date" value="${escAttr(String(plan['Departure Date']||'').slice(0,10))}"></label>
+    <label><span>Departure time</span><input id="p3TravelDepartureTime" type="time" value="${escAttr(String(plan['Departure Time']||'').slice(0,5))}"></label>
+    <label><span>Estimated arrival date</span><input id="p3TravelArrivalDate" type="date" required value="${escAttr(String(plan['Arrival Date']||'').slice(0,10))}"></label>
+    <label><span>Estimated arrival time</span><input id="p3TravelArrivalTime" type="time" value="${escAttr(String(plan['Arrival Time']||'').slice(0,5))}"></label>
+    <label class="wide"><span>Travel details</span><input id="p3TravelDetails" maxlength="160" placeholder="Flight number, carpool, rental car…" value="${escAttr(plan['Travel Details']||'')}"></label>
+    <label class="wide"><span>Notes</span><textarea id="p3TravelNotes" rows="3" maxlength="500" placeholder="Anything the family should know">${esc(plan.Notes||'')}</textarea></label>
+    <div class="wide form-actions"><button type="button" class="ghost" onclick="closeModal()">Cancel</button><button>Save travel plan</button></div>
+  </form>`);
+}
+
+function p3TravelArrivalOptimisticPlan_(payload,existing){
+  const now=new Date().toISOString();
+  return {
+    'Travel Plan ID':existing?String(existing['Travel Plan ID']||''):'LOCAL-TRAVEL-'+Date.now().toString(36),
+    'Traveler ID':String(payload.travelerId||''),
+    'Mode':String(payload.mode||'Driving'),
+    'Leaving From':String(payload.leavingFrom||''),
+    'Departure Date':String(payload.departureDate||''),
+    'Departure Time':String(payload.departureTime||''),
+    'Arrival Date':String(payload.arrivalDate||''),
+    'Arrival Time':String(payload.arrivalTime||''),
+    'Travel Details':String(payload.travelDetails||''),
+    'Notes':String(payload.notes||''),
+    'Created At':existing?existing['Created At']||now:now,
+    'Updated At':now
+  };
+}
+
+function p3TravelArrivalSave_(event){
+  event.preventDefault();
+  const travelerId=p3TravelArrivalSelfId_();
+  if(!travelerId) return;
+
+  const payload={
+    travelerId:travelerId,
+    mode:String(val('p3TravelMode')||'Driving'),
+    leavingFrom:String(val('p3TravelFrom')||''),
+    departureDate:String(val('p3TravelDepartureDate')||''),
+    departureTime:String(val('p3TravelDepartureTime')||''),
+    arrivalDate:String(val('p3TravelArrivalDate')||''),
+    arrivalTime:String(val('p3TravelArrivalTime')||''),
+    travelDetails:String(val('p3TravelDetails')||''),
+    notes:String(val('p3TravelNotes')||'')
+  };
+  if(!payload.arrivalDate){toast('Choose your estimated arrival date.',true);return;}
+
+  if(!DATA.travelPlans) DATA.travelPlans=[];
+  const previous=DATA.travelPlans.map(function(row){return Object.assign({},row);});
+  const index=DATA.travelPlans.findIndex(function(row){return String(row['Traveler ID']||'')===travelerId;});
+  const existing=index>=0?DATA.travelPlans[index]:null;
+  const optimistic=p3TravelArrivalOptimisticPlan_(payload,existing);
+  if(index>=0) DATA.travelPlans[index]=optimistic;
+  else DATA.travelPlans.push(optimistic);
+
+  p3TravelArrivalPending_[travelerId]=true;
+  p3TravelArrivalState_.loaded=true;
+  p3TravelArrivalState_.lastLoaded=Date.now();
+  const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Travel plan','travel:'+travelerId):'';
+
+  closeModal();
+  render();
+
+  function rollback(error){
+    DATA.travelPlans=previous;
+    delete p3TravelArrivalPending_[travelerId];
+    p3TravelArrivalState_.lastLoaded=Date.now();
+    if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Travel plan could not be saved');
+    else toast(error&&error.message?error.message:String(error),true);
+    render();
+  }
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    payload.deviceId=deviceId;
+    google.script.run
+      .withSuccessHandler(function(result){
+        DATA.travelPlans=(result&&result.plans)||[];
+        delete p3TravelArrivalPending_[travelerId];
+        p3TravelArrivalState_.loaded=true;
+        p3TravelArrivalState_.lastLoaded=Date.now();
+        if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'Travel plan updated');
+        render();
+      })
+      .withFailureHandler(rollback)
+      .saveMyTravelPlan(payload);
+  },rollback);
+}
+
+function p3TravelArrivalConfirmDelete_(){
+  const travelerId=p3TravelArrivalSelfId_();
+  const plan=p3TravelArrivalPlanFor_(travelerId);
+  if(!plan||p3TravelArrivalPendingFor_(travelerId)) return;
+  openModal(`<div class="p3-travel-delete-confirm">
+    <p class="eyebrow">DELETE TRAVEL PLAN</p>
+    <h2>Delete your travel plan?</h2>
+    <p>This removes your arrival information from the family board.</p>
+    <div class="form-actions"><button class="ghost" type="button" onclick="closeModal()">Cancel</button><button class="danger" type="button" onclick="p3TravelArrivalDeleteNow_()">Delete</button></div>
+  </div>`);
+}
+
+function p3TravelArrivalDeleteNow_(){
+  const travelerId=p3TravelArrivalSelfId_();
+  if(!travelerId||p3TravelArrivalPendingFor_(travelerId)) return;
+  const plan=p3TravelArrivalPlanFor_(travelerId);
+  if(!plan){closeModal();return;}
+
+  const previous=(DATA.travelPlans||[]).map(function(row){return Object.assign({},row);});
+  DATA.travelPlans=(DATA.travelPlans||[]).filter(function(row){return String(row['Traveler ID']||'')!==travelerId;});
+  p3TravelArrivalPending_[travelerId]=true;
+  p3TravelArrivalState_.lastLoaded=Date.now();
+  const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Travel plan','travel-delete:'+travelerId):'';
+
+  closeModal();
+  render();
+
+  function rollback(error){
+    DATA.travelPlans=previous;
+    delete p3TravelArrivalPending_[travelerId];
+    p3TravelArrivalState_.lastLoaded=Date.now();
+    if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Travel plan could not be deleted');
+    else toast(error&&error.message?error.message:String(error),true);
+    render();
+  }
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    google.script.run
+      .withSuccessHandler(function(result){
+        DATA.travelPlans=(result&&result.plans)||[];
+        delete p3TravelArrivalPending_[travelerId];
+        p3TravelArrivalState_.loaded=true;
+        p3TravelArrivalState_.lastLoaded=Date.now();
+        if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'Travel plan removed');
+        render();
+      })
+      .withFailureHandler(rollback)
+      .deleteMyTravelPlan({deviceId:deviceId,travelerId:travelerId});
+  },rollback);
+}
+
+function renderP3TravelArrivals_(){
+  const travelers=p3TravelArrivalActiveTravelers_();
+  const shared=p3TravelArrivalPlans_().filter(function(plan){
+    return travelers.some(function(row){return String(row['Traveler ID']||'')===String(plan['Traveler ID']||'');});
+  }).length;
+
+  return `<section class="view p3-travel-view">
+    <div class="p3-travel-hero">
+      <p class="eyebrow">GETTING THERE</p>
+      <h2>Travel & arrival board</h2>
+      <p>Share the basics of your trip in so everyone knows who is on the road, in the air, and arriving next.</p>
+      <div class="p3-travel-progress"><strong>${shared} of ${travelers.length}</strong><span>travelers have shared arrival plans</span></div>
+    </div>
+    ${p3TravelArrivalState_.loading?'<div class="p3-travel-sync" role="status">Checking the latest arrival plans…</div>':''}
+    ${p3TravelArrivalOwnCard_()}
+    ${p3TravelArrivalBoard_()}
+  </section>`;
+}
+
+function p3TravelArrivalDashboardCard_(){
+  p3TravelArrivalLoad_(false);
+  if(!p3TravelArrivalState_.loaded) return '';
+  const travelers=p3TravelArrivalActiveTravelers_();
+  const plans=p3TravelArrivalPlans_().filter(function(plan){
+    return travelers.some(function(row){return String(row['Traveler ID']||'')===String(plan['Traveler ID']||'');});
+  }).slice().sort(function(a,b){return p3TravelArrivalSortKey_(a).localeCompare(p3TravelArrivalSortKey_(b));});
+  const next=plans[0]||null;
+  const title=plans.length+'/'+travelers.length+' travel plans shared';
+  const detail=next
+    ? 'First arrival: '+p3TravelArrivalTravelerName_(next['Traveler ID'])+' · '+p3TravelArrivalWhen_(next['Arrival Date'],next['Arrival Time'])
+    : 'Share departure and arrival details so the family can coordinate.';
+  return `<section class="p3-travel-dashboard-card">
+    <div><p class="eyebrow">TRAVEL</p><h3>${esc(title)}</h3><p>${esc(detail)}</p></div>
+    <button type="button" onclick="navigate('travel')">Open travel board</button>
+  </section>`;
+}
+
+const p3TravelArrivalRenderBefore_=render;
+render=function(){
+  const result=p3TravelArrivalRenderBefore_.apply(this,arguments);
+  const root=document.getElementById('viewRoot');
+  if(currentView==='travel'){
+    p3TravelArrivalLoad_(false);
+    if(root) root.innerHTML=renderP3TravelArrivals_();
+    if(typeof p1SyncNavigation_==='function') p1SyncNavigation_();
+  }else if(currentView==='dashboard'&&root&&!root.querySelector('.p3-travel-dashboard-card')){
+    const card=p3TravelArrivalDashboardCard_();
+    if(card) root.insertAdjacentHTML('beforeend',card);
+  }
+  return result;
+};
+</script>
