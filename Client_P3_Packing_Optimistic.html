@@ -1,0 +1,128 @@
+<script>
+/* PR #27 follow-up: optimistic packing add/edit with background reconciliation. */
+const p3PackingCanToggleBeforeOptimistic_=p3PackingCanToggle_;
+const p3PackingOpenFormBeforeOptimistic_=p3PackingOpenForm_;
+const p3PackingDeleteBeforeOptimistic_=p3PackingDelete_;
+const p3PackingPending_={};
+
+function p3PackingPendingId_(id){
+  return Boolean(p3PackingPending_[String(id||'')]);
+}
+
+p3PackingCanToggle_=function(row){
+  if(p3PackingPendingId_(row&&row['Packing ID'])) return false;
+  return p3PackingCanToggleBeforeOptimistic_.apply(this,arguments);
+};
+
+p3PackingOpenForm_=function(id){
+  if(p3PackingPendingId_(id)){
+    toast('This packing item is still saving.');
+    return;
+  }
+  return p3PackingOpenFormBeforeOptimistic_.apply(this,arguments);
+};
+
+p3PackingDelete_=function(id){
+  if(p3PackingPendingId_(id)){
+    toast('This packing item is still saving.');
+    return;
+  }
+  return p3PackingDeleteBeforeOptimistic_.apply(this,arguments);
+};
+
+function p3PackingOptimisticRow_(payload,localId,existing){
+  const now=new Date().toISOString();
+  return {
+    'Packing ID':localId,
+    'Scope':payload.scope==='Shared'?'Shared':'Personal',
+    'Owner Traveler ID':String(payload.travelerId||''),
+    'Bringing Traveler ID':payload.scope==='Shared'
+      ? String(payload.bringingTravelerId||'')
+      : String(payload.travelerId||''),
+    'Category':String(payload.category||'Other'),
+    'Item':String(payload.item||'').trim(),
+    'Quantity':String(payload.quantity||'').trim(),
+    'Packed':existing?String(existing.Packed||'No'):'No',
+    'Notes':String(payload.notes||'').trim(),
+    'Created At':existing?existing['Created At']||now:now,
+    'Updated At':now
+  };
+}
+
+p3PackingSave_=function(event,id){
+  event.preventDefault();
+  if(!currentTravelerId) return;
+
+  const payload={
+    id:String(id||''),
+    travelerId:String(currentTravelerId),
+    scope:String(val('p3PackScope')||'Personal'),
+    category:String(val('p3PackCategory')||'Other'),
+    item:String(val('p3PackItem')||''),
+    quantity:String(val('p3PackQuantity')||''),
+    bringingTravelerId:String(val('p3PackBringer')||''),
+    notes:String(val('p3PackNotes')||'')
+  };
+  if(!payload.item.trim()){
+    toast('Enter an item to pack.',true);
+    return;
+  }
+
+  if(!DATA.packingItems) DATA.packingItems=[];
+  const previousRows=DATA.packingItems.map(function(row){return Object.assign({},row);});
+  const existingIndex=payload.id
+    ? DATA.packingItems.findIndex(function(row){
+        return String(row['Packing ID']||'')===payload.id;
+      })
+    : -1;
+  const existing=existingIndex>=0?DATA.packingItems[existingIndex]:null;
+  const localId=payload.id||(
+    'LOCAL-PACK-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8)
+  );
+  const optimisticRow=p3PackingOptimisticRow_(payload,localId,existing);
+
+  if(existingIndex>=0) DATA.packingItems[existingIndex]=optimisticRow;
+  else DATA.packingItems.push(optimisticRow);
+
+  p3PackingPending_[localId]=true;
+  p3PackingMode_=payload.scope==='Shared'?'shared':'personal';
+  p3PackingState_.loaded=true;
+  p3PackingState_.lastLoaded=Date.now();
+
+  const saveId=typeof beginBackgroundSave_==='function'
+    ? beginBackgroundSave_('Packing item','packing:'+localId)
+    : '';
+
+  closeModal();
+  render();
+
+  function rollback(error){
+    DATA.packingItems=previousRows;
+    delete p3PackingPending_[localId];
+    p3PackingState_.lastLoaded=Date.now();
+    if(saveId&&typeof failBackgroundSave_==='function'){
+      failBackgroundSave_(saveId,error,'Packing item could not be saved');
+    }else{
+      toast(error&&error.message?error.message:String(error),true);
+    }
+    render();
+  }
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    payload.deviceId=deviceId;
+    google.script.run
+      .withSuccessHandler(function(result){
+        DATA.packingItems=(result&&result.items)||[];
+        delete p3PackingPending_[localId];
+        p3PackingState_.loaded=true;
+        p3PackingState_.lastLoaded=Date.now();
+        if(saveId&&typeof completeBackgroundSave_==='function'){
+          completeBackgroundSave_(saveId,'Packing list updated');
+        }
+        render();
+      })
+      .withFailureHandler(rollback)
+      .savePackingItem(payload);
+  },rollback);
+};
+</script>
