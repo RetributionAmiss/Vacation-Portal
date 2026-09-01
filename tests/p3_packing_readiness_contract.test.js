@@ -45,14 +45,13 @@ must(/beginBackgroundSave_\('Packing item'/.test(optimistic),'Packing add/edit m
 must(/withSuccessHandler\(function\(result\)[\s\S]*DATA\.packingItems=\(result&&result\.items\)\|\|\[\]/.test(optimistic),'Successful save must reconcile optimistic rows with server data.');
 must(/DATA\.packingItems=previousRows/.test(optimistic),'Failed save must roll back the optimistic packing change.');
 must(/p3PackingPending_/.test(optimistic)&&/p3PackingCanToggle_/.test(optimistic),'Pending local packing items must block racing checkbox interactions.');
-
-must(/p3PackingDelete_=function\(id\)/.test(optimistic),'Packing delete must be overridden by the optimistic layer.');
-must(/DATA\.packingItems=rows\.filter/.test(optimistic),'Delete must remove the packing row from local data immediately.');
-must(/beginBackgroundSave_\('Packing item','packing-delete:'\+id\)/.test(optimistic),'Delete must use the shared background-save indicator.');
-must(/render\(\);\s*\n\s*function rollbackDelete[\s\S]*p3PlannerSocialEnsureDevice_/.test(optimistic),'Delete must render before waiting for device/server persistence.');
-must(/\.deletePackingItem\(\{[\s\S]*deviceId:deviceId[\s\S]*travelerId:String\(currentTravelerId\|\|''\)[\s\S]*id:id/.test(optimistic),'Optimistic delete must still persist through the authenticated server delete endpoint.');
-must(/function rollbackDelete\(error\)[\s\S]*DATA\.packingItems=previousRows/.test(optimistic),'Failed delete must restore the removed packing row.');
-must(/completeBackgroundSave_\(saveId,'Packing item removed'\)/.test(optimistic),'Successful delete must finish the background-save state.');
+must(/Delete packing item\?/.test(optimistic)&&/Are you sure you want to delete/.test(optimistic),'Packing delete must use clear traveler-facing confirmation copy.');
+must(/openModal\(`<div class="p3-pack-delete-confirm">/.test(optimistic),'Packing delete confirmation must use the portal modal instead of the browser confirm dialog.');
+must(!/\bconfirm\s*\(/.test(optimistic),'Packing delete must not use the browser-native confirm dialog.');
+must(/function p3PackingDeleteNow_\(id\)/.test(optimistic),'Packing delete confirmation must hand off to an explicit optimistic delete action.');
+must(/DATA\.packingItems=rows\.filter/.test(optimistic),'Confirmed packing delete must remove the item locally before the server call.');
+must(/render\(\);[\s\S]*p3PlannerSocialEnsureDevice_[\s\S]*\.deletePackingItem/.test(optimistic),'Packing delete must render immediately and persist in the background.');
+must(/rollbackDelete[\s\S]*DATA\.packingItems=previousRows/.test(optimistic),'Failed packing delete must restore the optimistic row.');
 
 must(index.includes("include('Styles_P3_Packing_Readiness')"),'Packing styles must be loaded by AppsScriptIndex.');
 must(index.includes("include('Client_P3_Packing_Readiness')"),'Packing client must be loaded by AppsScriptIndex.');
