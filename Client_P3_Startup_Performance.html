@@ -1,0 +1,187 @@
+<script>
+/* PR #28 follow-up: prioritize first paint and stop Home cards from racing startup. */
+const p3StartupPerformanceStartedAt_=Date.now();
+let p3StartupPerformanceExtrasTimer_=null;
+let p3StartupPerformanceDeferredTimer_=null;
+
+function p3StartupPerformancePlaceholder_(kind){
+  if(kind==='packing'){
+    return `<section class="p3-pack-dashboard-card"><div><p class="eyebrow">READY TO GO</p><h3>Packing checklist</h3><p>Loading packing progress after the main trip is ready.</p></div><button type="button" onclick="navigate('packing')">Open packing</button></section>`;
+  }
+  if(kind==='travel'){
+    return `<section class="p3-travel-dashboard-card"><div><p class="eyebrow">TRAVEL</p><h3>Family arrivals</h3><p>Loading travel plans after the main trip is ready.</p></div><button type="button" onclick="navigate('travel')">Open travel board</button></section>`;
+  }
+  return `<section class="p3r-dashboard-card"><div class="p3r-dashboard-head"><div><p class="eyebrow">COMING UP</p><h3>Your reminders</h3></div><button type="button" class="ghost tiny" onclick="navigate('reminders')">See all</button></div><p class="muted">Checking reminders after the main trip is ready.</p></section>`;
+}
+
+function p3StartupPerformanceDeferredReady_(){
+  if(!DATA) return false;
+  if(typeof portalDeferredLoadBusy_!=='undefined'&&portalDeferredLoadBusy_) return false;
+  if(DATA.deferredLoaded) return true;
+  return Date.now()-p3StartupPerformanceStartedAt_>5000;
+}
+
+function p3StartupPerformanceScheduleExtras_(){
+  if(p3StartupPerformanceExtrasTimer_) return;
+
+  function attempt(){
+    p3StartupPerformanceExtrasTimer_=null;
+    if(currentView!=='dashboard') return;
+
+    if(!p3StartupPerformanceDeferredReady_()){
+      p3StartupPerformanceExtrasTimer_=setTimeout(attempt,300);
+      return;
+    }
+
+    if(
+      typeof p3PackingState_!=='undefined'&&
+      typeof p3PackingLoad_==='function'&&
+      !p3PackingState_.loaded&&
+      !p3PackingState_.loading
+    ){
+      p3PackingLoad_(false);
+    }
+
+    setTimeout(function(){
+      if(
+        currentView==='dashboard'&&
+        typeof p3TravelArrivalState_!=='undefined'&&
+        typeof p3TravelArrivalLoad_==='function'&&
+        !p3TravelArrivalState_.loaded&&
+        !p3TravelArrivalState_.loading
+      ){
+        p3TravelArrivalLoad_(false);
+      }
+    },220);
+
+    setTimeout(function(){
+      const socialLoaded=
+        typeof p2PlannerSocialState_!=='undefined'&&
+        Boolean(p2PlannerSocialState_.loaded);
+      if(
+        currentView==='dashboard'&&
+        !socialLoaded&&
+        typeof p3ReminderEnsureSocialData_==='function'
+      ){
+        p3ReminderEnsureSocialData_();
+      }
+    },440);
+  }
+
+  p3StartupPerformanceExtrasTimer_=setTimeout(attempt,350);
+}
+
+if(typeof p3PackingDashboardCard_==='function'){
+  const p3StartupPerformancePackingDashboardBefore_=p3PackingDashboardCard_;
+  p3PackingDashboardCard_=function(){
+    if(typeof p3PackingState_!=='undefined'&&!p3PackingState_.loaded){
+      p3StartupPerformanceScheduleExtras_();
+      return p3StartupPerformancePlaceholder_('packing');
+    }
+    return p3StartupPerformancePackingDashboardBefore_.apply(this,arguments);
+  };
+}
+
+if(typeof p3TravelArrivalDashboardCard_==='function'){
+  const p3StartupPerformanceTravelDashboardBefore_=p3TravelArrivalDashboardCard_;
+  p3TravelArrivalDashboardCard_=function(){
+    if(typeof p3TravelArrivalState_!=='undefined'&&!p3TravelArrivalState_.loaded){
+      p3StartupPerformanceScheduleExtras_();
+      return p3StartupPerformancePlaceholder_('travel');
+    }
+    return p3StartupPerformanceTravelDashboardBefore_.apply(this,arguments);
+  };
+}
+
+if(typeof p3ReminderDashboardCard_==='function'){
+  const p3StartupPerformanceReminderDashboardBefore_=p3ReminderDashboardCard_;
+  p3ReminderDashboardCard_=function(){
+    const socialLoaded=
+      typeof p2PlannerSocialState_!=='undefined'&&
+      Boolean(p2PlannerSocialState_.loaded);
+    const paymentsLoaded=
+      typeof paymentState_!=='undefined'&&Boolean(paymentState_.loaded);
+
+    if(!socialLoaded||!paymentsLoaded){
+      p3StartupPerformanceScheduleExtras_();
+      return p3StartupPerformancePlaceholder_('reminders');
+    }
+    return p3StartupPerformanceReminderDashboardBefore_.apply(this,arguments);
+  };
+}
+
+function p3StartupPerformanceDeferFullLoad_(){
+  if(p3StartupPerformanceDeferredTimer_) return;
+
+  const run=function(){
+    p3StartupPerformanceDeferredTimer_=null;
+    if(typeof loadDeferredPortalData_==='function') loadDeferredPortalData_();
+  };
+
+  if(typeof requestIdleCallback==='function'){
+    p3StartupPerformanceDeferredTimer_=requestIdleCallback(run,{timeout:600});
+  }else{
+    p3StartupPerformanceDeferredTimer_=setTimeout(run,180);
+  }
+}
+
+refreshData=function(){
+  const priorLazy={
+    packingItems:DATA&&DATA.packingItems,
+    travelPlans:DATA&&DATA.travelPlans,
+    itinerarySignups:DATA&&DATA.itinerarySignups,
+    plannerComments:DATA&&DATA.plannerComments
+  };
+
+  if(!DATA){
+    startLoadingStages_();
+  }else{
+    setFastStartStatus_(true,'Refreshing trip data…');
+  }
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      if(priorLazy.packingItems&&typeof p3PackingState_!=='undefined'&&p3PackingState_.loaded){
+        data.packingItems=priorLazy.packingItems;
+      }
+      if(priorLazy.travelPlans&&typeof p3TravelArrivalState_!=='undefined'&&p3TravelArrivalState_.loaded){
+        data.travelPlans=priorLazy.travelPlans;
+      }
+      if(priorLazy.itinerarySignups&&typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_.loaded){
+        data.itinerarySignups=priorLazy.itinerarySignups;
+        data.plannerComments=priorLazy.plannerComments||[];
+      }
+
+      DATA=data;
+      p21ApplyFinalRentalClientFocus_();
+      portalDeltaSince=data.serverTime||new Date().toISOString();
+      applyServerDeviceTravelerProfile_(data);
+      saveFastStartupSnapshot_(DATA);
+
+      stopLoadingStages_();
+      setLoading(false);
+      hydrateHeader();
+      render();
+
+      setFastStartStatus_(true,'Dashboard ready · loading full trip data…');
+      p3StartupPerformanceDeferFullLoad_();
+
+      scheduleRentalPolling_();
+      startLiveActivityPolling_(data.serverTime);
+      startPortalDeltaSync_();
+      resolveDeviceTravelerBeforePrompt_();
+
+      if(validSelectedTraveler_()) travelerChooserShown=true;
+    })
+    .withFailureHandler(function(error){
+      stopLoadingStages_();
+      if(DATA){
+        setFastStartStatus_(true,'Using the most recent saved view. Fresh data could not be loaded.');
+        toast('Fresh portal data could not be loaded. Showing the last saved view.',true);
+      }else{
+        showFatal(error);
+      }
+    })
+    .getPortalStartupDataPerformanceFocused(PWA_DEVICE_ID_);
+};
+</script>
