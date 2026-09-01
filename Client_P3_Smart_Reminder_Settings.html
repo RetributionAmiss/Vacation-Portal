@@ -1,0 +1,48 @@
+<script>
+/* PR #26: Organizer opt-in for proactive reminder pushes. */
+const p3SmartReminderRenderSettingsBefore_=renderSettings;
+
+renderSettings=function(){
+  let html=p3SmartReminderRenderSettingsBefore_.apply(this,arguments);
+  const organizer=typeof p1OrganizerUi_==='function'
+    ? p1OrganizerUi_()
+    : Boolean(currentTraveler()&&/^justin(?:\s|$)/i.test(String(currentTraveler().Name||'').trim()));
+  if(!organizer) return html;
+
+  const enabled=String(DATA&&DATA.trip&&DATA.trip['Smart Reminder Push Enabled']||'No')==='Yes';
+  const control=`
+    <label class="wide p3-smart-reminder-setting">
+      <span>Smart traveler push reminders</span>
+      <select id="setSmartReminderPushEnabled">
+        <option value="No" ${enabled?'':'selected'}>Off — in-app reminders only</option>
+        <option value="Yes" ${enabled?'selected':''}>On — send useful reminder pushes</option>
+      </select>
+      <small class="muted">Payment: 7 days, 1 day, due day, then one overdue nudge. Meals: evening before crew duty. Activities: once on the day, roughly within 3 hours of your signup time. Duplicate stages are never resent.</small>
+    </label>`;
+
+  return html.replace('<div class="wide form-actions">',control+'<div class="wide form-actions">');
+};
+
+saveSettingsForm=function(e){
+  e.preventDefault();
+
+  run(
+    'saveTripSettings',
+    [{
+      'Trip Name':val('setTripName'),
+      Destination:val('setDestination'),
+      'Start Date':val('setStart'),
+      'End Date':val('setEnd'),
+      'Portal Stage':val('setStage'),
+      'Voting Round':val('setRound'),
+      'OneSignal App ID':document.getElementById('setOneSignalAppId')
+        ? val('setOneSignalAppId')
+        : (DATA.trip['OneSignal App ID']||''),
+      'Smart Reminder Push Enabled':document.getElementById('setSmartReminderPushEnabled')
+        ? val('setSmartReminderPushEnabled')
+        : (DATA.trip['Smart Reminder Push Enabled']||'No')
+    }],
+    'Trip settings saved.'
+  );
+};
+</script>
