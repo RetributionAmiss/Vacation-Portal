@@ -1,0 +1,62 @@
+<script>
+/* Keep Travel date/time presentation aligned with the shared planner normalization layer. */
+const p3TravelArrivalTimeTextBeforePortalFormat_=
+  typeof p3TravelArrivalTimeText_==='function' ? p3TravelArrivalTimeText_ : null;
+const p3TravelArrivalOpenFormBeforePortalTimeFormat_=
+  typeof p3TravelArrivalOpenForm_==='function' ? p3TravelArrivalOpenForm_ : null;
+
+function p3TravelArrivalTimeInputValue_(value){
+  const parts=typeof p3PlannerTimeParts_==='function'
+    ? p3PlannerTimeParts_(value)
+    : null;
+
+  if(parts&&parts.hour>=0&&parts.hour<=23&&parts.minute>=0&&parts.minute<=59){
+    return String(parts.hour).padStart(2,'0')+':'+String(parts.minute).padStart(2,'0');
+  }
+
+  const text=String(value||'').trim();
+  const match=text.match(/^(\d{1,2}):(\d{2})/);
+  if(!match) return '';
+  const hour=Number(match[1]);
+  const minute=Number(match[2]);
+  if(hour<0||hour>23||minute<0||minute>59) return '';
+  return String(hour).padStart(2,'0')+':'+String(minute).padStart(2,'0');
+}
+
+p3TravelArrivalTimeText_=function(value){
+  if(typeof p2PlannerTimeLabel_==='function'){
+    return p2PlannerTimeLabel_(value);
+  }
+  return p3TravelArrivalTimeTextBeforePortalFormat_
+    ? p3TravelArrivalTimeTextBeforePortalFormat_(value)
+    : String(value||'');
+};
+
+p3TravelArrivalSortKey_=function(plan){
+  const date=String(plan&&plan['Arrival Date']||'9999-12-31').slice(0,10);
+  const time=p3TravelArrivalTimeInputValue_(plan&&plan['Arrival Time'])||'23:59';
+  return date+'T'+time;
+};
+
+if(p3TravelArrivalOpenFormBeforePortalTimeFormat_){
+  p3TravelArrivalOpenForm_=function(){
+    const travelerId=typeof p3TravelArrivalSelfId_==='function'
+      ? p3TravelArrivalSelfId_()
+      : '';
+    const plan=travelerId&&typeof p3TravelArrivalPlanFor_==='function'
+      ? p3TravelArrivalPlanFor_(travelerId)
+      : null;
+
+    const result=p3TravelArrivalOpenFormBeforePortalTimeFormat_.apply(this,arguments);
+
+    if(plan&&typeof document!=='undefined'){
+      const departure=document.getElementById('p3TravelDepartureTime');
+      const arrival=document.getElementById('p3TravelArrivalTime');
+      if(departure) departure.value=p3TravelArrivalTimeInputValue_(plan['Departure Time']);
+      if(arrival) arrival.value=p3TravelArrivalTimeInputValue_(plan['Arrival Time']);
+    }
+
+    return result;
+  };
+}
+</script>

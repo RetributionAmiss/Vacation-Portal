@@ -76,5 +76,7 @@ jobs:
         run: node tests/p3_packing_readiness_contract.test.js
       - name: Run P3 travel and arrival contracts
         run: node tests/p3_travel_arrivals_contract.test.js
+      - name: Run P3 Travel time formatting contracts
+        run: node tests/p3_travel_time_format_contract.test.js
       - name: Run P3 startup performance contracts
         run: node tests/p3_startup_performance_contract.test.js
