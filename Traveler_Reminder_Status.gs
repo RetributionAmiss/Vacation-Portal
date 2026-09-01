@@ -1,26 +1,5 @@
 const SMART_REMINDER_STATUS_MAX_PREVIEWS_ = 20;
 
-function smartReminderPreviewPayload_(items) {
-  const ordered = (items || []).slice().sort(function(a, b) {
-    return Number(a.priority || 0) - Number(b.priority || 0);
-  });
-  const shown = ordered.slice(0, 3);
-  let message = shown.map(function(item) { return String(item.line || ''); }).join(' • ');
-  if (ordered.length > shown.length) {
-    message += ' • Plus ' + (ordered.length - shown.length) + ' more reminder' +
-      (ordered.length - shown.length === 1 ? '' : 's') + ' in the portal.';
-  }
-  message = message.slice(0, 220);
-
-  return {
-    title: ordered.length === 1
-      ? String(ordered[0].heading || 'Vacation reminder')
-      : 'You have ' + ordered.length + ' vacation reminders',
-    message: message,
-    reminderCount: ordered.length
-  };
-}
-
 function smartReminderLastDeliveredAt_(ledger) {
   return Object.keys(ledger || {}).reduce(function(latest, key) {
     const value = Number(ledger[key] || 0);
@@ -28,10 +7,39 @@ function smartReminderLastDeliveredAt_(ledger) {
   }, 0);
 }
 
+function smartReminderStatusLastRun_(context) {
+  const raw = smartReminderReadRunStatus_();
+  if (!raw || !raw.ranAt) return null;
+
+  return {
+    ranAt: String(raw.ranAt || ''),
+    outcome: String(raw.outcome || ''),
+    enabled: Boolean(raw.enabled),
+    configured: Boolean(raw.configured),
+    sent: Number(raw.sent || 0),
+    reminders: Number(raw.reminders || 0),
+    considered: Number(raw.considered || 0),
+    attemptedPushes: Number(raw.attemptedPushes || 0),
+    failedPushes: Number(raw.failedPushes || 0),
+    failures: (Array.isArray(raw.failures) ? raw.failures : []).slice(0, 20).map(function(failure) {
+      const travelerId = String(failure && failure.travelerId || '');
+      const traveler = context.travelers[travelerId] || {};
+      return {
+        travelerId: travelerId,
+        travelerName: String(traveler.Name || travelerId || 'Traveler'),
+        reason: String(failure && failure.reason || 'Delivery failed.').slice(0, 180)
+      };
+    })
+  };
+}
+
 function smartReminderDeliveryState_(status) {
   if (!status.enabled) return 'off';
   if (!status.configured) return 'needs-setup';
   if (!status.triggerInstalled) return 'trigger-missing';
+  if (status.lastRun && (status.lastRun.outcome === 'failed' || status.lastRun.outcome === 'partial-failure')) {
+    return 'delivery-error';
+  }
   if (status.dueNow > 0) return 'due-now';
   return 'ready';
 }
@@ -67,18 +75,19 @@ function getTravelerReminderDeliveryStatus(values) {
     byTraveler[item.travelerId].push(item);
   });
 
-  const previews = Object.keys(byTraveler).map(function(travelerId) {
+  const travelerIds = Object.keys(byTraveler);
+  const previews = travelerIds.map(function(travelerId) {
     const items = byTraveler[travelerId].slice().sort(function(a, b) {
       return Number(a.priority || 0) - Number(b.priority || 0);
     });
     const traveler = context.travelers[travelerId] || {};
-    const payload = smartReminderPreviewPayload_(items);
+    const built = smartReminderBuildPushPayload_(context, travelerId, items);
     return {
       travelerId: travelerId,
       travelerName: String(traveler.Name || travelerId),
-      title: payload.title,
-      message: payload.message,
-      reminderCount: payload.reminderCount,
+      title: built.title,
+      message: built.message,
+      reminderCount: built.count,
       items: items.map(function(item) {
         return {
           type: String(item.type || ''),
@@ -104,9 +113,13 @@ function getTravelerReminderDeliveryStatus(values) {
     apiKeyConfigured: Boolean(apiKey),
     triggerInstalled: triggerInstalled,
     dueNow: due.length,
-    travelerPushesDue: previews.length,
+    wouldSendNow: enabled && configured ? due.length : 0,
+    travelerPushesDue: travelerIds.length,
+    automaticPushesDue: enabled && configured && triggerInstalled ? travelerIds.length : 0,
+    previewTruncated: travelerIds.length > previews.length,
     deliveredStagesRecorded: Object.keys(ledger).length,
     lastDeliveredAt: lastDeliveredMs ? new Date(lastDeliveredMs).toISOString() : '',
+    lastRun: smartReminderStatusLastRun_(context),
     generatedAt: new Date().toISOString(),
     timeZone: String(context.clock.timeZone || ''),
     previews: previews
