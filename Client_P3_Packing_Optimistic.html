@@ -125,18 +125,51 @@ p3PackingDelete_=function(id){
     return;
   }
 
-  const rows=(DATA&&DATA.packingItems)||[];
-  const index=rows.findIndex(function(item){
+  const row=((DATA&&DATA.packingItems)||[]).find(function(item){
     return String(item['Packing ID']||'')===id;
   });
-  if(index<0) return;
+  if(!row) return;
 
-  const row=rows[index];
   if(String(row['Owner Traveler ID']||'')!==String(currentTravelerId||'')){
     toast('Only the traveler who added this item can delete it.',true);
     return;
   }
-  if(!confirm('Remove “'+String(row.Item||'this item')+'” from the packing list?')) return;
+
+  openModal(`<div class="p3-pack-delete-confirm">
+    <p class="eyebrow">DELETE PACKING ITEM</p>
+    <h2>Delete packing item?</h2>
+    <p>Are you sure you want to delete “${esc(row.Item||'this item')}”?</p>
+    <div class="form-actions">
+      <button class="ghost" type="button" onclick="closeModal()">Cancel</button>
+      <button class="danger" type="button" onclick="p3PackingDeleteNow_('${escAttr(id)}')">Delete</button>
+    </div>
+  </div>`);
+};
+
+function p3PackingDeleteNow_(id){
+  id=String(id||'');
+  if(!id) return;
+  if(p3PackingPendingId_(id)){
+    closeModal();
+    toast('This packing item is still saving.');
+    return;
+  }
+
+  const rows=(DATA&&DATA.packingItems)||[];
+  const index=rows.findIndex(function(item){
+    return String(item['Packing ID']||'')===id;
+  });
+  if(index<0){
+    closeModal();
+    return;
+  }
+
+  const row=rows[index];
+  if(String(row['Owner Traveler ID']||'')!==String(currentTravelerId||'')){
+    closeModal();
+    toast('Only the traveler who added this item can delete it.',true);
+    return;
+  }
 
   const previousRows=rows.map(function(item){return Object.assign({},item);});
   DATA.packingItems=rows.filter(function(item){
@@ -150,6 +183,7 @@ p3PackingDelete_=function(id){
     ? beginBackgroundSave_('Packing item','packing-delete:'+id)
     : '';
 
+  closeModal();
   render();
 
   function rollbackDelete(error){
