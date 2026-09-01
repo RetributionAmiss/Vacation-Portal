@@ -187,6 +187,18 @@ result=sandbox.processTravelerReminderPushes_();
 assert.strictEqual(result.outcome,'not-configured');
 sandbox.getSettings_=function(){return baseTrip;};
 
+// A run where every attempted push fails must report failed and leave all candidates retryable.
+propertyStore.SMART_REMINDER_PUSH_LEDGER_V1='{}';
+sandbox.smartReminderPaymentCandidates_=function(){return [reminderB];};
+sandbox.smartReminderSendPush_=function(){throw new Error('simulated total delivery failure');};
+result=sandbox.processTravelerReminderPushes_();
+assert.strictEqual(result.outcome,'failed');
+assert.strictEqual(result.considered,1);
+assert.strictEqual(result.sent,0);
+assert.strictEqual(result.failedPushes,1);
+ledger=JSON.parse(propertyStore.SMART_REMINDER_PUSH_LEDGER_V1||'{}');
+assert.strictEqual(Object.keys(ledger).length,0);
+
 // Failure telemetry is bounded before storage.
 const longReason='x'.repeat(250);
 sandbox.smartReminderWriteRunStatus_({
