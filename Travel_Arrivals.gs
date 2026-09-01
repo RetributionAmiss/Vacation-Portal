@@ -38,6 +38,45 @@ function travelArrivalTime_(value) {
   return ('0' + hour).slice(-2) + ':' + ('0' + minute).slice(-2);
 }
 
+/*
+ * Travel departure/arrival values are clock times, not instants in time.
+ * Google Sheets may expose a time-only cell as a Date. Serializing that Date
+ * with toISOString() converts the displayed clock time to UTC and shifts it.
+ * Read these two columns in the spreadsheet timezone and return literal HH:mm.
+ */
+function travelArrivalReadPlans_() {
+  const ss = getSpreadsheet_();
+  const sheet = ss.getSheetByName('Travel Plans');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  const values = sheet.getDataRange().getValues();
+  const headers = values.shift().map(function(value) {
+    return String(value || '').trim();
+  });
+  const spreadsheetTimeZone = ss.getSpreadsheetTimeZone() || Session.getScriptTimeZone();
+  const timeHeaders = {
+    'Departure Time': true,
+    'Arrival Time': true
+  };
+
+  return values
+    .filter(function(row) {
+      return row.some(function(value) { return value !== '' && value !== null; });
+    })
+    .map(function(row) {
+      const obj = {};
+      headers.forEach(function(header, index) {
+        const value = row[index];
+        if (timeHeaders[header] && value instanceof Date && !isNaN(value.getTime())) {
+          obj[header] = Utilities.formatDate(value, spreadsheetTimeZone, 'HH:mm');
+          return;
+        }
+        obj[header] = serializeValue_(value);
+      });
+      return obj;
+    });
+}
+
 function travelArrivalPlanForTraveler_(travelerId) {
   const id = String(travelerId || '').trim();
   if (!id) return null;
@@ -49,7 +88,7 @@ function travelArrivalPlanForTraveler_(travelerId) {
 function getTravelArrivalData() {
   ensurePortalSchemaCurrent_();
   return {
-    plans: readSheet_('Travel Plans'),
+    plans: travelArrivalReadPlans_(),
     serverTime: new Date().toISOString()
   };
 }
