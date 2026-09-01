@@ -8,6 +8,7 @@ const must=(condition,message)=>{if(!condition) throw new Error(message);};
 const config=read('Config.gs');
 const server=read('Packing.gs');
 const client=read('Client_P3_Packing_Readiness.html');
+const optimistic=read('Client_P3_Packing_Optimistic.html');
 const styles=read('Styles_P3_Packing_Readiness.html');
 const index=read('AppsScriptIndex.html');
 const archive=read('Archive.gs');
@@ -37,12 +38,24 @@ must(/rows\[index\]\.Packed=packed\?'Yes':'No'/.test(client),'Packing checkboxes
 must(/p3-pack-dashboard-card/.test(client)&&/READY TO GO/.test(client),'Home should surface a compact readiness summary.');
 must(/Ready to leave/.test(client),'Packing should expose a traveler readiness state.');
 
+must(/LOCAL-PACK-/.test(optimistic),'New packing items must receive a temporary local ID before server save.');
+must(/DATA\.packingItems\.push\(optimisticRow\)/.test(optimistic),'New packing items must appear in local data immediately.');
+must(/closeModal\(\);\s*render\(\);[\s\S]*p3PlannerSocialEnsureDevice_/.test(optimistic),'Packing form must close and render before waiting on device/server persistence.');
+must(/beginBackgroundSave_\('Packing item'/.test(optimistic),'Packing add/edit must use the shared background-save indicator.');
+must(/withSuccessHandler\(function\(result\)[\s\S]*DATA\.packingItems=\(result&&result\.items\)\|\|\[\]/.test(optimistic),'Successful save must reconcile optimistic rows with server data.');
+must(/DATA\.packingItems=previousRows/.test(optimistic),'Failed save must roll back the optimistic packing change.');
+must(/p3PackingPending_/.test(optimistic)&&/p3PackingCanToggle_/.test(optimistic),'Pending local packing items must block racing checkbox interactions.');
+
 must(index.includes("include('Styles_P3_Packing_Readiness')"),'Packing styles must be loaded by AppsScriptIndex.');
 must(index.includes("include('Client_P3_Packing_Readiness')"),'Packing client must be loaded by AppsScriptIndex.');
+must(index.includes("include('Client_P3_Packing_Optimistic')"),'Optimistic packing layer must be loaded after the packing client.');
+must(index.indexOf("include('Client_P3_Packing_Optimistic')")>index.indexOf("include('Client_P3_Packing_Readiness')"),'Optimistic packing layer must load after the base packing client.');
 must(/Packing Items/.test(archive),'Packing data must be included in vacation archive/reset behavior.');
 must(/\.p3-pack-item/.test(styles)&&/@media\(max-width:700px\)/.test(styles),'Packing UI must include compact mobile styles.');
 
 const executable=client.replace(/^<script>\s*/,'').replace(/\s*<\/script>\s*$/,'');
+const optimisticExecutable=optimistic.replace(/^<script>\s*/,'').replace(/\s*<\/script>\s*$/,'');
 new Function(executable);
+new Function(optimisticExecutable);
 
 console.log('P3 packing readiness contract passed.');
