@@ -12,7 +12,8 @@ const index=read('AppsScriptIndex.html');
 const archive=read('Archive.gs');
 const planningCommon=read('Planning_Common.gs');
 
-assert(config.includes("PORTAL_SCHEMA_VERSION = '4.4.2'"),'planner social tables must advance schema version');
+const schemaMatch=config.match(/PORTAL_SCHEMA_VERSION = '4\.4\.(\d+)'/);
+assert(schemaMatch&&Number(schemaMatch[1])>=2,'planner social tables require schema version 4.4.2 or later');
 assert(config.includes("'Itinerary Signups'"),'schema must include Itinerary Signups');
 assert(config.includes("'Planner Comments'"),'schema must include Planner Comments');
 assert(config.includes("'Planned Date'" )&&config.includes("'Planned Time'"),'itinerary signup must store each traveler planned date/time separately');
