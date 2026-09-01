@@ -1,0 +1,357 @@
+<script>
+/* PR #27: traveler packing + family shared readiness checklist. */
+const p3PackingState_={loaded:false,loading:false,lastLoaded:0};
+let p3PackingMode_='personal';
+
+(function p3PackingRegisterView_(){
+  if(typeof P1_NAV_GROUPS_==='undefined'||typeof P1_VIEW_LABELS_==='undefined') return;
+  const home=P1_NAV_GROUPS_.find(function(group){return group.id==='home';});
+  if(home&&home.views.indexOf('packing')<0) home.views.push('packing');
+  P1_VIEW_LABELS_.packing='Packing';
+})();
+
+function p3PackingTravelerName_(travelerId){
+  const id=String(travelerId||'');
+  const traveler=(DATA&&DATA.travelers||[]).find(function(row){
+    return String(row['Traveler ID']||'')===id;
+  });
+  return traveler?String(traveler.Name||'Traveler'):'Anyone';
+}
+
+function p3PackingLoad_(force){
+  if(p3PackingState_.loading) return;
+  if(!force&&p3PackingState_.loaded&&Date.now()-p3PackingState_.lastLoaded<15000) return;
+  if(!window.google||!google.script||!google.script.run) return;
+
+  p3PackingState_.loading=true;
+  google.script.run
+    .withSuccessHandler(function(result){
+      DATA.packingItems=(result&&result.items)||[];
+      p3PackingState_.loaded=true;
+      p3PackingState_.loading=false;
+      p3PackingState_.lastLoaded=Date.now();
+      if(currentView==='packing'||currentView==='dashboard') render();
+    })
+    .withFailureHandler(function(error){
+      p3PackingState_.loading=false;
+      if(currentView==='packing') toast(error&&error.message?error.message:String(error),true);
+    })
+    .getPackingData();
+}
+
+function p3PackingItems_(){
+  p3PackingLoad_(false);
+  return (DATA&&DATA.packingItems)||[];
+}
+
+function p3PackingOwned_(){
+  const travelerId=String(currentTravelerId||'');
+  return p3PackingItems_().filter(function(row){
+    return String(row.Scope||'Personal')!=='Shared'&&
+      String(row['Owner Traveler ID']||'')===travelerId;
+  });
+}
+
+function p3PackingShared_(){
+  return p3PackingItems_().filter(function(row){
+    return String(row.Scope||'')==='Shared';
+  });
+}
+
+function p3PackingAssignedToMe_(){
+  const travelerId=String(currentTravelerId||'');
+  return p3PackingShared_().filter(function(row){
+    const bringer=String(row['Bringing Traveler ID']||'');
+    return !bringer||bringer===travelerId;
+  });
+}
+
+function p3PackingStats_(rows){
+  const total=(rows||[]).length;
+  const packed=(rows||[]).filter(function(row){return String(row.Packed||'No')==='Yes';}).length;
+  return {total:total,packed:packed,left:Math.max(0,total-packed),percent:total?Math.round(packed/total*100):0};
+}
+
+function p3PackingCategoryOrder_(value){
+  return ['Essentials','Clothing','Toiletries','Gear','Food','Kids','Other'].indexOf(String(value||'Other'));
+}
+
+function p3PackingGroups_(rows){
+  const map={};
+  (rows||[]).forEach(function(row){
+    const category=String(row.Category||'Other');
+    if(!map[category]) map[category]=[];
+    map[category].push(row);
+  });
+  return Object.keys(map).sort(function(a,b){
+    return p3PackingCategoryOrder_(a)-p3PackingCategoryOrder_(b)||a.localeCompare(b);
+  }).map(function(category){
+    return {category:category,rows:map[category].slice().sort(function(a,b){
+      const packed=String(a.Packed||'No').localeCompare(String(b.Packed||'No'));
+      return packed||String(a.Item||'').localeCompare(String(b.Item||''));
+    })};
+  });
+}
+
+function p3PackingCanToggle_(row){
+  const travelerId=String(currentTravelerId||'');
+  if(!travelerId) return false;
+  if(String(row.Scope||'Personal')!=='Shared'){
+    return String(row['Owner Traveler ID']||'')===travelerId;
+  }
+  const owner=String(row['Owner Traveler ID']||'');
+  const bringer=String(row['Bringing Traveler ID']||'');
+  return owner===travelerId||!bringer||bringer===travelerId;
+}
+
+function p3PackingCard_(row){
+  const id=String(row['Packing ID']||'');
+  const packed=String(row.Packed||'No')==='Yes';
+  const shared=String(row.Scope||'Personal')==='Shared';
+  const mine=String(row['Owner Traveler ID']||'')===String(currentTravelerId||'');
+  const canToggle=p3PackingCanToggle_(row);
+  const bringer=String(row['Bringing Traveler ID']||'');
+  const quantity=String(row.Quantity||'').trim();
+  const notes=String(row.Notes||'').trim();
+
+  return `<article class="p3-pack-item${packed?' is-packed':''}">
+    <button type="button" class="p3-pack-check" ${canToggle?'':'disabled'}
+      aria-label="${packed?'Mark not packed':'Mark packed'}"
+      onclick="p3PackingToggle_('${escAttr(id)}',${packed?'false':'true'})">
+      <span aria-hidden="true">${packed?'✓':''}</span>
+    </button>
+    <div class="p3-pack-copy">
+      <strong>${esc(row.Item||'Packing item')}</strong>
+      <div class="p3-pack-meta">
+        ${quantity?`<span>${esc(quantity)}</span>`:''}
+        ${shared?`<span>${bringer?'Bringing: '+esc(p3PackingTravelerName_(bringer)):'Anyone can bring'}</span>`:''}
+      </div>
+      ${notes?`<small>${esc(notes)}</small>`:''}
+    </div>
+    ${mine?`<div class="p3-pack-actions">
+      <button type="button" class="ghost tiny" onclick="p3PackingOpenForm_('${escAttr(id)}')">Edit</button>
+      <button type="button" class="ghost tiny" onclick="p3PackingDelete_('${escAttr(id)}')">Delete</button>
+    </div>`:''}
+  </article>`;
+}
+
+function p3PackingGroupHtml_(group){
+  const stats=p3PackingStats_(group.rows);
+  return `<section class="p3-pack-group">
+    <div class="p3-pack-group-head"><h3>${esc(group.category)}</h3><span>${stats.packed}/${stats.total}</span></div>
+    <div class="p3-pack-list">${group.rows.map(p3PackingCard_).join('')}</div>
+  </section>`;
+}
+
+function p3PackingSetMode_(mode){
+  p3PackingMode_=mode==='shared'?'shared':'personal';
+  render();
+}
+
+function p3PackingTravelerOptions_(selected){
+  const active=(DATA&&DATA.travelers||[]).filter(function(row){
+    return String(row.Active||'Yes').toLowerCase()!=='no';
+  });
+  return `<option value="">Anyone / not assigned</option>`+active.map(function(row){
+    const id=String(row['Traveler ID']||'');
+    return `<option value="${escAttr(id)}" ${id===String(selected||'')?'selected':''}>${esc(row.Name||'Traveler')}</option>`;
+  }).join('');
+}
+
+function p3PackingOpenForm_(id){
+  if(!currentTravelerId){toast('Choose your saved traveler profile first.',true);return;}
+  const existing=id?p3PackingItems_().find(function(row){return String(row['Packing ID']||'')===String(id);}):null;
+  if(existing&&String(existing['Owner Traveler ID']||'')!==String(currentTravelerId||'')){
+    toast('Only the traveler who added this item can edit it.',true);return;
+  }
+
+  const scope=existing?String(existing.Scope||'Personal'):(p3PackingMode_==='shared'?'Shared':'Personal');
+  const category=existing?String(existing.Category||'Other'):'Essentials';
+  const categories=['Essentials','Clothing','Toiletries','Gear','Food','Kids','Other'];
+  const bringing=existing?String(existing['Bringing Traveler ID']||''):String(currentTravelerId||'');
+
+  openModal(`<form class="p3-pack-form" onsubmit="p3PackingSave_(event,'${escAttr(id||'')}')">
+    <p class="eyebrow">PACKING LIST</p>
+    <h2>${existing?'Edit item':'Add an item'}</h2>
+    <label><span>List</span><select id="p3PackScope" onchange="p3PackingScopeChanged_()">
+      <option value="Personal" ${scope==='Personal'?'selected':''}>My bag</option>
+      <option value="Shared" ${scope==='Shared'?'selected':''}>Family shared</option>
+    </select></label>
+    <label><span>Category</span><select id="p3PackCategory">${categories.map(function(value){return `<option ${value===category?'selected':''}>${value}</option>`;}).join('')}</select></label>
+    <label class="wide"><span>Item</span><input id="p3PackItem" maxlength="120" required value="${escAttr(existing?existing.Item:'')}"></label>
+    <label><span>Quantity</span><input id="p3PackQuantity" maxlength="40" placeholder="1, 2 pairs, etc." value="${escAttr(existing?existing.Quantity:'')}"></label>
+    <label id="p3PackBringerWrap" class="${scope==='Shared'?'':'hidden'}"><span>Who’s bringing it?</span><select id="p3PackBringer">${p3PackingTravelerOptions_(bringing)}</select></label>
+    <label class="wide"><span>Notes</span><textarea id="p3PackNotes" rows="2" maxlength="500">${esc(existing?existing.Notes:'')}</textarea></label>
+    <div class="wide form-actions"><button>${existing?'Save item':'Add to packing list'}</button></div>
+  </form>`);
+}
+
+function p3PackingScopeChanged_(){
+  const wrap=document.getElementById('p3PackBringerWrap');
+  if(!wrap) return;
+  wrap.classList.toggle('hidden',String(val('p3PackScope'))!=='Shared');
+}
+
+function p3PackingSave_(event,id){
+  event.preventDefault();
+  if(!currentTravelerId) return;
+  const payload={
+    id:String(id||''),
+    travelerId:String(currentTravelerId),
+    scope:String(val('p3PackScope')||'Personal'),
+    category:String(val('p3PackCategory')||'Other'),
+    item:String(val('p3PackItem')||''),
+    quantity:String(val('p3PackQuantity')||''),
+    bringingTravelerId:String(val('p3PackBringer')||''),
+    notes:String(val('p3PackNotes')||'')
+  };
+  if(!payload.item.trim()){toast('Enter an item to pack.',true);return;}
+
+  const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Packing item','packing:'+String(id||'new')):'';
+  closeModal();
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    payload.deviceId=deviceId;
+    google.script.run
+      .withSuccessHandler(function(result){
+        DATA.packingItems=(result&&result.items)||[];
+        p3PackingState_.loaded=true;
+        p3PackingState_.lastLoaded=Date.now();
+        if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'Packing list updated');
+        render();
+      })
+      .withFailureHandler(function(error){
+        if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Packing item could not be saved');
+        else toast(error&&error.message?error.message:String(error),true);
+        render();
+      })
+      .savePackingItem(payload);
+  },function(error){
+    if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Packing item could not be saved');
+    else toast(error&&error.message?error.message:String(error),true);
+  });
+}
+
+function p3PackingToggle_(id,packed){
+  const rows=p3PackingItems_();
+  const index=rows.findIndex(function(row){return String(row['Packing ID']||'')===String(id);});
+  if(index<0||!p3PackingCanToggle_(rows[index])) return;
+  const previous=String(rows[index].Packed||'No');
+  rows[index].Packed=packed?'Yes':'No';
+  render();
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    google.script.run
+      .withSuccessHandler(function(result){
+        DATA.packingItems=(result&&result.items)||[];
+        p3PackingState_.lastLoaded=Date.now();
+        render();
+      })
+      .withFailureHandler(function(error){
+        if(DATA.packingItems&&DATA.packingItems[index]) DATA.packingItems[index].Packed=previous;
+        toast(error&&error.message?error.message:String(error),true);
+        render();
+      })
+      .togglePackingItem({deviceId:deviceId,travelerId:String(currentTravelerId||''),id:String(id),packed:Boolean(packed)});
+  },function(error){
+    if(DATA.packingItems&&DATA.packingItems[index]) DATA.packingItems[index].Packed=previous;
+    toast(error&&error.message?error.message:String(error),true);
+    render();
+  });
+}
+
+function p3PackingDelete_(id){
+  const row=p3PackingItems_().find(function(item){return String(item['Packing ID']||'')===String(id);});
+  if(!row) return;
+  if(!confirm('Remove “'+String(row.Item||'this item')+'” from the packing list?')) return;
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    google.script.run
+      .withSuccessHandler(function(result){
+        DATA.packingItems=(result&&result.items)||[];
+        p3PackingState_.lastLoaded=Date.now();
+        render();
+        toast('Packing item removed.');
+      })
+      .withFailureHandler(function(error){toast(error&&error.message?error.message:String(error),true);})
+      .deletePackingItem({deviceId:deviceId,travelerId:String(currentTravelerId||''),id:String(id)});
+  },function(error){toast(error&&error.message?error.message:String(error),true);});
+}
+
+function p3PackingProgressCard_(label,stats,detail){
+  return `<article class="p3-pack-stat${stats.total&&stats.left===0?' is-ready':''}">
+    <span>${esc(label)}</span><strong>${stats.total?stats.packed+'/'+stats.total:'0'}</strong>
+    <div class="p3-pack-progress"><i style="width:${stats.percent}%"></i></div>
+    <small>${esc(detail)}</small>
+  </article>`;
+}
+
+function renderP3Packing_(){
+  const traveler=currentTraveler();
+  const firstName=String(traveler&&traveler.Name||'Traveler').trim().split(/\s+/)[0]||'Traveler';
+  const personal=p3PackingOwned_();
+  const shared=p3PackingShared_();
+  const assigned=p3PackingAssignedToMe_();
+  const personalStats=p3PackingStats_(personal);
+  const sharedStats=p3PackingStats_(shared);
+  const readyStats=p3PackingStats_(personal.concat(assigned));
+  const rows=p3PackingMode_==='shared'?shared:personal;
+  const groups=p3PackingGroups_(rows);
+
+  return `<section class="view p3-pack-view">
+    <div class="p3-pack-hero">
+      <p class="eyebrow">READY TO GO</p>
+      <h2>${esc(firstName)}, pack it once and stop thinking about it</h2>
+      <p>Keep your own bag separate from shared family gear. Check things off as they make it into the car or suitcase.</p>
+      <div class="p3-pack-ready${readyStats.total&&readyStats.left===0?' is-ready':''}">
+        <strong>${readyStats.total&&readyStats.left===0?'Ready to leave':'You have '+readyStats.left+' item'+(readyStats.left===1?'':'s')+' left'}</strong>
+        <span>${readyStats.packed} of ${readyStats.total} personal + assigned shared items packed</span>
+      </div>
+    </div>
+
+    ${p3PackingState_.loading?'<div class="p3-pack-sync" role="status">Checking the latest packing list…</div>':''}
+
+    <div class="p3-pack-stats">
+      ${p3PackingProgressCard_('My bag',personalStats,personalStats.left?personalStats.left+' left to pack':'Personal list ready')}
+      ${p3PackingProgressCard_('Family shared',sharedStats,sharedStats.left?sharedStats.left+' shared items still open':'Shared list ready')}
+    </div>
+
+    <div class="p3-pack-toolbar">
+      <div class="p3-pack-tabs" role="tablist">
+        <button type="button" class="${p3PackingMode_==='personal'?'active':''}" onclick="p3PackingSetMode_('personal')">My bag</button>
+        <button type="button" class="${p3PackingMode_==='shared'?'active':''}" onclick="p3PackingSetMode_('shared')">Family shared</button>
+      </div>
+      <button type="button" onclick="p3PackingOpenForm_('')">+ Add item</button>
+    </div>
+
+    ${groups.length?groups.map(p3PackingGroupHtml_).join(''):`<div class="p3-pack-empty"><span aria-hidden="true">🧳</span><div><strong>${p3PackingMode_==='shared'?'No shared items yet':'Your bag list is empty'}</strong><p>Add the things you don’t want to remember at the last minute.</p></div><button type="button" onclick="p3PackingOpenForm_('')">Add first item</button></div>`}
+  </section>`;
+}
+
+function p3PackingDashboardCard_(){
+  p3PackingLoad_(false);
+  if(!p3PackingState_.loaded) return '';
+  const rows=p3PackingOwned_().concat(p3PackingAssignedToMe_());
+  const stats=p3PackingStats_(rows);
+  const label=!stats.total?'Start your packing list':stats.left===0?'You’re packed':'Packing: '+stats.left+' left';
+  const detail=!stats.total?'Personal items and shared family gear in one checklist.':stats.packed+' of '+stats.total+' personal + assigned shared items ready.';
+  return `<section class="p3-pack-dashboard-card${stats.total&&stats.left===0?' is-ready':''}">
+    <div><p class="eyebrow">READY TO GO</p><h3>${esc(label)}</h3><p>${esc(detail)}</p></div>
+    <button type="button" onclick="navigate('packing')">${stats.total?'Open packing':'Start packing'}</button>
+  </section>`;
+}
+
+const p3PackingRenderBefore_=render;
+render=function(){
+  const result=p3PackingRenderBefore_.apply(this,arguments);
+  const root=document.getElementById('viewRoot');
+  if(currentView==='packing'){
+    p3PackingLoad_(false);
+    if(root) root.innerHTML=renderP3Packing_();
+    if(typeof p1SyncNavigation_==='function') p1SyncNavigation_();
+  }else if(currentView==='dashboard'&&root&&!root.querySelector('.p3-pack-dashboard-card')){
+    const card=p3PackingDashboardCard_();
+    if(card) root.insertAdjacentHTML('beforeend',card);
+  }
+  return result;
+};
+</script>
