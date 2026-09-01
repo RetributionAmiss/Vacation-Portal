@@ -77,6 +77,14 @@ function saveTripSettings(values) {
     }
   }
 
+  if (values['Smart Reminder Push Enabled'] !== undefined) {
+    const enabled = String(values['Smart Reminder Push Enabled'] || 'No') === 'Yes';
+    setSetting_('Trip', 'Smart Reminder Push Enabled', enabled ? 'Yes' : 'No');
+    if (enabled && typeof ensureTravelerReminderTrigger_ === 'function') {
+      ensureTravelerReminderTrigger_();
+    }
+  }
+
   return getPortalData();
 }
 
