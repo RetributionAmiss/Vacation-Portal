@@ -1,0 +1,51 @@
+<style>
+.p3-travel-view{display:grid;gap:16px;max-width:980px;margin:0 auto;padding-bottom:28px}
+.p3-travel-hero,.p3-travel-own,.p3-travel-board,.p3-travel-dashboard-card{background:var(--card,#fff);border:1px solid var(--line,#d9dfdc);border-radius:18px;box-shadow:0 8px 24px rgba(22,49,40,.06)}
+.p3-travel-hero{padding:20px;display:grid;gap:8px}
+.p3-travel-hero h2,.p3-travel-hero p,.p3-travel-own h3,.p3-travel-board h3,.p3-travel-board p{margin:0}
+.p3-travel-progress{display:flex;gap:8px;align-items:baseline;margin-top:6px}
+.p3-travel-progress strong{font-size:1.35rem}.p3-travel-progress span{color:var(--muted,#66736e)}
+.p3-travel-sync{padding:9px 12px;border-radius:12px;background:rgba(23,63,50,.07);color:var(--muted,#66736e)}
+.p3-travel-own{padding:18px;display:grid;gap:14px}
+.p3-travel-own-empty{grid-template-columns:1fr auto;align-items:center}
+.p3-travel-own-empty p{margin:4px 0 0;color:var(--muted,#66736e)}
+.p3-travel-own-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.p3-travel-own-head h3{margin:2px 0 0}
+.p3-travel-saving{font-size:.82rem;color:var(--muted,#66736e)}
+.p3-travel-own-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.p3-travel-own-grid>div{background:rgba(23,63,50,.045);border-radius:12px;padding:10px 12px;display:grid;gap:2px;min-width:0}
+.p3-travel-own-grid span,.p3-travel-arrival span{font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#66736e)}
+.p3-travel-own-grid strong{overflow-wrap:anywhere}
+.p3-travel-own-actions{display:flex;gap:8px;justify-content:flex-end}
+.p3-travel-board{padding:18px;display:grid;gap:14px}
+.p3-travel-board-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+.p3-travel-board-head strong{white-space:nowrap;color:var(--muted,#66736e)}
+.p3-travel-people{display:grid;gap:10px}
+.p3-travel-person{display:grid;grid-template-columns:minmax(150px,1fr) minmax(160px,auto);gap:8px 16px;align-items:center;border:1px solid var(--line,#d9dfdc);border-radius:14px;padding:13px 14px;background:rgba(255,255,255,.58)}
+.p3-travel-person-main{display:flex;gap:10px;align-items:center;min-width:0}
+.p3-travel-mode{font-size:1.4rem}.p3-travel-person-main>div{display:grid;min-width:0}.p3-travel-person-main span{color:var(--muted,#66736e);font-size:.88rem}
+.p3-travel-arrival{display:grid;text-align:right}
+.p3-travel-person-meta{grid-column:1/-1;display:flex;gap:8px 12px;flex-wrap:wrap;color:var(--muted,#66736e);font-size:.88rem}
+.p3-travel-person p{grid-column:1/-1;margin:0;font-size:.9rem}
+.p3-travel-missing{display:grid;gap:8px;padding-top:4px}.p3-travel-missing>span{font-size:.82rem;color:var(--muted,#66736e)}
+.p3-travel-missing>div{display:flex;gap:7px;flex-wrap:wrap}.p3-travel-missing>div>span{padding:6px 9px;border-radius:999px;background:rgba(23,63,50,.07);font-size:.86rem}
+.p3-travel-empty{padding:18px;border-radius:12px;background:rgba(23,63,50,.04);color:var(--muted,#66736e)}
+.p3-travel-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.p3-travel-form h2,.p3-travel-form>.eyebrow,.p3-travel-form .wide{grid-column:1/-1}
+.p3-travel-form label{display:grid;gap:5px;min-width:0}.p3-travel-form label>span{font-size:.86rem;font-weight:600}
+.p3-travel-delete-confirm{display:grid;gap:12px}.p3-travel-delete-confirm h2,.p3-travel-delete-confirm p{margin:0}
+.p3-travel-dashboard-card{margin-top:16px;padding:16px 18px;display:flex;gap:18px;align-items:center;justify-content:space-between}
+.p3-travel-dashboard-card h3,.p3-travel-dashboard-card p{margin:2px 0}.p3-travel-dashboard-card p:last-child{color:var(--muted,#66736e)}
+@media(max-width:700px){
+  .p3-travel-view{gap:12px;padding-bottom:88px}
+  .p3-travel-hero,.p3-travel-own,.p3-travel-board{border-radius:15px;padding:15px}
+  .p3-travel-own-empty,.p3-travel-person{grid-template-columns:1fr}
+  .p3-travel-own-empty button{width:100%}
+  .p3-travel-own-grid{grid-template-columns:1fr}
+  .p3-travel-own-actions{display:grid;grid-template-columns:1fr 1fr}.p3-travel-own-actions button{width:100%}
+  .p3-travel-arrival{text-align:left}.p3-travel-person-meta{grid-column:1}.p3-travel-person p{grid-column:1}
+  .p3-travel-board-head{align-items:flex-start}
+  .p3-travel-form{grid-template-columns:1fr}.p3-travel-form h2,.p3-travel-form>.eyebrow,.p3-travel-form .wide{grid-column:1}
+  .p3-travel-dashboard-card{align-items:stretch;flex-direction:column}.p3-travel-dashboard-card button{width:100%}
+}
+</style>
