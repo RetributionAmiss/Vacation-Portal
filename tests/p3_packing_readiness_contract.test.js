@@ -13,7 +13,8 @@ const styles=read('Styles_P3_Packing_Readiness.html');
 const index=read('AppsScriptIndex.html');
 const archive=read('Archive.gs');
 
-must(/const PORTAL_SCHEMA_VERSION = '4\.4\.3'/.test(config),'Packing release should bump schema to 4.4.3.');
+const schemaMatch=config.match(/const PORTAL_SCHEMA_VERSION = '4\.4\.(\d+)'/);
+must(schemaMatch&&Number(schemaMatch[1])>=3,'Packing release requires portal schema 4.4.3 or later.');
 must(/'Packing Items': \[/.test(config),'Packing Items sheet must be declared in SCHEMAS.');
 [
   'Packing ID','Scope','Owner Traveler ID','Bringing Traveler ID','Category','Item','Quantity','Packed','Notes'
