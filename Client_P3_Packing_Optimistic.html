@@ -1,8 +1,7 @@
 <script>
-/* PR #27 follow-up: optimistic packing add/edit with background reconciliation. */
+/* PR #27 follow-up: optimistic packing add/edit/delete with background reconciliation. */
 const p3PackingCanToggleBeforeOptimistic_=p3PackingCanToggle_;
 const p3PackingOpenFormBeforeOptimistic_=p3PackingOpenForm_;
-const p3PackingDeleteBeforeOptimistic_=p3PackingDelete_;
 const p3PackingPending_={};
 
 function p3PackingPendingId_(id){
@@ -20,14 +19,6 @@ p3PackingOpenForm_=function(id){
     return;
   }
   return p3PackingOpenFormBeforeOptimistic_.apply(this,arguments);
-};
-
-p3PackingDelete_=function(id){
-  if(p3PackingPendingId_(id)){
-    toast('This packing item is still saving.');
-    return;
-  }
-  return p3PackingDeleteBeforeOptimistic_.apply(this,arguments);
 };
 
 function p3PackingOptimisticRow_(payload,localId,existing){
@@ -124,5 +115,73 @@ p3PackingSave_=function(event,id){
       .withFailureHandler(rollback)
       .savePackingItem(payload);
   },rollback);
+};
+
+p3PackingDelete_=function(id){
+  id=String(id||'');
+  if(!id) return;
+  if(p3PackingPendingId_(id)){
+    toast('This packing item is still saving.');
+    return;
+  }
+
+  const rows=(DATA&&DATA.packingItems)||[];
+  const index=rows.findIndex(function(item){
+    return String(item['Packing ID']||'')===id;
+  });
+  if(index<0) return;
+
+  const row=rows[index];
+  if(String(row['Owner Traveler ID']||'')!==String(currentTravelerId||'')){
+    toast('Only the traveler who added this item can delete it.',true);
+    return;
+  }
+  if(!confirm('Remove “'+String(row.Item||'this item')+'” from the packing list?')) return;
+
+  const previousRows=rows.map(function(item){return Object.assign({},item);});
+  DATA.packingItems=rows.filter(function(item){
+    return String(item['Packing ID']||'')!==id;
+  });
+  p3PackingPending_[id]=true;
+  p3PackingState_.loaded=true;
+  p3PackingState_.lastLoaded=Date.now();
+
+  const saveId=typeof beginBackgroundSave_==='function'
+    ? beginBackgroundSave_('Packing item','packing-delete:'+id)
+    : '';
+
+  render();
+
+  function rollbackDelete(error){
+    DATA.packingItems=previousRows;
+    delete p3PackingPending_[id];
+    p3PackingState_.lastLoaded=Date.now();
+    if(saveId&&typeof failBackgroundSave_==='function'){
+      failBackgroundSave_(saveId,error,'Packing item could not be deleted');
+    }else{
+      toast(error&&error.message?error.message:String(error),true);
+    }
+    render();
+  }
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    google.script.run
+      .withSuccessHandler(function(result){
+        DATA.packingItems=(result&&result.items)||[];
+        delete p3PackingPending_[id];
+        p3PackingState_.loaded=true;
+        p3PackingState_.lastLoaded=Date.now();
+        if(saveId&&typeof completeBackgroundSave_==='function'){
+          completeBackgroundSave_(saveId,'Packing item removed');
+        }
+        render();
+      })
+      .withFailureHandler(rollbackDelete)
+      .deletePackingItem({
+        deviceId:deviceId,
+        travelerId:String(currentTravelerId||''),
+        id:id
+      });
+  },rollbackDelete);
 };
 </script>
