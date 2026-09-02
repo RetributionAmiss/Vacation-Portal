@@ -1,0 +1,576 @@
+<style>
+/* ==========================================================
+   MIDNIGHT GOLD FEATURE CONTRAST
+   Final visual normalization for feature-specific surfaces
+   that still carry legacy light-theme colors.
+   No layout or behavior changes belong in this layer.
+   ========================================================== */
+
+/* Voting, finalized rental, and family result boards */
+.final-voting-banner,
+.winner-rental-panel,
+.voting-method-field,
+.voting-order-panel,
+.p21-final-family-summary{
+  background:linear-gradient(145deg,#151b2a,#101522)!important;
+  color:var(--ink)!important;
+  border-color:rgba(216,181,101,.30)!important;
+  box-shadow:0 12px 30px rgba(0,0,0,.25)!important
+}
+.winner-rental-panel h3,
+.final-voting-banner h3,
+.p21-final-family-head h3{color:var(--ink)!important}
+.winner-rental-panel p{color:#d7dbe3!important}
+.winner-rental-panel small,
+.winner-result span,
+.final-voting-banner .muted,
+.p21-final-family-metrics span,
+.p21-final-traveler-vote span,
+.p21-finalized-selector>span{color:var(--muted)!important}
+.winner-result strong,
+.p21-final-family-metrics strong,
+.p21-final-traveler-vote strong{color:var(--gold-soft)!important}
+.p21-final-family-metrics>div,
+.p21-final-traveler-vote,
+.p21-finalized-selector{
+  background:#151b2a!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.p21-final-family-complete{
+  background:rgba(216,181,101,.12)!important;
+  color:var(--gold-soft)!important;
+  border:1px solid rgba(216,181,101,.24)!important
+}
+.finalist-dashboard-card.winner-card{
+  outline:2px solid rgba(216,181,101,.42)!important;
+  box-shadow:0 12px 28px rgba(0,0,0,.28)!important
+}
+
+/* Travel arrivals */
+.p3-travel-person,
+.p3-travel-own-grid>div,
+.p3-travel-sync,
+.p3-travel-empty,
+.p3-travel-missing>div>span{
+  background:#151b2a!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.p3-travel-person-main strong,
+.p3-travel-arrival strong{color:var(--ink)!important}
+.p3-travel-person-main span,
+.p3-travel-person-meta,
+.p3-travel-arrival span,
+.p3-travel-board-head strong,
+.p3-travel-missing>span,
+.p3-travel-own-grid span,
+.p3-travel-own-empty p,
+.p3-travel-saving{color:var(--muted)!important}
+
+/* Bedroom planner and room-cost boards */
+.bedroom-draft-status,
+.bedroom-native-toolbar,
+.native-bedroom-unassigned,
+.native-bedroom-savebar,
+.room-drop-column,
+.traveler-drag-chip,
+.native-bedroom-traveler,
+.traveler-cost-row{
+  background:#121827!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important;
+  box-shadow:0 8px 20px rgba(0,0,0,.20)!important
+}
+.native-bedroom-traveler,
+.traveler-drag-chip,
+.traveler-cost-row{background:#151b2a!important}
+.native-bedroom-drag-handle .traveler-drag-copy strong,
+.traveler-drag-copy strong,
+.traveler-cost-row>div:first-child>strong{color:var(--ink)!important}
+.native-bedroom-drag-handle .traveler-drag-copy small,
+.native-bedroom-move>span,
+.traveler-drag-copy small,
+.traveler-cost-row span,
+.traveler-cost-row small{color:var(--muted)!important}
+.room-cost-share{
+  background:rgba(216,181,101,.10)!important;
+  border-color:rgba(216,181,101,.25)!important;
+  color:var(--ink)!important
+}
+.room-cost-share strong{color:var(--gold-soft)!important}
+.room-cost-share span,
+.room-cost-share small{color:var(--muted)!important}
+.traveler-cost-amount>strong{color:var(--gold-soft)!important}
+.traveler-cost-row.current-traveler{
+  background:rgba(98,211,148,.08)!important;
+  border-color:rgba(98,211,148,.28)!important
+}
+.traveler-cost-row.capped{
+  background:rgba(216,181,101,.09)!important;
+  border-color:rgba(216,181,101,.30)!important
+}
+.traveler-cost-row.paying-extra{
+  background:rgba(117,139,220,.09)!important;
+  border-color:rgba(117,139,220,.28)!important
+}
+
+/* Money overview and reimbursement surfaces */
+.p1-money-hero,
+.p1-money-summary-card,
+.p1-money-progress,
+.p1-money-focus-card,
+.p1-money-budget-card,
+.p1-money-family-card,
+.p1-money-next-payment,
+.p1-money-callout,
+.p1-money-rental-fixed,
+.p21-reimbursement-installment{
+  background:#121827!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important;
+  box-shadow:0 10px 28px rgba(0,0,0,.22)!important
+}
+.p1-money-hero{
+  background:
+    radial-gradient(circle at right top,rgba(216,181,101,.11),transparent 36%),
+    linear-gradient(145deg,#151b2a,#101522)!important
+}
+.p1-money-mini-grid>div,
+.p1-money-budget-metrics>div,
+.p21-reimbursement-metrics>span{
+  background:#151b2a!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.p1-money-summary-card strong,
+.p1-money-progress strong,
+.p1-money-next-payment>div:first-child strong,
+.p1-money-mini-grid strong,
+.p1-money-budget-metrics strong,
+.p1-money-budget-items article>strong,
+.p21-reimbursement-owed strong{color:var(--gold-soft)!important}
+.p1-money-summary-card>span,
+.p1-money-summary-card small,
+.p1-money-progress span,
+.p1-money-callout span,
+.p1-money-mini-grid span,
+.p1-money-mini-grid small,
+.p1-money-budget-metrics span,
+.p1-money-budget-items article span,
+.p21-reimbursement-title small,
+.p21-reimbursement-owed span,
+.p21-reimbursement-metrics>span{color:var(--muted)!important}
+.p1-money-progress-track{background:#262e3e!important}
+.p1-money-progress-track>span{background:var(--gold)!important}
+.p21-reimbursement-personal.is-recipient,
+.p21-reimbursement-personal.is-neutral{
+  background:#1b2233!important;
+  color:var(--muted)!important
+}
+
+/* Payments, shares, schedules, editors, and remaining balance */
+.payment-cabin-selector,
+.payment-summary-card,
+.payment-plan-empty,
+.payment-booking-copy,
+.payment-schedule-row,
+.payment-history-row,
+.payment-empty-state,
+.payment-traveler-total,
+.payment-booker-picker label,
+.payment-share-card,
+.payment-refresh-shares,
+.payment-share-edit-row,
+.payment-generation-milestone,
+.payment-generation-preview,
+.payment-balance-position article,
+.payment-balance-recipient-grid article,
+.payment-balance-recipient-summary{
+  background:#121827!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.payment-schedule-row,
+.payment-history-row,
+.payment-traveler-total,
+.payment-booker-picker label,
+.payment-share-edit-row,
+.payment-generation-traveler-preview span,
+.payment-booker-chips span,
+.payment-share-total,
+.payment-share-editor-total,
+.payment-balance-form-note{
+  background:#151b2a!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.payment-summary-card>strong,
+.payment-schedule-amount>strong,
+.payment-history-amount>strong,
+.payment-share-amounts strong,
+.payment-full-preview strong,
+.payment-generation-preview-head strong,
+.payment-balance-position strong,
+.payment-balance-recipient-grid strong{color:var(--gold-soft)!important}
+.payment-summary-card>span,
+.payment-summary-card>small,
+.payment-schedule-date>span,
+.payment-schedule-main>span,
+.payment-schedule-amount>span,
+.payment-history-main>span,
+.payment-schedule-date>small,
+.payment-schedule-main>small,
+.payment-schedule-amount>small,
+.payment-history-main>small,
+.payment-history-amount>small,
+.payment-share-card small,
+.payment-share-total small,
+.payment-share-edit-row small,
+.payment-share-editor-total small,
+.payment-full-preview span,
+.payment-generation-note span,
+.payment-generation-section-head small,
+.payment-generation-preview-head span,
+.payment-generation-preview-copy,
+.payment-generation-traveler-preview small,
+.payment-balance-position span,
+.payment-balance-recipient-grid span,
+.payment-balance-calculation-note{color:var(--muted)!important}
+
+/* Packing readiness */
+.p3-pack-hero{
+  background:
+    radial-gradient(circle at right top,rgba(216,181,101,.12),transparent 38%),
+    linear-gradient(145deg,#151b2a,#101522)!important;
+  color:var(--ink)!important;
+  border:1px solid var(--line)!important;
+  box-shadow:0 14px 34px rgba(0,0,0,.28)!important
+}
+.p3-pack-hero .eyebrow{color:var(--gold)!important}
+.p3-pack-hero p,
+.p3-pack-ready span{color:#d7dbe3!important}
+.p3-pack-ready{
+  background:rgba(216,181,101,.08)!important;
+  border:1px solid rgba(216,181,101,.18)!important
+}
+.p3-pack-sync,
+.p3-pack-stat,
+.p3-pack-tabs,
+.p3-pack-item,
+.p3-pack-empty,
+.p3-pack-dashboard-card{
+  background:#121827!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.p3-pack-item,
+.p3-pack-tabs{background:#151b2a!important}
+.p3-pack-stat>span,
+.p3-pack-stat small,
+.p3-pack-group-head span,
+.p3-pack-copy small,
+.p3-pack-meta span,
+.p3-pack-empty p,
+.p3-pack-dashboard-card p,
+.p3-pack-sync{color:var(--muted)!important}
+.p3-pack-stat>strong,
+.p3-pack-group-head h3,
+.p3-pack-copy>strong,
+.p3-pack-empty strong,
+.p3-pack-dashboard-card h3{color:var(--ink)!important}
+.p3-pack-progress{background:#262e3e!important}
+.p3-pack-progress i{background:var(--gold)!important}
+.p3-pack-check{
+  background:#0f1522!important;
+  border-color:#465064!important;
+  color:var(--ink)!important
+}
+.p3-pack-item.is-packed,
+.p3-pack-stat.is-ready,
+.p3-pack-dashboard-card.is-ready{
+  background:rgba(98,211,148,.07)!important;
+  border-color:rgba(98,211,148,.24)!important
+}
+.p3-pack-item.is-packed .p3-pack-check{
+  background:#2f8f5f!important;
+  border-color:#62d394!important;
+  color:#fff!important
+}
+.p3-pack-item.is-packed .p3-pack-copy>strong{color:#aeb9b4!important}
+.p3-pack-tabs button{color:var(--muted)!important}
+
+/* Places and directions */
+.p3p-hero,
+.p3p-route-card,
+.p3p-help-card{
+  background:#121827!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important;
+  box-shadow:0 12px 30px rgba(0,0,0,.22)!important
+}
+.p3p-hero{
+  background:
+    radial-gradient(circle at right top,rgba(216,181,101,.10),transparent 34%),
+    linear-gradient(145deg,#151b2a,#101522)!important
+}
+.p3p-day,
+.p3p-stop-number{
+  background:#151b2a!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.p3p-hero-line p,
+.p3p-stop-copy small,
+.p3p-stop-copy span,
+.p3p-help-card p,
+.p3p-empty{color:var(--muted)!important}
+.p3p-stop-copy strong{color:var(--ink)!important}
+.p3p-stop-copy em{color:var(--gold)!important}
+.p3p-stop-number{color:var(--gold-soft)!important}
+.p3p-route-button,
+.p3p-stop-actions a,
+.p3p-stop-actions button,
+.p3p-help-card a{
+  background:linear-gradient(135deg,#f1d892,#c89e4f)!important;
+  color:#080c16!important;
+  border-color:rgba(216,181,101,.58)!important
+}
+.p3p-stop-actions .ghost{
+  background:#151b2a!important;
+  color:var(--gold-soft)!important;
+  border-color:var(--line)!important
+}
+
+/* Today / Trip Mode */
+.p3-today-hero,
+.p3-today-section,
+.p3-activity-card,
+.p3-meal-card{
+  background:#121827!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important;
+  box-shadow:0 10px 26px rgba(0,0,0,.22)!important
+}
+.p3-today-hero{
+  background:
+    radial-gradient(circle at right top,rgba(216,181,101,.10),transparent 36%),
+    linear-gradient(145deg,#151b2a,#101522)!important
+}
+.p3-day,
+.p3-attendee,
+.p3-mini-facts span,
+.p3-lodging-facts span,
+.p3-empty{
+  background:#151b2a!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.p3-hero-line p,
+.p3-preview-note,
+.p3-day small,
+.p3-day em,
+.p3-activity-card>div:first-child span,
+.p3-meal-card>div:first-child span,
+.p3-attendee small,
+.p3-mini-facts small,
+.p3-grocery-list>div span,
+.p3-grocery-list>div small,
+.p3-lodging-facts small,
+.p3-empty{color:var(--muted)!important}
+.p3-hero-line>strong,
+.p3-grocery-status>strong{color:var(--gold-soft)!important}
+.p3-inline-link{color:var(--gold-soft)!important}
+.p3-attendee.is-me{
+  background:rgba(216,181,101,.10)!important;
+  border-color:rgba(216,181,101,.28)!important
+}
+.p3-empty strong{color:var(--ink)!important}
+
+/* Planner and grocery refinement surfaces */
+.p22-grocery-toolbar,
+.p22-meal-calendar-shell,
+.p22-meal-summary-row,
+.p2-calendar-day,
+.p2-purchase-check span{
+  background:#151b2a!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.p22-meal-day{
+  background:#121827!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.p22-grocery-toolbar>span,
+.p22-meal-calendar-head span,
+.p22-meal-day small,
+.p22-meal-day em,
+.p22-meal-day-head>span,
+.p22-meal-summary-head>span,
+.p22-meal-summary-row small,
+.p2-calendar-day{color:var(--muted)!important}
+.p22-meal-calendar-head strong,
+.p22-grocery-group-head strong,
+.p22-meal-summary-date,
+.p2-calendar-day strong{color:var(--ink)!important}
+.p22-sort-options button{
+  background:#151b2a!important;
+  color:var(--gold-soft)!important;
+  border-color:var(--line)!important
+}
+
+/* Core comparison, pricing, and compact/mobile surfaces */
+.compare-grid,
+.compare-cabin-head,
+.compare-label,
+.compare-value,
+.pricing-mode-switch,
+.pricing-breakout,
+.mobile-more-button,
+.mobile-section-menu-item{
+  background:#121827!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important
+}
+.compare-label,
+.compare-spacer,
+.compare-section h3{
+  background:#151b2a!important;
+  color:var(--gold-soft)!important;
+  border-color:var(--line)!important
+}
+.compare-cabin-head a{color:var(--gold-soft)!important}
+.compare-best{
+  background:rgba(216,181,101,.12)!important;
+  color:var(--gold-soft)!important
+}
+.compare-yes:before{color:var(--success)!important}
+.pricing-breakout h4{color:var(--gold-soft)!important}
+
+/* Selected controls use gold with dark text for reliable contrast */
+.p3-pack-tabs button.active,
+.p3p-day.is-selected,
+.p3-day.is-selected,
+.p22-meal-day.is-selected,
+.p22-sort-options button.is-active,
+.p2-calendar-day.is-selected{
+  background:linear-gradient(135deg,#f1d892,#c89e4f)!important;
+  color:#080c16!important;
+  border-color:rgba(216,181,101,.58)!important;
+  box-shadow:0 7px 18px rgba(0,0,0,.22)!important
+}
+.p3p-day.is-selected small,
+.p3p-day.is-selected em,
+.p3-day.is-selected small,
+.p3-day.is-selected em,
+.p3-day.is-selected span,
+.p22-meal-day.is-selected small,
+.p22-meal-day.is-selected em,
+.p22-meal-day.is-selected>span,
+.p2-calendar-day.is-selected strong{
+  color:#080c16!important
+}
+.p2-purchase-check input:checked+span{
+  background:var(--gold)!important;
+  border-color:var(--gold-soft)!important
+}
+.p2-purchase-check input:checked+span:after{color:#080c16!important}
+
+/* Semantic success states */
+.p1-money-summary-card.is-complete,
+.p21-reimbursement-installment.is-complete,
+.payment-summary-card.is-complete,
+.payment-history-row.is-confirmed,
+.p1-bedroom-validation.all-clear{
+  background:rgba(98,211,148,.07)!important;
+  color:#a8efc5!important;
+  border-color:rgba(98,211,148,.25)!important
+}
+.payment-confirmation-badge.confirmed,
+.p21-reimbursement-personal.is-paid{
+  background:rgba(98,211,148,.12)!important;
+  color:#a8efc5!important;
+  border-color:rgba(98,211,148,.25)!important
+}
+.p1-bedroom-validation.all-clear span{color:#9cc6ad!important}
+
+/* Semantic warning / attention states */
+.bedroom-draft-status.dirty,
+.native-bedroom-unassigned.drag-over,
+.native-bedroom-room.drag-over,
+.bedroom-exit-summary,
+.p1-money-sync-note,
+.p1-money-next-payment,
+.p1-money-mini-grid .needs-attention,
+.payment-linked-recipient,
+.payment-full-preview,
+.payment-generation-note,
+.payment-share-total.is-warning,
+.payment-share-editor-total.is-warning,
+.p1-bedroom-validation.has-warning,
+.p1-room-capacity-warning,
+.payment-confirmation-badge.pending,
+.p21-reimbursement-personal.is-due,
+.temporary-traveler-return{
+  background:rgba(216,181,101,.11)!important;
+  color:var(--gold-soft)!important;
+  border-color:rgba(216,181,101,.32)!important
+}
+.p1-money-next-payment>div:first-child span,
+.payment-share-total.is-warning small,
+.payment-share-editor-total.is-warning small{color:var(--gold-soft)!important}
+.payment-confirmation-badge.agency{
+  background:#1b2233!important;
+  color:var(--muted)!important;
+  border-color:var(--line)!important
+}
+
+/* Semantic danger / location warning states */
+.payment-schedule-row.is-overdue,
+.payment-generation-warning,
+.background-save-status.is-error,
+.traveler-switch-confirm .admin-profile-warning{
+  background:rgba(216,100,91,.10)!important;
+  color:#ffb5ae!important;
+  border-color:rgba(216,100,91,.30)!important
+}
+.p3p-stop.is-missing,
+.p3p-location-warning{
+  background:rgba(216,100,91,.08)!important;
+  color:#ffb5ae!important;
+  border-color:rgba(216,100,91,.24)!important
+}
+.p3p-missing-copy{color:#ffb5ae!important}
+
+/* Mobile card/table renderers have their own legacy white backgrounds. */
+@media(max-width:650px){
+  .view .table-wrap table tr,
+  .sortable-planner-table tbody tr{
+    background:#121827!important;
+    color:var(--ink)!important;
+    border-color:var(--line)!important;
+    box-shadow:0 5px 14px rgba(0,0,0,.18)!important
+  }
+  .sortable-planner-table tbody td[data-label="Meal"],
+  .sortable-planner-table tbody td[data-label="Item"],
+  .sortable-planner-table tbody td[data-label="Activity"]{
+    color:var(--ink)!important;
+    border-color:var(--line)!important
+  }
+  .p1-navigation-shell.p21-mobile-secondary-shell{
+    background:rgba(18,24,39,.98)!important;
+    border-color:var(--line)!important
+  }
+  .p21-mobile-secondary-shell .p1-secondary-nav-button{
+    background:#151b2a!important;
+    color:var(--gold-soft)!important;
+    border-color:var(--line)!important
+  }
+  .p21-mobile-secondary-shell .p1-secondary-nav-button.active{
+    background:linear-gradient(135deg,#f1d892,#c89e4f)!important;
+    color:#080c16!important;
+    border-color:rgba(216,181,101,.58)!important
+  }
+}
+</style>
