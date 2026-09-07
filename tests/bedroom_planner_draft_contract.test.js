@@ -78,6 +78,36 @@ assert(
   'Remove all Bedrooms must clear bedroom cards, traveler assignments, and the cabin bedroom count together.'
 );
 
+const batchStart=rooms.indexOf('function saveRoomAssignmentsBatch');
+const clearStart=rooms.indexOf('function clearRoomAssignmentsForCabin_',batchStart);
+const removeAllStart=rooms.indexOf('function removeAllBedrooms',clearStart);
+assert(batchStart>=0&&clearStart>batchStart&&removeAllStart>clearStart,'Room assignment integrity functions must remain present.');
+const batchSource=rooms.slice(batchStart,clearStart);
+const clearSource=rooms.slice(clearStart,removeAllStart);
+const removeAllSource=rooms.slice(removeAllStart);
+
+assert(
+  batchSource.includes('withPortalMutationLock_') &&
+    batchSource.includes('replaceSheetRowsByFieldValueUnlocked_') &&
+    !batchSource.includes('clearContents('),
+  'Whole-layout room assignment saves must use the shared lock and targeted grouped-row replacement.'
+);
+assert(
+  batchSource.includes('existingByTraveler') &&
+    batchSource.includes("existing['Assignment ID']") &&
+    batchSource.includes("existing['Created At']"),
+  'Whole-layout saves must preserve stable assignment IDs and creation timestamps when a traveler moves rooms.'
+);
+assert(
+  clearSource.includes('replaceSheetRowsByFieldValueUnlocked_') &&
+    !clearSource.includes('clearContents('),
+  'Clearing one cabin must delete only that cabin assignment group, never rewrite unrelated assignment rows.'
+);
+assert(
+  removeAllSource.includes('withPortalMutationLock_'),
+  'Removing all bedrooms and assignments must execute inside the shared mutation lock.'
+);
+
 assert(
   styles.includes('.bedroom-native-toolbar') &&
     styles.includes('.native-bedroom-traveler') &&
