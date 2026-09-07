@@ -120,7 +120,8 @@ function saveTraveler(values) {
         {},
         true
       );
-      return writeTravelerRecord_(prepared.record, prepared.parentName, true);
+      const saved = writeTravelerRecord_(prepared.record, prepared.parentName, true);
+      return serializeOrganizerTraveler_(saved);
     });
   }
 
@@ -145,7 +146,13 @@ function saveTraveler(values) {
     if (!existing) throw new Error('The selected traveler could not be found.');
 
     const prepared = travelerRecordFromValues_(values, existing, organizer);
-    return writeTravelerRecord_(prepared.record, prepared.parentName, false);
+    const saved = writeTravelerRecord_(prepared.record, prepared.parentName, false);
+
+    // A self-service save must never echo organizer-only pricing policy fields
+    // back to the browser. Organizer-authorized saves receive the admin DTO.
+    return organizer
+      ? serializeOrganizerTraveler_(saved)
+      : serializeTravelerPrivateProfile_(saved);
   });
 }
 

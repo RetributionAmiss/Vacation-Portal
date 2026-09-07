@@ -42,6 +42,7 @@ function getPortalDelta(sinceIso) {
       votes: [],
       favorites: [],
       assignments: [],
+      rentalPricing: {},
       serverTime: new Date().toISOString()
     };
   }
@@ -53,13 +54,14 @@ function getPortalDelta(sinceIso) {
   const photos = readSheet_('Cabin Photos');
   const amenities = readSheet_('Cabin Amenities');
   const queue = readSheet_('Rental Import Queue');
+  const budget = readSheet_('Budget');
 
   const travelerMap = {};
   travelers.forEach(function (traveler) {
     travelerMap[traveler['Traveler ID']] = traveler;
   });
 
-  const changedCabins = cabins
+  const changedCabinsFull = cabins
     .filter(function (cabin) {
       return Boolean(changedIds[cabin['Cabin ID']]);
     })
@@ -133,8 +135,17 @@ function getPortalDelta(sinceIso) {
       });
     });
 
+  const rentalPricing = typeof buildPortalPricingSnapshot_ === 'function'
+    ? buildPortalPricingSnapshot_({
+        travelers: travelers,
+        cabins: changedCabinsFull,
+        assignments: assignments,
+        budget: budget
+      })
+    : {};
+
   return {
-    cabins: changedCabins,
+    cabins: changedCabinsFull.map(sanitizeSharedCabin_),
     votes: votes.filter(function (row) {
       return Boolean(changedIds[row['Cabin ID']]);
     }),
@@ -144,6 +155,7 @@ function getPortalDelta(sinceIso) {
     assignments: assignments.filter(function (row) {
       return Boolean(changedIds[row['Cabin ID']]);
     }),
+    rentalPricing: rentalPricing,
     serverTime: new Date().toISOString()
   };
 }

@@ -1,0 +1,460 @@
+<script>
+/* PR #34: browser privacy boundary integration.
+ * Shared startup data contains only safe traveler-directory fields. Private
+ * self data and organizer administration data are hydrated only after the
+ * corresponding server authorization check succeeds.
+ */
+const privacyRenderTravelersBefore_=renderTravelers;
+const privacyOpenTravelerFormBefore_=openTravelerForm;
+const privacySaveOrganizerSessionBefore_=saveOrganizerSession_;
+const privacyCappedAdultSplitBefore_=cappedAdultSplit_;
+const privacyCappedBedroomSplitBefore_=cappedBedroomSplit_;
+const privacyTravelerAdjustedCostBefore_=travelerAdjustedCost_;
+const privacyCapPricingConfiguredBefore_=capPricingConfigured_;
+const privacyCapPricingSummaryBefore_=capPricingSummary_;
+const privacyRenderCapAdjustedCostBefore_=renderCapAdjustedCost_;
+const privacyCapSplitRowHtmlBefore_=capSplitRowHtml_;
+const privacyOpenBookingPlanFormBefore_=typeof openBookingPlanForm_==='function'
+  ? openBookingPlanForm_
+  : null;
+const privacyOpenPaymentSharesEditorBefore_=typeof openPaymentSharesEditor_==='function'
+  ? openPaymentSharesEditor_
+  : null;
+const privacyMergePortalDeltaBefore_=mergePortalDelta_;
+
+const PRIVACY_SHARED_TRAVELER_FIELDS_=[
+  'Traveler ID','Name','Group','Traveler Type','Parent/Guardian ID',
+  'Adults','Children','Willing to Share Room','Active','parentName'
+];
+const PRIVACY_SELF_TRAVELER_FIELDS_=['Email','Home Location','Notes'];
+const PRIVACY_ADMIN_TRAVELER_FIELDS_=['Price Cap','Cost %','Pay More'];
+
+let privacyOrganizerTravelerLoading_=false;
+let privacyOrganizerTravelerCallbacks_=[];
+const privacySelfTravelerCache_={};
+
+function privacyPickTravelerFields_(row,fields){
+  const result={};
+  (fields||[]).forEach(function(field){
+    if(row&&Object.prototype.hasOwnProperty.call(row,field)){
+      result[field]=row[field];
+    }
+  });
+  return result;
+}
+
+function privacySavedTravelerId_(){
+  return String(
+    DATA&&DATA.deviceTravelerId ||
+    savedDeviceTravelerProfile_&&savedDeviceTravelerProfile_.travelerId ||
+    ''
+  ).trim();
+}
+
+function privacyMergeTravelerRow_(incoming){
+  if(!incoming||!incoming['Traveler ID']||!DATA) return;
+  if(!Array.isArray(DATA.travelers)) DATA.travelers=[];
+
+  const id=String(incoming['Traveler ID']);
+  const index=DATA.travelers.findIndex(function(row){
+    return String(row['Traveler ID']||'')===id;
+  });
+
+  if(index>=0){
+    DATA.travelers[index]=Object.assign({},DATA.travelers[index],incoming);
+  }else{
+    DATA.travelers.push(Object.assign({},incoming));
+  }
+}
+
+function privacyOrganizerRowsPresent_(){
+  const rows=DATA&&Array.isArray(DATA.travelers)?DATA.travelers:[];
+  return rows.some(function(row){
+    return PRIVACY_ADMIN_TRAVELER_FIELDS_.some(function(field){
+      return Object.prototype.hasOwnProperty.call(row||{},field);
+    });
+  });
+}
+
+function privacyScrubTravelerData_(){
+  if(!DATA||!Array.isArray(DATA.travelers)) return;
+  const savedId=privacySavedTravelerId_();
+
+  DATA.travelers=DATA.travelers.map(function(row){
+    const id=String(row&&row['Traveler ID']||'');
+    let clean=privacyPickTravelerFields_(row,PRIVACY_SHARED_TRAVELER_FIELDS_);
+
+    if(id&&id===savedId&&privacySelfTravelerCache_[id]){
+      clean=Object.assign(
+        clean,
+        privacyPickTravelerFields_(
+          privacySelfTravelerCache_[id],
+          PRIVACY_SELF_TRAVELER_FIELDS_
+        )
+      );
+    }
+
+    return clean;
+  });
+}
+
+saveOrganizerSession_=function(session){
+  privacySaveOrganizerSessionBefore_.apply(this,arguments);
+  if(!session){
+    privacyOrganizerTravelerLoading_=false;
+    privacyOrganizerTravelerCallbacks_=[];
+    privacyScrubTravelerData_();
+    if(DATA) render();
+  }
+};
+
+function privacyLoadSelfTraveler_(travelerId,onReady,onFailure){
+  const id=String(travelerId||'').trim();
+  if(!id){
+    if(onFailure) onFailure(new Error('Choose your traveler profile first.'));
+    return;
+  }
+
+  if(id!==privacySavedTravelerId_()){
+    if(onFailure){
+      onFailure(new Error(
+        'TRAVELER_AUTH_REQUIRED: Private traveler details are only available for the profile saved on this device.'
+      ));
+    }
+    return;
+  }
+
+  if(privacySelfTravelerCache_[id]){
+    privacyMergeTravelerRow_(privacySelfTravelerCache_[id]);
+    if(onReady) onReady(privacySelfTravelerCache_[id]);
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      const traveler=result&&result.traveler?result.traveler:null;
+      if(!traveler){
+        if(onFailure) onFailure(new Error('Private traveler details could not be loaded.'));
+        return;
+      }
+      privacySelfTravelerCache_[id]=Object.assign({},traveler);
+      privacyMergeTravelerRow_(traveler);
+      if(onReady) onReady(traveler);
+    })
+    .withFailureHandler(function(error){
+      if(onFailure) onFailure(error);
+      else toast(error&&error.message?error.message:String(error),true);
+    })
+    .getTravelerPrivateProfile({
+      deviceId:String(PWA_DEVICE_ID_||''),
+      travelerId:id
+    });
+}
+
+function privacyLoadOrganizerTravelers_(onReady,onFailure){
+  if(privacyOrganizerRowsPresent_()){
+    if(onReady) onReady(DATA.travelers||[]);
+    return;
+  }
+
+  if(typeof onReady==='function') privacyOrganizerTravelerCallbacks_.push(onReady);
+  if(privacyOrganizerTravelerLoading_) return;
+  privacyOrganizerTravelerLoading_=true;
+
+  withOrganizerAuthorization_(function(){
+    google.script.run
+      .withSuccessHandler(function(result){
+        privacyOrganizerTravelerLoading_=false;
+        const rows=result&&Array.isArray(result.travelers)?result.travelers:[];
+        rows.forEach(function(row){
+          privacyMergeTravelerRow_(row);
+          const id=String(row['Traveler ID']||'');
+          if(id&&id===privacySavedTravelerId_()){
+            privacySelfTravelerCache_[id]=Object.assign({},row);
+          }
+        });
+
+        const callbacks=privacyOrganizerTravelerCallbacks_.slice();
+        privacyOrganizerTravelerCallbacks_=[];
+        callbacks.forEach(function(callback){callback(rows);});
+      })
+      .withFailureHandler(function(error){
+        privacyOrganizerTravelerLoading_=false;
+        privacyOrganizerTravelerCallbacks_=[];
+        if(organizerAuthError_(error)) saveOrganizerSession_(null);
+        if(onFailure) onFailure(error);
+        else toast(error&&error.message?error.message:String(error),true);
+      })
+      .getOrganizerTravelerData(organizerAuthorizationValues_({}));
+  });
+}
+
+function privacyOpenTravelerAdministration_(){
+  privacyLoadOrganizerTravelers_(function(){
+    render();
+  });
+}
+
+renderTravelers=function(){
+  if(!privacyOrganizerRowsPresent_()){
+    return `<section class="view">
+      <div class="panel privacy-admin-gate">
+        <p class="eyebrow">TRAVELER ADMINISTRATION</p>
+        <h2>Unlock private traveler details</h2>
+        <p class="muted">
+          The normal portal only keeps the shared traveler directory in the browser.
+          Email, home location, notes, price limits, and cost rules are loaded only
+          after organizer authorization.
+        </p>
+        <button type="button" onclick="privacyOpenTravelerAdministration_()">
+          Unlock traveler administration
+        </button>
+      </div>
+    </section>`;
+  }
+  return privacyRenderTravelersBefore_.apply(this,arguments);
+};
+
+function privacySetSelfTravelerFormMode_(){
+  const hiddenIds=[
+    'parentGuardianField','travelerPriceCapField',
+    'travelerCostPercentField','travelerPayMoreField'
+  ];
+  hiddenIds.forEach(function(id){
+    const element=document.getElementById(id);
+    if(element) element.classList.add('hidden');
+  });
+
+  const type=document.getElementById('travelerType');
+  if(type){
+    type.disabled=true;
+    const label=type.closest('label');
+    if(label) label.classList.add('hidden');
+  }
+
+  const form=document.querySelector('#modalContent form');
+  if(form){
+    const notice=document.createElement('div');
+    notice.className='wide notice privacy-self-profile-note';
+    notice.innerHTML='<strong>Your private profile</strong><br>Email, home location, notes, group, name, and room-sharing preference can be updated here. Organizer-controlled trip-cost and traveler-type settings are intentionally hidden.';
+    const actions=form.querySelector('.form-actions');
+    if(actions) form.insertBefore(notice,actions);
+  }
+}
+
+openTravelerForm=function(id){
+  const travelerId=String(id||'').trim();
+
+  if(!travelerId){
+    privacyLoadOrganizerTravelers_(function(){
+      privacyOpenTravelerFormBefore_.call(window,'');
+    });
+    return;
+  }
+
+  if(privacyOrganizerRowsPresent_()){
+    privacyOpenTravelerFormBefore_.call(window,travelerId);
+    return;
+  }
+
+  if(travelerId===privacySavedTravelerId_()){
+    privacyLoadSelfTraveler_(travelerId,function(){
+      privacyOpenTravelerFormBefore_.call(window,travelerId);
+      privacySetSelfTravelerFormMode_();
+    },function(error){
+      toast(error&&error.message?error.message:String(error),true);
+    });
+    return;
+  }
+
+  privacyLoadOrganizerTravelers_(function(){
+    privacyOpenTravelerFormBefore_.call(window,travelerId);
+  });
+};
+
+function privacyPricingEntry_(cabin){
+  const cabinId=String(cabin&&cabin['Cabin ID']||'');
+  return DATA&&DATA.rentalPricing&&cabinId
+    ? DATA.rentalPricing[cabinId]||null
+    : null;
+}
+
+function privacyCloneSplit_(split){
+  split=split||{};
+  return {
+    rows:(split.rows||[]).map(function(row){return Object.assign({},row);}),
+    unresolved:Number(split.unresolved||0),
+    total:Number(split.total||0),
+    covered:Number(split.covered||0)
+  };
+}
+
+function privacyScaleSplit_(split,totalOverride){
+  const copy=privacyCloneSplit_(split);
+  if(totalOverride===undefined||totalOverride===null||totalOverride==='') return copy;
+
+  const target=Math.max(0,Number(totalOverride||0));
+  if(!copy.total||Math.abs(copy.total-target)<.005) return copy;
+
+  const factor=target/copy.total;
+  copy.rows=copy.rows.map(function(row){
+    const next=Object.assign({},row);
+    next.base=Number(next.base||0)*factor;
+    next.amount=Number(next.amount||0)*factor;
+    next.extra=Number(next.extra||0)*factor;
+    return next;
+  });
+  copy.unresolved=Number(copy.unresolved||0)*factor;
+  copy.covered=Number(copy.covered||0)*factor;
+  copy.total=target;
+  copy.privacyScaled=true;
+  return copy;
+}
+
+cappedAdultSplit_=function(cabin,totalOverride){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyCappedAdultSplitBefore_.apply(this,arguments);
+  }
+  const pricing=privacyPricingEntry_(cabin);
+  if(pricing&&pricing.adult){
+    return privacyScaleSplit_(pricing.adult,totalOverride);
+  }
+  return privacyCappedAdultSplitBefore_.apply(this,arguments);
+};
+
+cappedBedroomSplit_=function(cabin,totalOverride){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyCappedBedroomSplitBefore_.apply(this,arguments);
+  }
+  const pricing=privacyPricingEntry_(cabin);
+  if(pricing&&pricing.bedroom){
+    return privacyScaleSplit_(pricing.bedroom,totalOverride);
+  }
+  return privacyCappedBedroomSplitBefore_.apply(this,arguments);
+};
+
+travelerAdjustedCost_=function(cabin,mode,travelerId){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyTravelerAdjustedCostBefore_.apply(this,arguments);
+  }
+  const result=mode==='bedroom'
+    ? cappedBedroomSplit_(cabin)
+    : cappedAdultSplit_(cabin);
+  const row=(result.rows||[]).find(function(item){
+    return String(item.travelerId||'')===String(travelerId||'');
+  });
+  return row?Number(row.amount||0):0;
+};
+
+capPricingConfigured_=function(){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyCapPricingConfiguredBefore_.apply(this,arguments);
+  }
+  const pricing=DATA&&DATA.rentalPricing?DATA.rentalPricing:{};
+  return Object.keys(pricing).some(function(cabinId){
+    return Boolean(pricing[cabinId]&&pricing[cabinId].configured);
+  });
+};
+
+capPricingSummary_=function(cabin){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyCapPricingSummaryBefore_.apply(this,arguments);
+  }
+  const pricing=privacyPricingEntry_(cabin);
+  if(pricing&&pricing.summary) return Object.assign({},pricing.summary);
+  return {cappedAdults:0,adjustedAdults:0,adultUnresolved:0,bedroomUnresolved:0};
+};
+
+renderCapAdjustedCost_=function(cabin){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyRenderCapAdjustedCostBefore_.apply(this,arguments);
+  }
+  if(!currentTravelerId) return '';
+  const pricing=privacyPricingEntry_(cabin);
+  if(!pricing||!pricing.configured) return '';
+
+  const adult=(pricing.adult&&pricing.adult.rows||[]).find(function(row){
+    return String(row.travelerId||'')===String(currentTravelerId||'');
+  });
+  const bedroom=(pricing.bedroom&&pricing.bedroom.rows||[]).find(function(row){
+    return String(row.travelerId||'')===String(currentTravelerId||'');
+  });
+  if(!adult&&!bedroom) return '';
+
+  const adjusted=Boolean(
+    adult&&adult.policyAdjusted || bedroom&&bedroom.policyAdjusted
+  );
+  const extra=Math.max(
+    Number(adult&&adult.extra||0),
+    Number(bedroom&&bedroom.extra||0)
+  );
+  const weighted=Boolean(adult&&adult.weighted||bedroom&&bedroom.weighted);
+
+  return `<div class="cap-adjusted-cost cap-adjusted-cost-visible">
+    <div class="cap-adjusted-title">
+      <span>Trip cost rules applied</span>
+      <button class="ghost tiny" type="button" onclick="openCapPricingBreakdown_('${escAttr(cabin['Cabin ID'])}')">View full split</button>
+    </div>
+    <div class="cap-adjusted-grid">
+      ${adult?`<div><small>Adult base</small><strong>${money(adult.base)}</strong></div><div><small>Your adjusted adult cost</small><strong>${money(adult.amount)}</strong></div>`:''}
+      ${bedroom&&Number(bedroom.base||0)>0?`<div><small>Your bedroom base</small><strong>${money(bedroom.base)}</strong></div><div><small>Your adjusted bedroom cost</small><strong>${money(bedroom.amount)}</strong></div>`:''}
+    </div>
+    <div class="cap-adjusted-flags">
+      ${adjusted?'<span>Organizer pricing rules applied</span>':''}
+      ${weighted?'<span>Weighted share</span>':''}
+      ${extra>.005?`<span>Includes ${money(extra)} redistributed cost</span>`:''}
+    </div>
+    ${Number(pricing.adult&&pricing.adult.unresolved||0)>.01?`<div class="cap-unresolved-warning">${money(pricing.adult.unresolved)} remains uncovered in the adult split.</div>`:''}
+  </div>`;
+};
+
+capSplitRowHtml_=function(row,mode,cabin){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyCapSplitRowHtmlBefore_.apply(this,arguments);
+  }
+  const assigned=mode==='Bedroom'&&typeof assignedBedroomForTraveler_==='function'
+    ? assignedBedroomForTraveler_(cabin['Cabin ID'],row.travelerId)
+    : null;
+  const roomName=assigned&&assigned.bedroom
+    ? assigned.bedroom['Bedroom Name']
+    : '';
+
+  return `<div class="cap-split-row ${row.capped?'capped':''} ${Number(row.extra||0)>0?'paying-extra':''}">
+    <div>
+      <strong>${esc(row.travelerName||'Traveler')}</strong>
+      ${roomName?`<span>${esc(roomName)}</span>`:''}
+      <small>Base ${money(row.base||0)}${row.weighted?' · weighted share':''}${row.capped?' · organizer limit applied':''}</small>
+    </div>
+    <div class="cap-split-amount">
+      <strong>${money(row.amount||0)}</strong>
+      ${Number(row.extra||0)>0?`<small>+${money(row.extra)} redistributed</small>`:row.capped?'<small>Adjustment applied</small>':'<small>Trip share</small>'}
+    </div>
+  </div>`;
+};
+
+if(privacyOpenBookingPlanFormBefore_){
+  openBookingPlanForm_=function(cabinId){
+    privacyLoadOrganizerTravelers_(function(){
+      privacyOpenBookingPlanFormBefore_.call(window,cabinId);
+    });
+  };
+}
+
+if(privacyOpenPaymentSharesEditorBefore_){
+  openPaymentSharesEditor_=function(cabinId){
+    privacyLoadOrganizerTravelers_(function(){
+      privacyOpenPaymentSharesEditorBefore_.call(window,cabinId);
+    });
+  };
+}
+
+mergePortalDelta_=function(result){
+  privacyMergePortalDeltaBefore_.apply(this,arguments);
+  if(result&&result.rentalPricing){
+    if(!DATA.rentalPricing) DATA.rentalPricing={};
+    Object.keys(result.rentalPricing).forEach(function(cabinId){
+      DATA.rentalPricing[cabinId]=result.rentalPricing[cabinId];
+    });
+  }
+};
+</script>

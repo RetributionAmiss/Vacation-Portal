@@ -1,0 +1,270 @@
+<script>
+/* PR #34 pricing follow-up.
+ * Normal traveler browsers receive exact server-derived dollar allocations for
+ * supported totals. Do not reconstruct organizer policy from missing fields or
+ * linearly scale a capped/redistributed result when shared extras are toggled.
+ */
+const privacyPricingCappedAdultBefore_=cappedAdultSplit_;
+const privacyPricingCappedBedroomBefore_=cappedBedroomSplit_;
+const privacyPricingPrimaryBefore_=rentalPricingPrimary_;
+const privacyPricingBedroomSharingBefore_=rentalBedroomSharingBreakout_;
+const privacyPricingAssignmentBreakoutBefore_=rentalCurrentAssignmentBreakout_;
+const privacyPricingBreakdownBefore_=openCapPricingBreakdown_;
+
+function privacyPricingTarget_(pricing,totalOverride){
+  if(totalOverride===undefined||totalOverride===null||totalOverride===''){
+    return Number(pricing&&pricing.splitTotal||0);
+  }
+  return Math.max(0,Number(totalOverride||0));
+}
+
+function privacyExactPricingSplit_(pricing,mode,totalOverride){
+  if(!pricing) return null;
+  const target=privacyPricingTarget_(pricing,totalOverride);
+  const fullTotal=Number(pricing.splitTotal||0);
+  const rentalTotal=Number(pricing.rentalTotal||0);
+  const key=mode==='bedroom'?'bedroom':'adult';
+  const rentalOnlyKey=key==='bedroom'?'bedroomRentalOnly':'adultRentalOnly';
+
+  if(Math.abs(target-fullTotal)<=.011&&pricing[key]){
+    return privacyCloneSplit_(pricing[key]);
+  }
+  if(Math.abs(target-rentalTotal)<=.011&&pricing[rentalOnlyKey]){
+    return privacyCloneSplit_(pricing[rentalOnlyKey]);
+  }
+  return null;
+}
+
+function privacyPendingPricingSplit_(total){
+  const target=Math.max(0,Number(total||0));
+  return {rows:[],unresolved:target,total:target,covered:0,privacyPending:true};
+}
+
+cappedAdultSplit_=function(cabin,totalOverride){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyPricingCappedAdultBefore_.apply(this,arguments);
+  }
+  const pricing=privacyPricingEntry_(cabin);
+  const exact=privacyExactPricingSplit_(pricing,'adult',totalOverride);
+  return exact||privacyPendingPricingSplit_(
+    totalOverride===undefined?rentalCostBasis_(cabin):totalOverride
+  );
+};
+
+cappedBedroomSplit_=function(cabin,totalOverride){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyPricingCappedBedroomBefore_.apply(this,arguments);
+  }
+  const pricing=privacyPricingEntry_(cabin);
+  const exact=privacyExactPricingSplit_(pricing,'bedroom',totalOverride);
+  return exact||privacyPendingPricingSplit_(
+    totalOverride===undefined?rentalCostBasis_(cabin):totalOverride
+  );
+};
+
+rentalPricingPrimary_=function(cabin,state){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyPricingPrimaryBefore_.apply(this,arguments);
+  }
+
+  state=state||rentalPricingState_(cabin['Cabin ID']);
+  const total=pricingTotal_(cabin,state.includeExtras);
+
+  if(state.mode==='total'){
+    return {
+      label:state.includeExtras?'Trip total + shared extras':'Rental trip total',
+      value:total,
+      note:state.includeExtras&&includedBudgetExtrasTotal_()
+        ? money(Number(cabin['Total Rental Cost']||0))+' rental + '+
+          money(includedBudgetExtrasTotal_())+' shared extras'
+        : 'Rental lodging total'
+    };
+  }
+
+  if(state.mode==='bedroom'){
+    const result=cappedBedroomSplit_(cabin,total);
+    const row=(result.rows||[]).find(function(item){
+      return String(item.travelerId||'')===String(currentTravelerId||'');
+    });
+
+    if(row&&Number(row.base||0)>0){
+      return {
+        label:'Your bedroom-based share',
+        value:Number(row.amount||0),
+        note:'Base '+money(row.base||0)+(
+          row.policyAdjusted||row.weighted||row.capped||Number(row.extra||0)>.005
+            ? ' · organizer trip-cost rules applied'
+            : ' · current room assignment split'
+        )
+      };
+    }
+
+    if(result.privacyPending){
+      return {
+        label:'Your bedroom-based share',
+        value:0,
+        note:'Updating exact trip-cost allocation…'
+      };
+    }
+
+    const bedrooms=bedroomCountForPricing_(cabin);
+    return {
+      label:'Per bedroom',
+      value:bedrooms?total/bedrooms:0,
+      note:bedrooms?'Trip cost ÷ '+bedrooms+' bedrooms':'Bedroom count pending'
+    };
+  }
+
+  const result=cappedAdultSplit_(cabin,total);
+  const row=(result.rows||[]).find(function(item){
+    return String(item.travelerId||'')===String(currentTravelerId||'');
+  });
+
+  if(row){
+    return {
+      label:'Your adult-based share',
+      value:Number(row.amount||0),
+      note:'Base '+money(row.base||0)+(
+        row.policyAdjusted||row.weighted||row.capped||Number(row.extra||0)>.005
+          ? ' · organizer trip-cost rules applied'
+          : ' · standard adult trip split'
+      )
+    };
+  }
+
+  if(result.privacyPending){
+    return {
+      label:'Your adult-based share',
+      value:0,
+      note:'Updating exact trip-cost allocation…'
+    };
+  }
+
+  const adults=activeAdultTravelers_();
+  return {
+    label:'Per adult',
+    value:adults.length?total/adults.length:0,
+    note:adults.length?'Trip cost ÷ '+adults.length+' adults':'Adult count pending'
+  };
+};
+
+rentalBedroomSharingBreakout_=function(cabin,total){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyPricingBedroomSharingBefore_.apply(this,arguments);
+  }
+
+  const bedrooms=(cabin&&cabin.bedrooms||[]);
+  const result=cappedBedroomSplit_(cabin,total);
+  if(result.privacyPending){
+    return '<div class="pricing-breakout-empty">Updating exact bedroom allocations…</div>';
+  }
+  if(!bedrooms.length){
+    return '<div class="pricing-breakout-empty">Bedroom details are not available yet.</div>';
+  }
+
+  const rows=bedrooms.map(function(room){
+    const assigned=(DATA.assignments||[]).filter(function(a){
+      return a['Cabin ID']===cabin['Cabin ID']&&a['Bedroom ID']===room['Bedroom ID'];
+    });
+    const adultRows=assigned.map(function(a){
+      return (result.rows||[]).find(function(row){
+        return String(row.travelerId||'')===String(a['Traveler ID']||'');
+      });
+    }).filter(Boolean);
+    if(!adultRows.length) return '';
+
+    return `<div class="pricing-room-row">
+      <strong>${esc(room['Bedroom Name']||'Bedroom')}</strong>
+      <span>${adultRows.map(function(row){
+        const adjusted=row.policyAdjusted||row.weighted||row.capped||Number(row.extra||0)>.005;
+        return esc(row.travelerName||'Traveler')+' '+money(row.amount||0)+(adjusted?' · adjusted by trip rules':'');
+      }).join(' · ')}</span>
+    </div>`;
+  }).filter(Boolean);
+
+  return rows.length
+    ? rows.join('')
+    : '<div class="pricing-breakout-empty">Assign adults to bedrooms to see the sharing breakout.</div>';
+};
+
+rentalCurrentAssignmentBreakout_=function(cabin,total){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyPricingAssignmentBreakoutBefore_.apply(this,arguments);
+  }
+
+  const result=cappedBedroomSplit_(cabin,total);
+  if(result.privacyPending){
+    return '<div class="pricing-breakout-empty">Updating exact assignment costs…</div>';
+  }
+
+  const rows=(result.rows||[]).filter(function(row){return Number(row.base||0)>0;});
+  if(!rows.length){
+    return '<div class="pricing-breakout-empty">No current adult room assignments.</div>';
+  }
+
+  return rows.slice().sort(function(a,b){
+    return String(a.travelerName).localeCompare(String(b.travelerName));
+  }).map(function(row){
+    const assigned=assignedBedroomForTraveler_(cabin['Cabin ID'],row.travelerId);
+    const adjusted=row.policyAdjusted||row.weighted||row.capped||Number(row.extra||0)>.005;
+    return `<div class="pricing-assignment-row">
+      <span>
+        <strong>${esc(row.travelerName||'Traveler')}</strong>
+        <small>${assigned&&assigned.bedroom?esc(assigned.bedroom['Bedroom Name']):'Assigned room'}${adjusted?' · trip rules applied':''}</small>
+      </span>
+      <strong>${money(row.amount||0)}</strong>
+    </div>`;
+  }).join('');
+};
+
+openCapPricingBreakdown_=function(cabinId){
+  if(privacyOrganizerRowsPresent_()){
+    return privacyPricingBreakdownBefore_.apply(this,arguments);
+  }
+
+  const cabin=(DATA.cabins||[]).find(function(item){return item['Cabin ID']===cabinId;});
+  if(!cabin){
+    toast('Rental could not be found.',true);
+    return;
+  }
+
+  const adultResult=cappedAdultSplit_(cabin);
+  const bedroomResult=cappedBedroomSplit_(cabin);
+  const extras=includedBudgetExtrasTotal_();
+
+  if(adultResult.privacyPending||bedroomResult.privacyPending){
+    openModal(`<div class="cap-pricing-modal">
+      <p class="eyebrow">COST SPLIT</p>
+      <h2>${esc(displayName(cabin))}</h2>
+      <div class="notice">Exact traveler allocations are still loading. Try the cost split again in a moment.</div>
+    </div>`);
+    return;
+  }
+
+  function section(title,description,result,mode){
+    return `<section class="cap-split-section">
+      <div class="cap-split-heading">
+        <div><h3>${esc(title)}</h3><p class="muted">${esc(description)}</p></div>
+        ${Number(result.unresolved||0)>.01
+          ? `<span class="cap-balance-badge warning">${money(result.unresolved)} uncovered</span>`
+          : '<span class="cap-balance-badge">Fully covered</span>'}
+      </div>
+      <div class="cap-split-list">${(result.rows||[]).slice().sort(function(a,b){
+        return String(a.travelerName).localeCompare(String(b.travelerName));
+      }).map(function(row){return capSplitRowHtml_(row,mode,cabin);}).join('')}</div>
+    </section>`;
+  }
+
+  openModal(`<div class="cap-pricing-modal">
+    <p class="eyebrow">COST SPLIT</p>
+    <h2>${esc(displayName(cabin))}</h2>
+    <div class="cap-pricing-basis">
+      <div><span>Rental</span><strong>${money(cabin['Total Rental Cost']||0)}</strong></div>
+      <div><span>Included extras</span><strong>${money(extras)}</strong></div>
+      <div><span>Split total</span><strong>${money(rentalCostBasis_(cabin))}</strong></div>
+    </div>
+    ${section('Adult trip split','Organizer trip-cost rules are applied on the server; only the resulting allocations are shown here.',adultResult,'Adult')}
+    ${section('Bedroom trip split','Current room assignments are combined with organizer trip-cost rules on the server.',bedroomResult,'Bedroom')}
+  </div>`);
+};
+</script>

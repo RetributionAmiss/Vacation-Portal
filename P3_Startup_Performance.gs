@@ -8,7 +8,14 @@ function p3StartupPerformanceStripDevice_(payload) {
   delete copy.deviceTravelerId;
   delete copy.deviceTravelerName;
   delete copy.deviceTravelerSavedAt;
-  return copy;
+  delete copy.travelerPrivate;
+  delete copy.organizerTravelers;
+
+  // Defense in depth: cache only the shared DTO form. A performance cache is
+  // reused across devices, so viewer-specific/private fields can never live in it.
+  return typeof sanitizePortalPayloadForViewer_ === 'function'
+    ? sanitizePortalPayloadForViewer_(copy, '')
+    : copy;
 }
 
 function p3StartupPerformanceFreshTrip_(payload) {
@@ -58,5 +65,5 @@ function getPortalStartupDataPerformanceFocused(deviceId) {
     focusPortalPayloadToFinalRental_(payload, selectedId);
   }
 
-  return addDeviceTravelerBindingToPayload_(payload, deviceId);
+  return sanitizePortalPayloadForViewer_(payload, deviceId);
 }
