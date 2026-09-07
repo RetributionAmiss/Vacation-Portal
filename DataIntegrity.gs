@@ -18,6 +18,71 @@ function withPortalMutationLock_(callback) {
   }
 }
 
+function replaceSheetRowsByFieldValueUnlocked_(sheetName, fieldName, fieldValue, records) {
+  const sheet = getSpreadsheet_().getSheetByName(String(sheetName || ''));
+  if (!sheet) throw new Error(String(sheetName || 'The requested') + ' sheet was not found.');
+
+  const lastColumn = sheet.getLastColumn();
+  if (!(lastColumn > 0)) throw new Error('The target sheet has no columns.');
+
+  const headers = sheet
+    .getRange(1, 1, 1, lastColumn)
+    .getValues()[0]
+    .map(function(value) { return String(value || '').trim(); });
+  const fieldIndex = headers.indexOf(String(fieldName || '').trim());
+  if (fieldIndex < 0) {
+    throw new Error(String(fieldName || 'The requested field') + ' column was not found.');
+  }
+
+  const lastRow = sheet.getLastRow();
+  const grid = lastRow > 1
+    ? sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues()
+    : [];
+  const targetRowNumbers = [];
+  const expectedValue = String(fieldValue || '');
+
+  grid.forEach(function(row, index) {
+    if (String(row[fieldIndex] || '') === expectedValue) {
+      targetRowNumbers.push(index + 2);
+    }
+  });
+
+  const replacementRows = (Array.isArray(records) ? records : []).map(function(record) {
+    record = record || {};
+    return headers.map(function(header) {
+      return record[header] !== undefined ? record[header] : '';
+    });
+  });
+
+  const reusedCount = Math.min(targetRowNumbers.length, replacementRows.length);
+  for (let index = 0; index < reusedCount; index++) {
+    sheet
+      .getRange(targetRowNumbers[index], 1, 1, lastColumn)
+      .setValues([replacementRows[index]]);
+  }
+
+  for (
+    let index = targetRowNumbers.length - 1;
+    index >= replacementRows.length;
+    index--
+  ) {
+    sheet.deleteRow(targetRowNumbers[index]);
+  }
+
+  if (replacementRows.length > targetRowNumbers.length) {
+    const additional = replacementRows.slice(targetRowNumbers.length);
+    sheet
+      .getRange(sheet.getLastRow() + 1, 1, additional.length, lastColumn)
+      .setValues(additional);
+  }
+
+  return {
+    matched: targetRowNumbers.length,
+    written: replacementRows.length,
+    reused: reusedCount
+  };
+}
+
 function portalMoneyToCents_(value, options) {
   options = options || {};
 
