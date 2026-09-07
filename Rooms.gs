@@ -1,5 +1,5 @@
 function saveAssignment(values) {
-  return withPortalMutationLock_(function() {
+  withPortalMutationLock_(function() {
     const existing = readSheet_('Assignments').find(a =>
       a['Cabin ID'] === values.cabinId &&
       a['Traveler ID'] === values.travelerId
@@ -17,15 +17,15 @@ function saveAssignment(values) {
       record['Assignment ID'] = uid_('ASSIGN');
       appendObject_('Assignments', record);
     }
-    return getPortalData();
   });
+  return getPortalData();
 }
 
 function removeAssignment(id) {
-  return withPortalMutationLock_(function() {
+  withPortalMutationLock_(function() {
     deleteById_('Assignments', 'Assignment ID', id);
-    return getPortalData();
   });
+  return getPortalData();
 }
 
 
@@ -37,7 +37,7 @@ function replaceBedroomLayout(cabinId, bedrooms) {
     throw new Error('No bedroom layout was found.');
   }
 
-  return withPortalMutationLock_(function() {
+  withPortalMutationLock_(function() {
     const cabin = readSheet_('Cabins').find(function (row) {
       return row['Cabin ID'] === cabinId;
     });
@@ -64,9 +64,9 @@ function replaceBedroomLayout(cabinId, bedrooms) {
       'Bedrooms': normalized.length,
       'Updated At': new Date()
     });
-
-    return getPortalData();
   });
+
+  return getPortalData();
 }
 
 
@@ -78,7 +78,7 @@ function saveRoomAssignmentsBatch(cabinId, assignments) {
 
   if (!cabinId) throw new Error('Cabin is required.');
 
-  return withPortalMutationLock_(function() {
+  withPortalMutationLock_(function() {
     const cabin = readSheet_('Cabins').find(function (row) {
       return row['Cabin ID'] === cabinId;
     });
@@ -139,9 +139,9 @@ function saveRoomAssignmentsBatch(cabinId, assignments) {
       cabinId,
       normalized
     );
-
-    return getPortalData();
   });
+
+  return getPortalData();
 }
 
 function clearRoomAssignmentsForCabin_(cabinId) {
@@ -157,7 +157,7 @@ function removeAllBedrooms(cabinId) {
   cabinId = String(cabinId || '').trim();
   if (!cabinId) throw new Error('Cabin is required.');
 
-  return withPortalMutationLock_(function() {
+  withPortalMutationLock_(function() {
     const cabin = readSheet_('Cabins').find(function (row) {
       return row['Cabin ID'] === cabinId;
     });
@@ -170,7 +170,7 @@ function removeAllBedrooms(cabinId) {
       'Bedrooms': 0,
       'Updated At': new Date()
     });
-
-    return getPortalData();
   });
+
+  return getPortalData();
 }
