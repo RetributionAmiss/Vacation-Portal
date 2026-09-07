@@ -78,3 +78,51 @@ function buildTravelerPrivacyPayload_(rows, viewerTravelerId, organizer) {
       : []
   };
 }
+
+function portalPrivacyTravelerRows_() {
+  const rows = normalizeTravelerRows_(readSheet_('Travelers'));
+  const byId = {};
+
+  rows.forEach(function(row) {
+    byId[String(row['Traveler ID'] || '')] = row;
+  });
+
+  rows.forEach(function(row) {
+    const parent = byId[String(row['Parent/Guardian ID'] || '')];
+    row.parentName = parent ? String(parent.Name || '') : '';
+  });
+
+  return rows;
+}
+
+function getTravelerPrivateProfile(values) {
+  ensurePortalSchemaCurrent_();
+  values = values || {};
+
+  const travelerId = String(values.travelerId || '').trim();
+  if (!travelerId) throw new Error('Choose your traveler profile first.');
+
+  assertTravelerSelf_(values.deviceId, travelerId);
+
+  const traveler = portalPrivacyTravelerRows_().find(function(row) {
+    return String(row['Traveler ID'] || '') === travelerId;
+  });
+
+  if (!traveler) throw new Error('That traveler could not be found.');
+
+  return {
+    traveler: serializeTravelerPrivateProfile_(traveler),
+    serverTime: new Date().toISOString()
+  };
+}
+
+function getOrganizerTravelerData(values) {
+  ensurePortalSchemaCurrent_();
+  values = values || {};
+  assertOrganizerFromValues_(values);
+
+  return {
+    travelers: portalPrivacyTravelerRows_().map(serializeOrganizerTraveler_),
+    serverTime: new Date().toISOString()
+  };
+}
