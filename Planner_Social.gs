@@ -83,53 +83,92 @@ function saveItineraryInterest(values) {
 
   const traveler = plannerSocialTraveler_(values);
   const travelerId = String(traveler['Traveler ID'] || '');
-  const itinerary = plannerSocialItineraryItem_(values.itineraryId);
-  const itineraryId = String(itinerary['Itinerary ID'] || '');
+  const itineraryId = String(values.itineraryId || '').trim();
   const plannedDate = plannerSocialDate_(values.plannedDate);
   const plannedTime = plannerSocialTime_(values.plannedTime);
-  const now = new Date();
+  const requestId = normalizeMutationRequestId_(values.requestId);
+  const scope = 'itinerary-signup-' + itineraryId + '-' + travelerId;
 
-  const existing = readSheet_('Itinerary Signups').find(function (row) {
-    return String(row['Itinerary ID'] || '') === itineraryId &&
-      String(row['Traveler ID'] || '') === travelerId;
-  });
-
-  const signupId = existing
-    ? String(existing['Signup ID'] || '')
-    : uid_('SIGNUP');
-
-  const record = {
-    'Signup ID': signupId,
-    'Itinerary ID': itineraryId,
-    'Traveler ID': travelerId,
-    'Planned Date': plannedDate,
-    'Planned Time': plannedTime,
-    'Created At': existing ? existing['Created At'] : now,
-    'Updated At': now
-  };
-
-  if (existing) {
-    updateById_('Itinerary Signups', 'Signup ID', signupId, record);
-  } else {
-    appendObject_('Itinerary Signups', record);
+  if (requestId) {
+    const cached = readMutationResult_(scope, requestId);
+    if (cached) return cached;
   }
 
-  let notification = {sent: false, reason: existing ? 'updated-existing-signup' : ''};
-  if (!existing) {
+  const mutation = withPortalMutationLock_(function() {
+    if (requestId) {
+      const cached = readMutationResult_(scope, requestId);
+      if (cached) return {cached: cached};
+    }
+
+    const itinerary = plannerSocialItineraryItem_(itineraryId);
+    const now = new Date();
+    const existing = readSheet_('Itinerary Signups').find(function (row) {
+      return String(row['Itinerary ID'] || '') === itineraryId &&
+        String(row['Traveler ID'] || '') === travelerId;
+    });
+
+    assertExpectedVersion_(
+      values.expectedUpdatedAt,
+      existing && existing['Updated At'],
+      'Activity signup'
+    );
+
+    const signupId = existing
+      ? String(existing['Signup ID'] || '')
+      : uid_('SIGNUP');
+
+    const record = {
+      'Signup ID': signupId,
+      'Itinerary ID': itineraryId,
+      'Traveler ID': travelerId,
+      'Planned Date': plannedDate,
+      'Planned Time': plannedTime,
+      'Created At': existing ? existing['Created At'] : now,
+      'Updated At': now
+    };
+
+    if (existing) {
+      updateById_('Itinerary Signups', 'Signup ID', signupId, record);
+    } else {
+      appendObject_('Itinerary Signups', record);
+    }
+
+    return {
+      cached: null,
+      record: record,
+      itinerary: itinerary,
+      existed: Boolean(existing)
+    };
+  });
+
+  if (mutation.cached) return mutation.cached;
+
+  let notification = {
+    sent: false,
+    reason: mutation.existed ? 'updated-existing-signup' : ''
+  };
+  if (!mutation.existed) {
     try {
-      notification = notifyItineraryInterest_(traveler, itinerary, record);
+      notification = notifyItineraryInterest_(
+        traveler,
+        mutation.itinerary,
+        mutation.record
+      );
     } catch (error) {
       console.warn('Itinerary signup notification failed.', error);
       notification = {sent: false, reason: 'notification-error'};
     }
   }
 
-  return {
-    signup: Object.assign({}, record, {
+  const result = {
+    signup: Object.assign({}, mutation.record, {
       travelerName: String(traveler.Name || travelerId)
     }),
     notification: notification
   };
+
+  rememberMutationResult_(scope, requestId, result, 1800);
+  return result;
 }
 
 function removeItineraryInterest(values) {
@@ -139,17 +178,28 @@ function removeItineraryInterest(values) {
   const traveler = plannerSocialTraveler_(values);
   const travelerId = String(traveler['Traveler ID'] || '');
   const itineraryId = String(values.itineraryId || '').trim();
-  plannerSocialItineraryItem_(itineraryId);
 
-  const signup = readSheet_('Itinerary Signups').find(function (row) {
-    return String(row['Itinerary ID'] || '') === itineraryId &&
-      String(row['Traveler ID'] || '') === travelerId;
+  return withPortalMutationLock_(function() {
+    plannerSocialItineraryItem_(itineraryId);
+
+    const signup = readSheet_('Itinerary Signups').find(function (row) {
+      return String(row['Itinerary ID'] || '') === itineraryId &&
+        String(row['Traveler ID'] || '') === travelerId;
+    });
+
+    if (!signup) {
+      return {ok: true, itineraryId: itineraryId, travelerId: travelerId};
+    }
+
+    assertExpectedVersion_(
+      values.expectedUpdatedAt,
+      signup['Updated At'],
+      'Activity signup'
+    );
+
+    deleteById_('Itinerary Signups', 'Signup ID', signup['Signup ID']);
+    return {ok: true, itineraryId: itineraryId, travelerId: travelerId};
   });
-
-  if (!signup) return {ok: true, itineraryId: itineraryId, travelerId: travelerId};
-
-  deleteById_('Itinerary Signups', 'Signup ID', signup['Signup ID']);
-  return {ok: true, itineraryId: itineraryId, travelerId: travelerId};
 }
 
 function savePlannerComment(values) {
@@ -167,27 +217,45 @@ function savePlannerComment(values) {
   if (!itemId) throw new Error('Choose an item first.');
   if (!comment) throw new Error('Write a comment first.');
 
-  const sheetName = plannerType === 'Meals' ? 'Meals' : 'Itinerary';
-  const idHeader = plannerType === 'Meals' ? 'Meal ID' : 'Itinerary ID';
-  const itemExists = readSheet_(sheetName).some(function (row) {
-    return String(row[idHeader] || '') === itemId;
-  });
-  if (!itemExists) throw new Error('That planner item could not be found.');
+  const travelerId = String(traveler['Traveler ID'] || '');
+  const requestId = normalizeMutationRequestId_(values.requestId);
+  const scope = 'planner-comment-' + plannerType + '-' + itemId + '-' + travelerId;
 
-  const record = {
-    'Planner Comment ID': uid_('PCOM'),
-    'Planner Type': plannerType,
-    'Item ID': itemId,
-    'Traveler ID': String(traveler['Traveler ID'] || ''),
-    'Traveler Name': String(traveler.Name || ''),
-    'Comment': comment,
-    'Created At': new Date()
-  };
+  if (requestId) {
+    const cached = readMutationResult_(scope, requestId);
+    if (cached) return cached;
+  }
 
-  appendObject_('Planner Comments', record);
+  return withPortalMutationLock_(function() {
+    if (requestId) {
+      const cached = readMutationResult_(scope, requestId);
+      if (cached) return cached;
+    }
 
-  return Object.assign({}, record, {
-    travelerName: String(traveler.Name || record['Traveler ID'])
+    const sheetName = plannerType === 'Meals' ? 'Meals' : 'Itinerary';
+    const idHeader = plannerType === 'Meals' ? 'Meal ID' : 'Itinerary ID';
+    const itemExists = readSheet_(sheetName).some(function (row) {
+      return String(row[idHeader] || '') === itemId;
+    });
+    if (!itemExists) throw new Error('That planner item could not be found.');
+
+    const record = {
+      'Planner Comment ID': uid_('PCOM'),
+      'Planner Type': plannerType,
+      'Item ID': itemId,
+      'Traveler ID': travelerId,
+      'Traveler Name': String(traveler.Name || ''),
+      'Comment': comment,
+      'Created At': new Date()
+    };
+
+    appendObject_('Planner Comments', record);
+
+    const result = Object.assign({}, record, {
+      travelerName: String(traveler.Name || record['Traveler ID'])
+    });
+    rememberMutationResult_(scope, requestId, result, 1800);
+    return result;
   });
 }
 
