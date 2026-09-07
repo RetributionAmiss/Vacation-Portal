@@ -32,6 +32,8 @@ jobs:
         run: node tests/privacy_trust_boundaries_contract.test.js
       - name: Run privacy payload integration contracts
         run: node tests/privacy_payload_integration_contract.test.js
+      - name: Run privacy pricing equivalence contracts
+        run: node tests/privacy_pricing_equivalence_contract.test.js
       - name: Run UI foundation contract tests
         run: node tests/ui_foundation_contract.test.js
       - name: Run Midnight Gold Command Center theme contract
