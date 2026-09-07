@@ -70,6 +70,14 @@ p3PackingSave_=function(event,id){
   const localId=payload.id||(
     'LOCAL-PACK-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8)
   );
+
+  // Capture the server-issued version before replacing it with the optimistic
+  // timestamp. This lets the server reject an edit based on stale device data.
+  if(existing&&existing['Updated At']){
+    payload.expectedUpdatedAt=String(existing['Updated At']);
+  }
+  payload.requestId='PACKREQ-'+localId+'-'+Date.now().toString(36);
+
   const optimisticRow=p3PackingOptimisticRow_(payload,localId,existing);
 
   if(existingIndex>=0) DATA.packingItems[existingIndex]=optimisticRow;
@@ -171,6 +179,7 @@ function p3PackingDeleteNow_(id){
     return;
   }
 
+  const expectedUpdatedAt=String(row['Updated At']||'');
   const previousRows=rows.map(function(item){return Object.assign({},item);});
   DATA.packingItems=rows.filter(function(item){
     return String(item['Packing ID']||'')!==id;
@@ -214,8 +223,56 @@ function p3PackingDeleteNow_(id){
       .deletePackingItem({
         deviceId:deviceId,
         travelerId:String(currentTravelerId||''),
-        id:id
+        id:id,
+        expectedUpdatedAt:expectedUpdatedAt
       });
   },rollbackDelete);
+};
+
+// Override the base optimistic toggle so a check/uncheck also participates in
+// stale-version protection. The server version is captured before the local
+// checkbox state is changed.
+p3PackingToggle_=function(id,packed){
+  const rows=(DATA&&DATA.packingItems)||[];
+  const index=rows.findIndex(function(row){
+    return String(row['Packing ID']||'')===String(id||'');
+  });
+  if(index<0||!p3PackingCanToggle_(rows[index])) return;
+  if(p3PackingPendingId_(id)) return;
+
+  const row=rows[index];
+  const previous=String(row.Packed||'No');
+  const expectedUpdatedAt=String(row['Updated At']||'');
+  row.Packed=packed?'Yes':'No';
+  p3PackingPending_[String(id||'')]=true;
+  render();
+
+  function rollbackToggle(error){
+    const current=(DATA&&DATA.packingItems||[]).find(function(item){
+      return String(item['Packing ID']||'')===String(id||'');
+    });
+    if(current) current.Packed=previous;
+    delete p3PackingPending_[String(id||'')];
+    toast(error&&error.message?error.message:String(error),true);
+    render();
+  }
+
+  p3PlannerSocialEnsureDevice_(function(deviceId){
+    google.script.run
+      .withSuccessHandler(function(result){
+        DATA.packingItems=(result&&result.items)||[];
+        delete p3PackingPending_[String(id||'')];
+        p3PackingState_.lastLoaded=Date.now();
+        render();
+      })
+      .withFailureHandler(rollbackToggle)
+      .togglePackingItem({
+        deviceId:deviceId,
+        travelerId:String(currentTravelerId||''),
+        id:String(id||''),
+        packed:Boolean(packed),
+        expectedUpdatedAt:expectedUpdatedAt
+      });
+  },rollbackToggle);
 };
 </script>

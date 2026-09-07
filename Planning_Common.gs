@@ -13,37 +13,74 @@ function plannerDefinitionForDelete_(plannerName) {
 
 function deletePlannerItem(plannerName, id) {
   const definition = plannerDefinitionForDelete_(plannerName);
-  const result = deletePlannerRecordFast_(
-    definition.sheet,
-    definition.idHeader,
-    id
-  );
 
-  if (
-    (definition.sheet === 'Itinerary' || definition.sheet === 'Meals') &&
-    typeof clearPlannerSocialForItem_ === 'function'
-  ) {
-    clearPlannerSocialForItem_(definition.sheet, id);
-  }
+  return withPortalMutationLock_(function() {
+    const result = deletePlannerRecordFastUnlocked_(
+      definition.sheet,
+      definition.idHeader,
+      id
+    );
 
-  return result;
+    if (
+      (definition.sheet === 'Itinerary' || definition.sheet === 'Meals') &&
+      typeof clearPlannerSocialForItem_ === 'function'
+    ) {
+      // Keep item deletion and dependent signup/comment cleanup in the same
+      // mutation critical section so a concurrent social write cannot leave an
+      // orphan record behind.
+      clearPlannerSocialForItem_(definition.sheet, id);
+    }
+
+    return result;
+  });
 }
 
 function deletePlannerRecord_(sheetName, idHeader, id) {
-  deleteById_(sheetName, idHeader, id);
-  return getPortalData();
+  return withPortalMutationLock_(function() {
+    deleteById_(sheetName, idHeader, id);
+    return getPortalData();
+  });
 }
 
 function savePlannerRecord_(sheetName, idHeader, prefix, values) {
-  const id = values[idHeader] || uid_(prefix);
-  const record = Object.assign({}, values);
-  record[idHeader] = id;
-  if (values[idHeader]) updateById_(sheetName, idHeader, id, record);
-  else appendObject_(sheetName, record);
-  return getPortalData();
+  return withPortalMutationLock_(function() {
+    const id = values[idHeader] || uid_(prefix);
+    const record = Object.assign({}, values);
+    record[idHeader] = id;
+    if (values[idHeader]) updateById_(sheetName, idHeader, id, record);
+    else appendObject_(sheetName, record);
+    return getPortalData();
+  });
 }
 
 function savePlannerRecordFast_(sheetName, idHeader, prefix, values) {
+  values = values || {};
+  const requestId = normalizeMutationRequestId_(values.requestId);
+  const scope = 'planner-' + String(sheetName || '');
+
+  if (requestId) {
+    const cached = readMutationResult_(scope, requestId);
+    if (cached) return cached;
+  }
+
+  return withPortalMutationLock_(function() {
+    if (requestId) {
+      const cached = readMutationResult_(scope, requestId);
+      if (cached) return cached;
+    }
+
+    const result = savePlannerRecordFastUnlocked_(
+      sheetName,
+      idHeader,
+      prefix,
+      values
+    );
+    rememberMutationResult_(scope, requestId, result, 1800);
+    return result;
+  });
+}
+
+function savePlannerRecordFastUnlocked_(sheetName, idHeader, prefix, values) {
   values = values || {};
 
   const sheet = getSpreadsheet_().getSheetByName(sheetName);
@@ -89,6 +126,12 @@ function savePlannerRecordFast_(sheetName, idHeader, prefix, values) {
 }
 
 function deletePlannerRecordFast_(sheetName, idHeader, id) {
+  return withPortalMutationLock_(function() {
+    return deletePlannerRecordFastUnlocked_(sheetName, idHeader, id);
+  });
+}
+
+function deletePlannerRecordFastUnlocked_(sheetName, idHeader, id) {
   const sheet = getSpreadsheet_().getSheetByName(sheetName);
   const values = sheet.getDataRange().getValues();
   const headers = values[0].map(function (value) {

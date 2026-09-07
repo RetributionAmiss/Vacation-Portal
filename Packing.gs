@@ -41,52 +41,71 @@ function savePackingItem(values) {
   const travelerId = String(values.travelerId || '').trim();
   assertTravelerSelf_(values.deviceId, travelerId);
 
-  const travelerMap = packingTravelerMap_();
-  if (!travelerMap[travelerId]) {
-    throw new Error('That traveler is no longer active.');
+  const requestId = normalizeMutationRequestId_(values.requestId);
+  const scopeKey = 'packing-save-' + travelerId;
+  if (requestId && readMutationResult_(scopeKey, requestId)) {
+    return getPackingData();
   }
 
-  const id = String(values.id || '').trim();
-  const existing = id ? packingItem_(id) : null;
-  if (id && !existing) throw new Error('That packing item could not be found.');
+  return withPortalMutationLock_(function() {
+    if (requestId && readMutationResult_(scopeKey, requestId)) {
+      return getPackingData();
+    }
 
-  if (existing && String(existing['Owner Traveler ID'] || '') !== travelerId) {
-    throw new Error('TRAVELER_AUTH_REQUIRED: Only the traveler who added this item can edit it.');
-  }
+    const travelerMap = packingTravelerMap_();
+    if (!travelerMap[travelerId]) {
+      throw new Error('That traveler is no longer active.');
+    }
 
-  const scope = packingScope_(values.scope);
-  const item = String(values.item || '').trim().slice(0, 120);
-  if (!item) throw new Error('Enter an item to pack.');
+    const id = String(values.id || '').trim();
+    const existing = id ? packingItem_(id) : null;
+    if (id && !existing) throw new Error('That packing item could not be found.');
 
-  let bringingTravelerId = String(values.bringingTravelerId || '').trim();
-  if (scope === 'Personal') {
-    bringingTravelerId = travelerId;
-  } else if (bringingTravelerId && !travelerMap[bringingTravelerId]) {
-    throw new Error('Choose an active traveler who is bringing this shared item.');
-  }
+    if (existing && String(existing['Owner Traveler ID'] || '') !== travelerId) {
+      throw new Error('TRAVELER_AUTH_REQUIRED: Only the traveler who added this item can edit it.');
+    }
 
-  const now = new Date();
-  const record = {
-    'Scope': scope,
-    'Owner Traveler ID': travelerId,
-    'Bringing Traveler ID': bringingTravelerId,
-    'Category': packingCategory_(values.category),
-    'Item': item,
-    'Quantity': String(values.quantity || '').trim().slice(0, 40),
-    'Packed': existing ? String(existing.Packed || 'No') : 'No',
-    'Notes': String(values.notes || '').trim().slice(0, 500),
-    'Updated At': now
-  };
+    assertExpectedVersion_(
+      values.expectedUpdatedAt,
+      existing && existing['Updated At'],
+      'Packing item'
+    );
 
-  if (existing) {
-    updateById_('Packing Items', 'Packing ID', existing['Packing ID'], record);
-  } else {
-    record['Packing ID'] = uid_('PACK');
-    record['Created At'] = now;
-    appendObject_('Packing Items', record);
-  }
+    const scope = packingScope_(values.scope);
+    const item = String(values.item || '').trim().slice(0, 120);
+    if (!item) throw new Error('Enter an item to pack.');
 
-  return getPackingData();
+    let bringingTravelerId = String(values.bringingTravelerId || '').trim();
+    if (scope === 'Personal') {
+      bringingTravelerId = travelerId;
+    } else if (bringingTravelerId && !travelerMap[bringingTravelerId]) {
+      throw new Error('Choose an active traveler who is bringing this shared item.');
+    }
+
+    const now = new Date();
+    const record = {
+      'Scope': scope,
+      'Owner Traveler ID': travelerId,
+      'Bringing Traveler ID': bringingTravelerId,
+      'Category': packingCategory_(values.category),
+      'Item': item,
+      'Quantity': String(values.quantity || '').trim().slice(0, 40),
+      'Packed': existing ? String(existing.Packed || 'No') : 'No',
+      'Notes': String(values.notes || '').trim().slice(0, 500),
+      'Updated At': now
+    };
+
+    if (existing) {
+      updateById_('Packing Items', 'Packing ID', existing['Packing ID'], record);
+    } else {
+      record['Packing ID'] = uid_('PACK');
+      record['Created At'] = now;
+      appendObject_('Packing Items', record);
+    }
+
+    rememberMutationResult_(scopeKey, requestId, {ok: true}, 1800);
+    return getPackingData();
+  });
 }
 
 function togglePackingItem(values) {
@@ -96,26 +115,34 @@ function togglePackingItem(values) {
   const travelerId = String(values.travelerId || '').trim();
   assertTravelerSelf_(values.deviceId, travelerId);
 
-  const item = packingItem_(values.id);
-  if (!item) throw new Error('That packing item could not be found.');
+  return withPortalMutationLock_(function() {
+    const item = packingItem_(values.id);
+    if (!item) throw new Error('That packing item could not be found.');
 
-  const scope = packingScope_(item.Scope);
-  const ownerId = String(item['Owner Traveler ID'] || '');
-  const bringerId = String(item['Bringing Traveler ID'] || '');
+    assertExpectedVersion_(
+      values.expectedUpdatedAt,
+      item['Updated At'],
+      'Packing item'
+    );
 
-  if (scope === 'Personal' && ownerId !== travelerId) {
-    throw new Error('TRAVELER_AUTH_REQUIRED: You can only check off your own personal items.');
-  }
-  if (scope === 'Shared' && ownerId !== travelerId && bringerId && bringerId !== travelerId) {
-    throw new Error('TRAVELER_AUTH_REQUIRED: Only the person bringing this shared item can check it off.');
-  }
+    const scope = packingScope_(item.Scope);
+    const ownerId = String(item['Owner Traveler ID'] || '');
+    const bringerId = String(item['Bringing Traveler ID'] || '');
 
-  updateById_('Packing Items', 'Packing ID', item['Packing ID'], {
-    'Packed': values.packed ? 'Yes' : 'No',
-    'Updated At': new Date()
+    if (scope === 'Personal' && ownerId !== travelerId) {
+      throw new Error('TRAVELER_AUTH_REQUIRED: You can only check off your own personal items.');
+    }
+    if (scope === 'Shared' && ownerId !== travelerId && bringerId && bringerId !== travelerId) {
+      throw new Error('TRAVELER_AUTH_REQUIRED: Only the person bringing this shared item can check it off.');
+    }
+
+    updateById_('Packing Items', 'Packing ID', item['Packing ID'], {
+      'Packed': values.packed ? 'Yes' : 'No',
+      'Updated At': new Date()
+    });
+
+    return getPackingData();
   });
-
-  return getPackingData();
 }
 
 function deletePackingItem(values) {
@@ -125,13 +152,21 @@ function deletePackingItem(values) {
   const travelerId = String(values.travelerId || '').trim();
   assertTravelerSelf_(values.deviceId, travelerId);
 
-  const item = packingItem_(values.id);
-  if (!item) return getPackingData();
+  return withPortalMutationLock_(function() {
+    const item = packingItem_(values.id);
+    if (!item) return getPackingData();
 
-  if (String(item['Owner Traveler ID'] || '') !== travelerId) {
-    throw new Error('TRAVELER_AUTH_REQUIRED: Only the traveler who added this item can delete it.');
-  }
+    if (String(item['Owner Traveler ID'] || '') !== travelerId) {
+      throw new Error('TRAVELER_AUTH_REQUIRED: Only the traveler who added this item can delete it.');
+    }
 
-  deleteById_('Packing Items', 'Packing ID', item['Packing ID']);
-  return getPackingData();
+    assertExpectedVersion_(
+      values.expectedUpdatedAt,
+      item['Updated At'],
+      'Packing item'
+    );
+
+    deleteById_('Packing Items', 'Packing ID', item['Packing ID']);
+    return getPackingData();
+  });
 }

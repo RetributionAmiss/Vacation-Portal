@@ -36,6 +36,11 @@ function p3PlannerSocialEnsureDevice_(onReady,onFailure){
     );
 }
 
+function p3PlannerSocialRequestId_(prefix,itemId){
+  return String(prefix||'SOC')+'-'+String(itemId||'item')+'-'+
+    Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+}
+
 saveP2ItineraryInterest_=function(event,itemId){
   event.preventDefault();
   const traveler=currentTraveler();
@@ -49,6 +54,8 @@ saveP2ItineraryInterest_=function(event,itemId){
   const existingIndex=DATA.itinerarySignups.findIndex(function(row){
     return String(row['Itinerary ID']||'')===itemId&&String(row['Traveler ID']||'')===String(currentTravelerId||'');
   });
+  const existing=existingIndex>=0?DATA.itinerarySignups[existingIndex]:null;
+  const expectedUpdatedAt=String(existing&&existing['Updated At']||'');
   const local={
     'Signup ID':existingIndex>=0?DATA.itinerarySignups[existingIndex]['Signup ID']:'LOCAL-SIGNUP-'+Date.now(),
     'Itinerary ID':itemId,
@@ -94,7 +101,9 @@ saveP2ItineraryInterest_=function(event,itemId){
         travelerId:String(currentTravelerId||''),
         itineraryId:itemId,
         plannedDate:plannedDate,
-        plannedTime:plannedTime
+        plannedTime:plannedTime,
+        expectedUpdatedAt:expectedUpdatedAt,
+        requestId:p3PlannerSocialRequestId_('SIGNUP',itemId)
       });
   },fail);
 };
@@ -102,6 +111,10 @@ saveP2ItineraryInterest_=function(event,itemId){
 removeP2ItineraryInterest_=function(itemId){
   if(!currentTravelerId) return;
   const previous=(DATA.itinerarySignups||[]).map(function(row){return Object.assign({},row);});
+  const existing=(DATA.itinerarySignups||[]).find(function(row){
+    return String(row['Itinerary ID']||'')===itemId&&String(row['Traveler ID']||'')===String(currentTravelerId||'');
+  })||null;
+  const expectedUpdatedAt=String(existing&&existing['Updated At']||'');
   DATA.itinerarySignups=(DATA.itinerarySignups||[]).filter(function(row){
     return !(String(row['Itinerary ID']||'')===itemId&&String(row['Traveler ID']||'')===String(currentTravelerId||''));
   });
@@ -124,7 +137,8 @@ removeP2ItineraryInterest_=function(itemId){
       .removeItineraryInterest({
         deviceId:deviceId,
         travelerId:String(currentTravelerId||''),
-        itineraryId:itemId
+        itineraryId:itemId,
+        expectedUpdatedAt:expectedUpdatedAt
       });
   },fail);
 };
@@ -176,7 +190,8 @@ saveP2PlannerComment_=function(event,type,itemId){
         travelerId:String(currentTravelerId||''),
         plannerType:type,
         itemId:itemId,
-        comment:comment
+        comment:comment,
+        requestId:tempId
       });
   },fail);
 };

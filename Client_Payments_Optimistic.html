@@ -82,6 +82,70 @@ function paymentOptimisticRecipient_(cabinId,payload,schedule){
   return {type:type,travelerId:travelerId,name:name};
 }
 
+function paymentOptimisticLatestVersion_(rows){
+  let latest='';
+  (rows||[]).forEach(function(row){
+    const version=String(row&&row['Updated At']||row&&row['Created At']||'');
+    if(version&&version>latest) latest=version;
+  });
+  return latest;
+}
+
+function paymentOptimisticExpectedVersion_(method,payload){
+  payload=payload||{};
+  const cabinId=String(payload.cabinId||'');
+  const id=String(payload.id||'');
+
+  if(method==='saveBookingPlan'){
+    const plan=paymentPlan_(cabinId);
+    return String(plan&&plan['Updated At']||'');
+  }
+
+  if(method==='savePaymentShares'){
+    return paymentOptimisticLatestVersion_(paymentSavedShares_(cabinId));
+  }
+
+  if(method==='savePaymentScheduleItem'||method==='deletePaymentScheduleItem'){
+    const row=(paymentState_.schedule||[]).find(function(item){
+      return String(item['Schedule ID']||'')===id;
+    });
+    return String(row&&row['Updated At']||'');
+  }
+
+  if(method==='saveBookingPayment'||method==='deleteBookingPayment'){
+    const row=(paymentState_.payments||[]).find(function(item){
+      return String(item['Payment ID']||'')===id;
+    });
+    return String(row&&row['Updated At']||'');
+  }
+
+  return '';
+}
+
+function paymentOptimisticPrepareMutation_(key,method,payload){
+  const prepared=Object.assign({},payload||{});
+  if(!prepared.requestId){
+    prepared.requestId=paymentOptimisticId_('REQ');
+  }
+
+  const earlierSameKey=paymentOptimisticQueue_.jobs.some(function(job){
+    return String(job.key||'')===String(key||'');
+  });
+
+  // The first local mutation for a record carries the server version the user
+  // actually edited. A later same-device mutation for the same queue key is
+  // intentionally chained behind it and must not compare against the first
+  // optimistic timestamp, which is not a server-issued version.
+  if(earlierSameKey){
+    delete prepared.expectedUpdatedAt;
+  }else if(prepared.expectedUpdatedAt===undefined){
+    const version=paymentOptimisticExpectedVersion_(method,prepared);
+    if(version) prepared.expectedUpdatedAt=version;
+  }
+
+  return prepared;
+}
+
 function paymentOptimisticApply_(method,payload){
   payload=payload||{};
   const now=new Date().toISOString();
@@ -92,6 +156,10 @@ function paymentOptimisticApply_(method,payload){
     const previousShares=Array.isArray(payload.shares)
       ? paymentOptimisticClone_(paymentSavedShares_(cabinId))
       : null;
+    const previousSharesByTraveler={};
+    (previousShares||[]).forEach(function(row){
+      previousSharesByTraveler[String(row['Traveler ID']||'')]=row;
+    });
     const existing=previous||{};
     const row={
       'Booking Plan ID':String(existing['Booking Plan ID']||paymentOptimisticId_('BOOK')),
@@ -108,16 +176,18 @@ function paymentOptimisticApply_(method,payload){
 
     if(Array.isArray(payload.shares)){
       paymentOptimisticReplaceShares_(cabinId,payload.shares.map(function(item){
+        const travelerId=String(item.travelerId||'');
+        const existingShare=previousSharesByTraveler[travelerId]||{};
         return {
-          'Share ID':paymentOptimisticId_('SHARE'),
+          'Share ID':String(existingShare['Share ID']||paymentOptimisticId_('SHARE')),
           'Cabin ID':cabinId,
-          'Traveler ID':String(item.travelerId||''),
+          'Traveler ID':travelerId,
           'Split Basis':row['Split Basis'],
           'Source Total':Number(payload.bookingTotal||0),
           'Calculated Share':Number(item.calculatedShare||0),
           'Adjusted Share':Number(item.adjustedShare||0),
           'Notes':String(item.notes||''),
-          'Created At':now,
+          'Created At':existingShare['Created At']||now,
           'Updated At':now
         };
       }));
@@ -132,20 +202,26 @@ function paymentOptimisticApply_(method,payload){
   if(method==='savePaymentShares'){
     const cabinId=String(payload.cabinId||'');
     const previousShares=paymentOptimisticClone_(paymentSavedShares_(cabinId));
+    const previousSharesByTraveler={};
+    (previousShares||[]).forEach(function(row){
+      previousSharesByTraveler[String(row['Traveler ID']||'')]=row;
+    });
     const previousPlan=paymentOptimisticClone_(paymentPlan_(cabinId));
     const basis=String(payload.splitBasis||'Adult')==='Bedroom'?'Bedroom':'Adult';
 
     paymentOptimisticReplaceShares_(cabinId,(payload.shares||[]).map(function(item){
+      const travelerId=String(item.travelerId||'');
+      const existingShare=previousSharesByTraveler[travelerId]||{};
       return {
-        'Share ID':paymentOptimisticId_('SHARE'),
+        'Share ID':String(existingShare['Share ID']||paymentOptimisticId_('SHARE')),
         'Cabin ID':cabinId,
-        'Traveler ID':String(item.travelerId||''),
+        'Traveler ID':travelerId,
         'Split Basis':basis,
         'Source Total':Number(payload.sourceTotal||0),
         'Calculated Share':Number(item.calculatedShare||0),
         'Adjusted Share':Number(item.adjustedShare||0),
         'Notes':String(item.notes||''),
-        'Created At':now,
+        'Created At':existingShare['Created At']||now,
         'Updated At':now
       };
     }));
@@ -260,6 +336,7 @@ function paymentOptimisticRender_(){
 }
 
 function paymentOptimisticQueueWrite_(label,key,method,payload,successText){
+  payload=paymentOptimisticPrepareMutation_(key,method,payload);
   const rollback=paymentOptimisticApply_(method,payload);
   const saveId=typeof beginBackgroundSave_==='function'
     ? beginBackgroundSave_(label,key)
