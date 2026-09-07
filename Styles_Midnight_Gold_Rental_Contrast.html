@@ -1,0 +1,48 @@
+<style>
+/* ==========================================================
+   MIDNIGHT GOLD RENTAL CONTRAST
+   Final rental-card contrast normalization for pricing and
+   family review surfaces that retain legacy light colors.
+   Visual-only: no layout or behavior changes.
+   ========================================================== */
+
+.rental-pricing-console{
+  background:linear-gradient(145deg,#151b2a,#101522)!important;
+  color:var(--ink)!important;
+  border-color:rgba(216,181,101,.28)!important;
+  box-shadow:0 8px 22px rgba(0,0,0,.20)!important
+}
+.pricing-console-main>div>span{color:var(--gold)!important}
+.pricing-console-main>div>strong{color:var(--gold-soft)!important}
+.pricing-console-main>div>small,
+.pricing-toggle-row>label{color:var(--muted)!important}
+.pricing-toggle-row{border-top-color:var(--line)!important}
+.pricing-mode-switch{
+  background:#0f1522!important;
+  border-color:var(--line)!important
+}
+.pricing-mode-switch button{color:var(--muted)!important}
+.pricing-mode-switch button.active{
+  background:linear-gradient(135deg,#f1d892,#c89e4f)!important;
+  color:#080c16!important
+}
+
+.my-rating,
+.family-review-progress{
+  background:#151b2a!important;
+  color:var(--ink)!important;
+  border-color:var(--line)!important;
+  box-shadow:0 6px 16px rgba(0,0,0,.15)!important
+}
+.my-rating strong,
+.family-review-progress strong{color:var(--ink)!important}
+.my-rating span,
+.family-review-progress span{color:var(--muted)!important}
+.my-rating.reviewed{
+  background:rgba(98,211,148,.08)!important;
+  border-color:rgba(98,211,148,.25)!important
+}
+.my-rating.reviewed strong{color:#a8efc5!important}
+.review-progress-track{background:#262e3e!important}
+.review-progress-track span{background:var(--gold)!important}
+</style>
