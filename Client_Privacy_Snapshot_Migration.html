@@ -9,9 +9,26 @@
   const legacySnapshot='vacationPortalStartupSnapshotV420';
 
   try{
-    if(localStorage.getItem(marker)==='1') return;
-    localStorage.removeItem(legacySnapshot);
-    localStorage.setItem(marker,'1');
+    if(localStorage.getItem(marker)!=='1'){
+      localStorage.removeItem(legacySnapshot);
+      localStorage.setItem(marker,'1');
+    }
   }catch(error){}
 })();
+
+/* If the organizer authorization dialog is cancelled while a privacy-gated
+ * data load is waiting, clear that loader state so a later retry works.
+ * Client_Privacy_Integration initializes these globals before the user can
+ * invoke the dialog.
+ */
+const privacyCancelOrganizerAuthorizationBefore_=cancelOrganizerAuthorization_;
+cancelOrganizerAuthorization_=function(){
+  if(typeof privacyOrganizerTravelerLoading_!=='undefined'){
+    privacyOrganizerTravelerLoading_=false;
+  }
+  if(typeof privacyOrganizerTravelerCallbacks_!=='undefined'){
+    privacyOrganizerTravelerCallbacks_=[];
+  }
+  return privacyCancelOrganizerAuthorizationBefore_.apply(this,arguments);
+};
 </script>
