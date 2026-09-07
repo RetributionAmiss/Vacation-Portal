@@ -6,6 +6,10 @@ const vm=require('vm');
 const root=path.resolve(__dirname,'..');
 const source=fs.readFileSync(path.join(root,'DataIntegrity.gs'),'utf8');
 const paymentsSource=fs.readFileSync(path.join(root,'Payments.gs'),'utf8');
+const paymentClientSource=fs.readFileSync(
+  path.join(root,'Client_Payments_Optimistic.html'),
+  'utf8'
+);
 
 const cache=new Map();
 let locked=false;
@@ -235,6 +239,14 @@ assert.strictEqual(normalized['Created At'],'2026-01-01T00:00:00.000Z','editing 
 assert.strictEqual(normalized['Source Total'],10.08,'share source totals must be canonicalized at integer-cent boundaries');
 assert.strictEqual(normalized['Calculated Share'],3.34);
 assert.strictEqual(normalized['Adjusted Share'],3.34);
+assert.strictEqual(
+  sandbox.paymentShareVersion_([
+    {'Updated At':'2026-01-02T00:00:00.000Z'},
+    {'Updated At':'2026-01-04T00:00:00.000Z'},
+    {'Updated At':'2026-01-03T00:00:00.000Z'}
+  ]),
+  '2026-01-04T00:00:00.000Z'
+);
 
 const saveSharesSource=functionSlice(paymentsSource,'savePaymentShares','saveBookingPlan');
 assert(/withPortalMutationLock_\s*\(/.test(saveSharesSource),'payment-share saves must run inside the shared mutation lock');
@@ -245,6 +257,55 @@ const savePlanSource=functionSlice(paymentsSource,'saveBookingPlan','paymentSche
 assert(/withPortalMutationLock_\s*\(/.test(savePlanSource),'booking-plan saves must share the payment mutation lock');
 assert(/portalMoneyToCents_\s*\(/.test(savePlanSource),'booking totals must cross an integer-cent boundary before persistence');
 assert(/existingShares/.test(savePlanSource),'booking-plan share updates must preserve stable existing share IDs');
+
+const saveScheduleSource=functionSlice(
+  paymentsSource,
+  'savePaymentScheduleItem',
+  'deletePaymentScheduleItem'
+);
+assert(/withPortalMutationLock_\s*\(/.test(saveScheduleSource),'schedule saves must use the shared payment mutation lock');
+assert(/portalMoneyToCents_\s*\(/.test(saveScheduleSource),'scheduled amounts must be canonicalized through integer cents');
+assert(/assertExpectedVersion_\s*\(/.test(saveScheduleSource),'schedule edits must reject stale versions');
+assert(/rememberMutationResult_\s*\(/.test(saveScheduleSource),'schedule creates/updates must be idempotent by request ID');
+
+const deleteScheduleSource=functionSlice(
+  paymentsSource,
+  'deletePaymentScheduleItem',
+  'bookingPaymentRecord_'
+);
+assert(/withPortalMutationLock_\s*\(/.test(deleteScheduleSource),'schedule deletes must run under the shared lock');
+assert(/assertExpectedVersion_\s*\(/.test(deleteScheduleSource),'schedule deletes must reject stale versions');
+
+const savePaymentSource=functionSlice(
+  paymentsSource,
+  'saveBookingPayment',
+  'deleteBookingPayment'
+);
+assert(/withPortalMutationLock_\s*\(/.test(savePaymentSource),'ledger saves must use the shared payment mutation lock');
+assert(/portalMoneyToCents_\s*\(/.test(savePaymentSource),'ledger amounts must be canonicalized through integer cents');
+assert(/assertExpectedVersion_\s*\(/.test(savePaymentSource),'payment edits must reject stale versions');
+assert(/rememberMutationResult_\s*\(/.test(savePaymentSource),'payment creates/updates must be idempotent by request ID');
+
+const deletePaymentSource=functionSlice(paymentsSource,'deleteBookingPayment',null);
+assert(/withPortalMutationLock_\s*\(/.test(deletePaymentSource),'payment deletes must run under the shared lock');
+assert(/assertExpectedVersion_\s*\(/.test(deletePaymentSource),'payment deletes must reject stale versions');
+
+const prepareClientStart=paymentClientSource.indexOf('function paymentOptimisticPrepareMutation_(');
+const applyClientStart=paymentClientSource.indexOf('function paymentOptimisticApply_(',prepareClientStart);
+assert(prepareClientStart>=0&&applyClientStart>prepareClientStart,'payment client must prepare mutation metadata before optimistic apply');
+const prepareClientSource=paymentClientSource.slice(prepareClientStart,applyClientStart);
+assert(/requestId/.test(prepareClientSource)&&/paymentOptimisticId_\('REQ'\)/.test(prepareClientSource),'payment client must issue a stable request ID for every queued mutation');
+assert(/expectedUpdatedAt/.test(prepareClientSource)&&/paymentOptimisticExpectedVersion_/.test(prepareClientSource),'payment client must send the server version the user edited');
+assert(/earlierSameKey/.test(prepareClientSource),'same-device queued writes must avoid self-conflicting on optimistic timestamps');
+
+const queueClientStart=paymentClientSource.indexOf('function paymentOptimisticQueueWrite_(');
+const pumpClientStart=paymentClientSource.indexOf('function paymentOptimisticPump_(',queueClientStart);
+const queueClientSource=paymentClientSource.slice(queueClientStart,pumpClientStart);
+assert(
+  queueClientSource.indexOf('paymentOptimisticPrepareMutation_')<
+    queueClientSource.indexOf('paymentOptimisticApply_'),
+  'request/version metadata must be captured before local optimistic state changes'
+);
 
 assert(/DATA_CONFLICT/.test(source),'conflict errors must have a stable machine-readable prefix');
 assert(/LockService\.getScriptLock/.test(source),'critical mutations must have a centralized ScriptLock helper');
