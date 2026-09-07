@@ -58,7 +58,7 @@ function onOpen() {
 
 function getPortalData() {
   ensurePortalSchemaCurrent_();
-  return buildPortalDataFull_();
+  return sanitizePortalPayloadForViewer_(buildPortalDataFull_(), '');
 }
 
 function normalizePortalDeviceId_(value) {
@@ -185,7 +185,7 @@ function getPortalStartupData(deviceId) {
       const parsed = JSON.parse(cached);
       parsed.serverTime = new Date().toISOString();
       parsed.fromServerCache = true;
-      return addDeviceTravelerBindingToPayload_(parsed, deviceId);
+      return sanitizePortalPayloadForViewer_(parsed, deviceId);
     }
   } catch (cacheError) {
     // Startup should never fail because CacheService was unavailable.
@@ -256,14 +256,14 @@ function getPortalStartupData(deviceId) {
     cache.put(cacheKey, JSON.stringify(payload), 15);
   } catch (cacheError) {}
 
-  return addDeviceTravelerBindingToPayload_(payload, deviceId);
+  return sanitizePortalPayloadForViewer_(payload, deviceId);
 }
 
 function getPortalDeferredData() {
   ensurePortalSchemaCurrent_();
   const result = buildPortalDataFull_();
   result.deferredLoaded = true;
-  return result;
+  return sanitizePortalPayloadForViewer_(result, '');
 }
 
 function buildPortalDataFull_() {
@@ -496,9 +496,13 @@ function getRentalImportUpdates() {
       cabinId: cabinId,
       stage: cabin['Import Stage'] || '',
       queueStatus: queueRow ? queueRow.Status : '',
-      queueError: queueRow ? queueRow['Last Error'] || '' : '',
+      queueError: queueRow && queueRow['Last Error']
+        ? 'Import needs organizer review.'
+        : '',
       editStatus: editRow ? editRow.Status || '' : '',
-      editError: editRow ? editRow['Last Error'] || '' : '',
+      editError: editRow && editRow['Last Error']
+        ? 'Rental edit needs organizer review.'
+        : '',
       importStatus: importRow ? importRow.Status || '' : '',
       updatedAt: cabin['Updated At'] || '',
       name: cabin['Cabin Name'] || '',
