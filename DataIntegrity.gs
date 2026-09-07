@@ -33,7 +33,14 @@ function portalMoneyToCents_(value, options) {
     throw new Error('Enter a valid money amount.');
   }
 
-  const cents = Math.round((numeric + Number.EPSILON) * 100);
+  // Round only at the integer-cent boundary. The adaptive epsilon offsets
+  // binary floating-point artifacts such as 10.075 * 100 evaluating just
+  // below 1007.5 without materially changing genuine fractional-cent values.
+  const scaled = numeric * 100;
+  const direction = scaled < 0 ? -1 : 1;
+  const correction =
+    direction * Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+  const cents = Math.round(scaled + correction);
 
   if (options.allowNegative !== true && cents < 0) {
     throw new Error('Money amounts cannot be negative.');
