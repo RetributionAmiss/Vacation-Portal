@@ -113,19 +113,16 @@ function saveTraveler(values) {
 
   if (isNew) {
     assertOrganizerFromValues_(values);
-    const id = uid_('TRAV');
-    const prepared = travelerRecordFromValues_(
-      Object.assign({}, values, {id: id}),
-      {},
-      true
-    );
-    return writeTravelerRecord_(prepared.record, prepared.parentName, true);
+    return withPortalMutationLock_(function() {
+      const id = uid_('TRAV');
+      const prepared = travelerRecordFromValues_(
+        Object.assign({}, values, {id: id}),
+        {},
+        true
+      );
+      return writeTravelerRecord_(prepared.record, prepared.parentName, true);
+    });
   }
-
-  const existing = readSheet_('Travelers').find(function(row) {
-    return String(row['Traveler ID'] || '') === requestedId;
-  });
-  if (!existing) throw new Error('The selected traveler could not be found.');
 
   let organizer = false;
   try {
@@ -141,8 +138,15 @@ function saveTraveler(values) {
     assertTravelerSelf_(values.deviceId, requestedId);
   }
 
-  const prepared = travelerRecordFromValues_(values, existing, organizer);
-  return writeTravelerRecord_(prepared.record, prepared.parentName, false);
+  return withPortalMutationLock_(function() {
+    const existing = readSheet_('Travelers').find(function(row) {
+      return String(row['Traveler ID'] || '') === requestedId;
+    });
+    if (!existing) throw new Error('The selected traveler could not be found.');
+
+    const prepared = travelerRecordFromValues_(values, existing, organizer);
+    return writeTravelerRecord_(prepared.record, prepared.parentName, false);
+  });
 }
 
 function deleteTraveler(values) {
@@ -150,20 +154,22 @@ function deleteTraveler(values) {
   assertOrganizerFromValues_(values);
   const id = String(values.id || '').trim();
 
-  const children = readSheet_('Travelers').filter(function(row) {
-    return row['Parent/Guardian ID'] === id &&
-      String(row.Active || 'Yes').toLowerCase() !== 'no';
+  return withPortalMutationLock_(function() {
+    const children = readSheet_('Travelers').filter(function(row) {
+      return row['Parent/Guardian ID'] === id &&
+        String(row.Active || 'Yes').toLowerCase() !== 'no';
+    });
+
+    if (children.length) {
+      throw new Error(
+        'Reassign ' + children.length +
+        ' child traveler(s) before deleting this adult.'
+      );
+    }
+
+    deleteById_('Travelers', 'Traveler ID', id);
+    return getPortalData();
   });
-
-  if (children.length) {
-    throw new Error(
-      'Reassign ' + children.length +
-      ' child traveler(s) before deleting this adult.'
-    );
-  }
-
-  deleteById_('Travelers', 'Traveler ID', id);
-  return getPortalData();
 }
 
 function getTravelerType_(row) {
