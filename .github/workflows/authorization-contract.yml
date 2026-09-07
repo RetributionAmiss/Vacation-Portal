@@ -30,6 +30,8 @@ jobs:
         run: node tests/shared_mutation_integrity_contract.test.js
       - name: Run privacy trust boundary contracts
         run: node tests/privacy_trust_boundaries_contract.test.js
+      - name: Run privacy payload integration contracts
+        run: node tests/privacy_payload_integration_contract.test.js
       - name: Run UI foundation contract tests
         run: node tests/ui_foundation_contract.test.js
       - name: Run Midnight Gold Command Center theme contract
