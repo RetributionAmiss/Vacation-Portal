@@ -26,6 +26,8 @@ jobs:
         run: node tests/secret_scan.js
       - name: Run data integrity foundation contract
         run: node tests/data_integrity_foundation_contract.test.js
+      - name: Run shared mutation integrity contracts
+        run: node tests/shared_mutation_integrity_contract.test.js
       - name: Run UI foundation contract tests
         run: node tests/ui_foundation_contract.test.js
       - name: Run Midnight Gold Command Center theme contract
