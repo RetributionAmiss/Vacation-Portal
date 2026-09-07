@@ -79,6 +79,22 @@ assert.strictEqual(organizerPayload.organizerTravelers.length, 2);
 assert.strictEqual(organizerPayload.organizerTravelers[1].Email, 'blair@example.com');
 assert.strictEqual(organizerPayload.organizerTravelers[1]['Cost %'], 80);
 
+function functionBlock(name, nextName) {
+  const start = source.indexOf('function ' + name + '(');
+  assert(start >= 0, `Missing ${name}`);
+  const end = nextName ? source.indexOf('function ' + nextName + '(', start + 1) : source.length;
+  assert(end > start, `Missing boundary after ${name}`);
+  return source.slice(start, end);
+}
+
+const selfRead = functionBlock('getTravelerPrivateProfile', 'getOrganizerTravelerData');
+assert(/assertTravelerSelf_\(values\.deviceId, travelerId\)/.test(selfRead), 'Traveler-private reads must validate the bound device traveler');
+assert(/serializeTravelerPrivateProfile_/.test(selfRead), 'Traveler-private endpoint must return the private allowlisted DTO');
+
+const organizerRead = functionBlock('getOrganizerTravelerData', null);
+assert(/assertOrganizerFromValues_\(values\)/.test(organizerRead), 'Organizer traveler reads must require organizer authorization');
+assert(/serializeOrganizerTraveler_/.test(organizerRead), 'Organizer endpoint must return organizer allowlisted DTOs');
+
 assert(/PORTAL_SHARED_TRAVELER_FIELDS_/.test(source), 'Shared traveler fields must be explicitly allowlisted');
 assert(/PORTAL_PRIVATE_TRAVELER_FIELDS_/.test(source), 'Traveler-private fields must be explicitly allowlisted');
 assert(/PORTAL_ORGANIZER_TRAVELER_FIELDS_/.test(source), 'Organizer-only traveler fields must be explicitly allowlisted');
