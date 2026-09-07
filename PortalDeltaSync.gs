@@ -101,7 +101,7 @@ function getPortalDelta(sinceIso) {
           ].indexOf(String(row.Status || '')) >= 0;
       }) || null;
 
-      return Object.assign({}, cabin, {
+      return sanitizeSharedCabin_(Object.assign({}, cabin, {
         bedrooms: bedrooms.filter(function (bedroom) {
           return bedroom['Cabin ID'] === cabinId;
         }),
@@ -130,7 +130,7 @@ function getPortalDelta(sinceIso) {
         amenityRows: amenities.filter(function (row) {
           return row['Cabin ID'] === cabinId;
         })
-      });
+      }));
     });
 
   return {
