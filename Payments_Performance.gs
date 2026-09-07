@@ -80,10 +80,9 @@ function getPortalDeferredDataWithPayments() {
   result.deferredLoaded = true;
 
   // Bundle the payment snapshot into the deferred trip-data request. Dashboard
-  // first paint is still handled by getPortalStartupData(), so this adds no
-  // payment work to the fast startup path and removes a second Apps Script
-  // round-trip before Payments can be ready.
+  // first paint is still handled by the performance-focused startup endpoint.
+  // The portal portion is sanitized before it crosses the browser boundary.
   result.paymentData = getPaymentDataFast(false);
 
-  return result;
+  return sanitizePortalPayloadForViewer_(result, '');
 }
