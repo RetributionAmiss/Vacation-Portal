@@ -15,7 +15,8 @@ must(/cache\.put\([\s\S]*120[\s\S]*\)/.test(server),'Lightweight startup cache s
 must(/payload\.trip = getSettings_\('Trip'\)/.test(server),'Trip settings must be refreshed independently of the startup cache.');
 must(/getPortalStartupData\(deviceId\)/.test(server),'Cold startup must preserve the existing lightweight startup builder.');
 must(/focusPortalPayloadToFinalRental_/.test(server),'Fast startup must preserve finalized-rental filtering.');
-must(/addDeviceTravelerBindingToPayload_/.test(server),'Fast startup must preserve saved-device traveler context.');
+must(/sanitizePortalPayloadForViewer_\(payload, deviceId\)/.test(server),'Fast startup must preserve saved-device context through the privacy-safe response boundary.');
+must(/delete copy\.travelerPrivate/.test(server)&&/delete copy\.organizerTravelers/.test(server),'Cross-device performance cache must never retain viewer-private traveler data.');
 
 must(/getPortalStartupDataPerformanceFocused\(PWA_DEVICE_ID_\)/.test(client),'Client refresh must use the performance startup endpoint.');
 must(/requestIdleCallback/.test(client)&&/setTimeout\(run,180\)/.test(client),'Full deferred loading must yield to first paint.');
@@ -28,6 +29,7 @@ must(/priorLazy/.test(client)&&/packingItems/.test(client)&&/travelPlans/.test(c
 
 must(index.includes("include('Client_P3_Startup_Performance')"),'AppsScriptIndex must load the startup performance layer.');
 must(index.indexOf("include('Client_P3_Startup_Performance')")>index.indexOf("include('Client_P3_Travel_Arrivals')"),'Startup performance layer must load after Travel and other Home-card layers.');
+must(index.indexOf("include('Client_Privacy_Integration')")>index.indexOf("include('Client_P3_Startup_Performance')"),'Privacy integration must be the final client behavior layer.');
 
 const executable=client.replace(/^<script>\s*/,'').replace(/\s*<\/script>\s*$/,'');
 new Function(executable);
