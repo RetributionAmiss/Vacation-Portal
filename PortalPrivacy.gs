@@ -22,6 +22,46 @@ const PORTAL_ORGANIZER_TRAVELER_FIELDS_ = [
   'Pay More'
 ];
 
+const PORTAL_SHARED_IMPORT_FIELDS_ = [
+  'Import ID',
+  'Provider',
+  'Status',
+  'Cabin ID',
+  'Property Name',
+  'Submitted At',
+  'Updated At'
+];
+
+const PORTAL_SHARED_QUEUE_FIELDS_ = [
+  'Queue ID',
+  'Import ID',
+  'Cabin ID',
+  'Provider',
+  'Status',
+  'Created At',
+  'Updated At'
+];
+
+const PORTAL_SHARED_CABIN_DETAIL_FIELDS_ = [
+  'Detail ID',
+  'Cabin ID',
+  'Check In',
+  'Check Out',
+  'Minimum Age',
+  'Pets',
+  'Pool',
+  'Hot Tub',
+  'Theater',
+  'Arcade',
+  'Kitchen',
+  'Laundry',
+  'Outdoor Space',
+  'Internet',
+  'Latitude',
+  'Longitude',
+  'Updated At'
+];
+
 function portalPickFields_(row, fields) {
   const source = row || {};
   const result = {};
@@ -61,6 +101,37 @@ function serializeOrganizerTraveler_(row) {
   );
 }
 
+function serializeSharedRentalImport_(row) {
+  if (!row) return null;
+  return portalPickFields_(row, PORTAL_SHARED_IMPORT_FIELDS_);
+}
+
+function serializeSharedRentalQueue_(row) {
+  if (!row) return null;
+  return portalPickFields_(row, PORTAL_SHARED_QUEUE_FIELDS_);
+}
+
+function serializeSharedCabinDetail_(row) {
+  if (!row) return null;
+  return portalPickFields_(row, PORTAL_SHARED_CABIN_DETAIL_FIELDS_);
+}
+
+function sanitizeSharedCabin_(cabin) {
+  const result = Object.assign({}, cabin || {});
+
+  if (Object.prototype.hasOwnProperty.call(result, 'import')) {
+    result.import = serializeSharedRentalImport_(result.import);
+  }
+  if (Object.prototype.hasOwnProperty.call(result, 'queue')) {
+    result.queue = serializeSharedRentalQueue_(result.queue);
+  }
+  if (Object.prototype.hasOwnProperty.call(result, 'detail')) {
+    result.detail = serializeSharedCabinDetail_(result.detail);
+  }
+
+  return result;
+}
+
 function buildTravelerPrivacyPayload_(rows, viewerTravelerId, organizer) {
   const normalizedRows = Array.isArray(rows) ? rows : [];
   const viewerId = String(viewerTravelerId || '').trim();
@@ -95,6 +166,53 @@ function portalPrivacyTravelerRows_() {
   return rows;
 }
 
+function portalPayloadHasPricingPolicies_(travelers) {
+  return (travelers || []).some(function(row) {
+    return Object.prototype.hasOwnProperty.call(row || {}, 'Price Cap') ||
+      Object.prototype.hasOwnProperty.call(row || {}, 'Cost %') ||
+      Object.prototype.hasOwnProperty.call(row || {}, 'Pay More');
+  });
+}
+
+function sanitizePortalPayloadForViewer_(payload, deviceId) {
+  payload = payload || {};
+  const result = Object.assign({}, payload);
+  const travelers = Array.isArray(payload.travelers) ? payload.travelers : [];
+
+  // Pricing rules are organizer-controlled and must not be copied to every
+  // browser. Derive the amounts while the full rows are still server-side,
+  // then expose only calculation results.
+  if (
+    !result.rentalPricing &&
+    portalPayloadHasPricingPolicies_(travelers) &&
+    typeof buildPortalPricingSnapshot_ === 'function'
+  ) {
+    result.rentalPricing = buildPortalPricingSnapshot_(payload);
+  }
+
+  result.travelers = travelers.map(serializeSharedTraveler_);
+  result.travelerPrivate = null;
+  result.organizerTravelers = [];
+
+  if (Array.isArray(payload.cabins)) {
+    result.cabins = payload.cabins.map(sanitizeSharedCabin_);
+  }
+
+  if (Array.isArray(payload.imports)) {
+    result.imports = payload.imports.map(serializeSharedRentalImport_);
+  }
+
+  if (Array.isArray(payload.importQueue)) {
+    result.importQueue = payload.importQueue.map(serializeSharedRentalQueue_);
+  }
+
+  if (deviceId && typeof addDeviceTravelerBindingToPayload_ === 'function') {
+    addDeviceTravelerBindingToPayload_(result, deviceId);
+  }
+
+  return result;
+}
+
 function getTravelerPrivateProfile(values) {
   ensurePortalSchemaCurrent_();
   values = values || {};
@@ -123,6 +241,19 @@ function getOrganizerTravelerData(values) {
 
   return {
     travelers: portalPrivacyTravelerRows_().map(serializeOrganizerTraveler_),
+    serverTime: new Date().toISOString()
+  };
+}
+
+function getOrganizerRentalDiagnostics(values) {
+  ensurePortalSchemaCurrent_();
+  values = values || {};
+  assertOrganizerFromValues_(values);
+
+  return {
+    imports: readSheet_('Rental Import'),
+    importQueue: readSheet_('Rental Import Queue'),
+    editQueue: readSheet_('Rental Edit Queue'),
     serverTime: new Date().toISOString()
   };
 }
