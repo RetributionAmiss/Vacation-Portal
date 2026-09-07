@@ -138,10 +138,12 @@ function portalPricingAdultSplit_(travelers, totalCost) {
   const adults = portalPricingActiveAdults_(travelers);
   const total = Math.max(0, Number(totalCost || 0));
 
+  // Match the established client calculation exactly. The legacy adult split
+  // reports no unresolved amount when there is no usable adult/total basis.
   if (!adults.length || !total) {
     return {
       rows: [],
-      unresolved: portalPricingMoney_(total),
+      unresolved: 0,
       total: portalPricingMoney_(total),
       covered: 0
     };
@@ -238,6 +240,8 @@ function portalPricingBedroomSplit_(travelers, cabin, assignments, totalCost) {
     });
   });
 
+  // Adults with no room assignment remain at $0. Empty-room balance can still
+  // be absorbed by travelers whose private organizer policy allows it.
   return portalPricingRedistribute_(
     adults.map(function(traveler) {
       const travelerId = String(traveler['Traveler ID'] || '');
@@ -271,8 +275,14 @@ function buildPortalPricingSnapshot_(payload) {
 
     const rental = Math.max(0, Number(cabin['Total Rental Cost'] || 0));
     const total = rental + extras;
+
+    // Store both exact totals instead of linearly scaling a derived split in
+    // the browser. Caps and redistribution are not linear when shared extras
+    // are toggled, so each supported total must be calculated server-side.
     const adult = portalPricingAdultSplit_(travelers, total);
     const bedroom = portalPricingBedroomSplit_(travelers, cabin, assignments, total);
+    const adultRentalOnly = portalPricingAdultSplit_(travelers, rental);
+    const bedroomRentalOnly = portalPricingBedroomSplit_(travelers, cabin, assignments, rental);
 
     result[cabinId] = {
       cabinId: cabinId,
@@ -282,6 +292,8 @@ function buildPortalPricingSnapshot_(payload) {
       splitTotal: portalPricingMoney_(total),
       adult: adult,
       bedroom: bedroom,
+      adultRentalOnly: adultRentalOnly,
+      bedroomRentalOnly: bedroomRentalOnly,
       summary: {
         cappedAdults: adult.rows.filter(function(row) {
           return row.capped;
