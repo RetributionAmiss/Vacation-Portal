@@ -403,47 +403,69 @@ function savePaymentScheduleItem(values) {
   values = values || {};
   assertOrganizerFromValues_(values);
 
-  const cabin = paymentCabin_(values.cabinId);
-  const amount = Number(values.amountDue || 0);
-  if (!(amount > 0)) throw new Error('Scheduled amount must be greater than zero.');
-
-  const recipient = normalizePaymentRecipient_(cabin['Cabin ID'], values);
-  const travelerMap = paymentTravelerMap_();
-  const expectedPayerId = String(values.expectedPayerTravelerId || '').trim();
-
-  if (expectedPayerId && !travelerMap[expectedPayerId]) {
-    throw new Error('The expected payer could not be found.');
+  const requestId = normalizeMutationRequestId_(values.requestId);
+  const scope = 'payment-schedule-' + String(values.cabinId || '');
+  if (requestId && readMutationResult_(scope, requestId)) {
+    return buildPaymentData_();
   }
 
-  const id = String(values.id || '').trim();
-  const existing = id ? paymentScheduleRecord_(id) : null;
-  if (id && (!existing || existing['Cabin ID'] !== cabin['Cabin ID'])) {
-    throw new Error('That scheduled payment could not be found.');
-  }
+  return withPortalMutationLock_(function() {
+    if (requestId && readMutationResult_(scope, requestId)) {
+      return buildPaymentData_();
+    }
 
-  const now = new Date();
-  const record = {
-    'Cabin ID': cabin['Cabin ID'],
-    'Label': String(values.label || 'Booking payment').trim(),
-    'Due Date': String(values.dueDate || '').trim(),
-    'Amount Due': amount,
-    'Expected Payer Traveler ID': expectedPayerId,
-    'Recipient Type': recipient.type,
-    'Recipient Traveler ID': recipient.travelerId,
-    'Recipient Name': recipient.name,
-    'Notes': String(values.notes || '').trim(),
-    'Updated At': now
-  };
+    const cabin = paymentCabin_(values.cabinId);
+    const amountCents = portalMoneyToCents_(values.amountDue || 0);
+    if (!(amountCents > 0)) {
+      throw new Error('Scheduled amount must be greater than zero.');
+    }
+    const amount = portalCentsToMoney_(amountCents);
 
-  if (existing) {
-    updateById_('Payment Schedule', 'Schedule ID', existing['Schedule ID'], record);
-  } else {
-    record['Schedule ID'] = uid_('DUE');
-    record['Created At'] = now;
-    appendObject_('Payment Schedule', record);
-  }
+    const recipient = normalizePaymentRecipient_(cabin['Cabin ID'], values);
+    const travelerMap = paymentTravelerMap_();
+    const expectedPayerId = String(values.expectedPayerTravelerId || '').trim();
 
-  return buildPaymentData_();
+    if (expectedPayerId && !travelerMap[expectedPayerId]) {
+      throw new Error('The expected payer could not be found.');
+    }
+
+    const id = String(values.id || '').trim();
+    const existing = id ? paymentScheduleRecord_(id) : null;
+    if (id && (!existing || existing['Cabin ID'] !== cabin['Cabin ID'])) {
+      throw new Error('That scheduled payment could not be found.');
+    }
+
+    assertExpectedVersion_(
+      values.expectedUpdatedAt,
+      existing && existing['Updated At'],
+      'Payment installment'
+    );
+
+    const now = new Date();
+    const record = {
+      'Cabin ID': cabin['Cabin ID'],
+      'Label': String(values.label || 'Booking payment').trim(),
+      'Due Date': String(values.dueDate || '').trim(),
+      'Amount Due': amount,
+      'Expected Payer Traveler ID': expectedPayerId,
+      'Recipient Type': recipient.type,
+      'Recipient Traveler ID': recipient.travelerId,
+      'Recipient Name': recipient.name,
+      'Notes': String(values.notes || '').trim(),
+      'Updated At': now
+    };
+
+    if (existing) {
+      updateById_('Payment Schedule', 'Schedule ID', existing['Schedule ID'], record);
+    } else {
+      record['Schedule ID'] = uid_('DUE');
+      record['Created At'] = now;
+      appendObject_('Payment Schedule', record);
+    }
+
+    rememberMutationResult_(scope, requestId, {ok: true}, 1800);
+    return buildPaymentData_();
+  });
 }
 
 function deletePaymentScheduleItem(values) {
@@ -451,20 +473,28 @@ function deletePaymentScheduleItem(values) {
   values = values && typeof values === 'object' ? values : {id: values};
   assertOrganizerFromValues_(values);
 
-  const record = paymentScheduleRecord_(values.id);
-  if (!record) throw new Error('That scheduled payment could not be found.');
+  return withPortalMutationLock_(function() {
+    const record = paymentScheduleRecord_(values.id);
+    if (!record) throw new Error('That scheduled payment could not be found.');
 
-  const linked = readSheet_('Payments').some(function(payment) {
-    return payment['Schedule ID'] === record['Schedule ID'];
-  });
-  if (linked) {
-    throw new Error(
-      'This installment already has payment history. Edit the installment instead of deleting it.'
+    assertExpectedVersion_(
+      values.expectedUpdatedAt,
+      record['Updated At'],
+      'Payment installment'
     );
-  }
 
-  deleteById_('Payment Schedule', 'Schedule ID', record['Schedule ID']);
-  return buildPaymentData_();
+    const linked = readSheet_('Payments').some(function(payment) {
+      return payment['Schedule ID'] === record['Schedule ID'];
+    });
+    if (linked) {
+      throw new Error(
+        'This installment already has payment history. Edit the installment instead of deleting it.'
+      );
+    }
+
+    deleteById_('Payment Schedule', 'Schedule ID', record['Schedule ID']);
+    return buildPaymentData_();
+  });
 }
 
 function bookingPaymentRecord_(id) {
@@ -503,80 +533,106 @@ function saveBookingPayment(values) {
   ensurePaymentSheets_();
   values = values || {};
 
-  const cabin = paymentCabin_(values.cabinId);
-  const travelerMap = paymentTravelerMap_();
-  const paidByTravelerId = String(values.paidByTravelerId || '').trim();
-  if (!paidByTravelerId || !travelerMap[paidByTravelerId]) {
-    throw new Error('Choose the traveler who made this payment.');
-  }
+  const requestId = normalizeMutationRequestId_(values.requestId);
+  const scope = 'booking-payment-' + String(values.cabinId || '');
 
-  const id = String(values.id || '').trim();
-  const existing = id ? bookingPaymentRecord_(id) : null;
-  if (id && (!existing || existing['Cabin ID'] !== cabin['Cabin ID'])) {
-    throw new Error('That payment record could not be found.');
-  }
+  return withPortalMutationLock_(function() {
+    const cabin = paymentCabin_(values.cabinId);
+    const travelerMap = paymentTravelerMap_();
+    const paidByTravelerId = String(values.paidByTravelerId || '').trim();
+    if (!paidByTravelerId || !travelerMap[paidByTravelerId]) {
+      throw new Error('Choose the traveler who made this payment.');
+    }
 
-  const writeMode = paymentWriteMode_(values, existing, paidByTravelerId);
+    const id = String(values.id || '').trim();
+    const existing = id ? bookingPaymentRecord_(id) : null;
+    if (id && (!existing || existing['Cabin ID'] !== cabin['Cabin ID'])) {
+      throw new Error('That payment record could not be found.');
+    }
 
-  const amount = Number(values.amount || 0);
-  if (!(amount > 0)) throw new Error('Payment amount must be greater than zero.');
+    const writeMode = paymentWriteMode_(values, existing, paidByTravelerId);
+    if (requestId && readMutationResult_(scope, requestId)) {
+      return buildPaymentData_();
+    }
 
-  const scheduleId = String(values.scheduleId || '').trim();
-  const schedule = scheduleId ? paymentScheduleRecord_(scheduleId) : null;
-  if (scheduleId && (!schedule || schedule['Cabin ID'] !== cabin['Cabin ID'])) {
-    throw new Error('The selected installment could not be found for this rental.');
-  }
+    assertExpectedVersion_(
+      values.expectedUpdatedAt,
+      existing && existing['Updated At'],
+      'Payment record'
+    );
 
-  if (
-    writeMode === 'Traveler' &&
-    schedule &&
-    String(schedule['Expected Payer Traveler ID'] || '').trim() &&
-    String(schedule['Expected Payer Traveler ID'] || '').trim() !== paidByTravelerId
-  ) {
-    throw new Error('This installment is assigned to another traveler.');
-  }
+    const amountCents = portalMoneyToCents_(values.amount || 0);
+    if (!(amountCents > 0)) {
+      throw new Error('Payment amount must be greater than zero.');
+    }
+    const amount = portalCentsToMoney_(amountCents);
 
-  const recipient = schedule
-    ? {
-        type: String(schedule['Recipient Type'] || 'Agency'),
-        travelerId: String(schedule['Recipient Traveler ID'] || ''),
-        name: String(schedule['Recipient Name'] || '')
-      }
-    : normalizePaymentRecipient_(cabin['Cabin ID'], values);
+    const scheduleId = String(values.scheduleId || '').trim();
+    const schedule = scheduleId ? paymentScheduleRecord_(scheduleId) : null;
+    if (scheduleId && (!schedule || schedule['Cabin ID'] !== cabin['Cabin ID'])) {
+      throw new Error('The selected installment could not be found for this rental.');
+    }
 
-  const now = new Date();
-  const record = {
-    'Cabin ID': cabin['Cabin ID'],
-    'Schedule ID': schedule ? schedule['Schedule ID'] : '',
-    'Paid By Traveler ID': paidByTravelerId,
-    'Paid To Type': recipient.type,
-    'Paid To Traveler ID': recipient.travelerId,
-    'Paid To Name': recipient.name,
-    'Amount': amount,
-    'Payment Date': String(values.paymentDate || '').trim(),
-    'Notes': String(values.notes || '').trim(),
-    'Updated At': now
-  };
+    if (
+      writeMode === 'Traveler' &&
+      schedule &&
+      String(schedule['Expected Payer Traveler ID'] || '').trim() &&
+      String(schedule['Expected Payer Traveler ID'] || '').trim() !== paidByTravelerId
+    ) {
+      throw new Error('This installment is assigned to another traveler.');
+    }
 
-  if (existing) {
-    updateById_('Payments', 'Payment ID', existing['Payment ID'], record);
-  } else {
-    record['Payment ID'] = uid_('PAY');
-    record['Created At'] = now;
-    appendObject_('Payments', record);
-  }
+    const recipient = schedule
+      ? {
+          type: String(schedule['Recipient Type'] || 'Agency'),
+          travelerId: String(schedule['Recipient Traveler ID'] || ''),
+          name: String(schedule['Recipient Name'] || '')
+        }
+      : normalizePaymentRecipient_(cabin['Cabin ID'], values);
 
-  return buildPaymentData_();
+    const now = new Date();
+    const record = {
+      'Cabin ID': cabin['Cabin ID'],
+      'Schedule ID': schedule ? schedule['Schedule ID'] : '',
+      'Paid By Traveler ID': paidByTravelerId,
+      'Paid To Type': recipient.type,
+      'Paid To Traveler ID': recipient.travelerId,
+      'Paid To Name': recipient.name,
+      'Amount': amount,
+      'Payment Date': String(values.paymentDate || '').trim(),
+      'Notes': String(values.notes || '').trim(),
+      'Updated At': now
+    };
+
+    if (existing) {
+      updateById_('Payments', 'Payment ID', existing['Payment ID'], record);
+    } else {
+      record['Payment ID'] = uid_('PAY');
+      record['Created At'] = now;
+      appendObject_('Payments', record);
+    }
+
+    rememberMutationResult_(scope, requestId, {ok: true}, 1800);
+    return buildPaymentData_();
+  });
 }
 
 function deleteBookingPayment(values) {
   ensurePaymentSheets_();
   values = values && typeof values === 'object' ? values : {id: values};
 
-  const record = bookingPaymentRecord_(values.id);
-  if (!record) throw new Error('That payment record could not be found.');
+  return withPortalMutationLock_(function() {
+    const record = bookingPaymentRecord_(values.id);
+    if (!record) throw new Error('That payment record could not be found.');
 
-  paymentWriteMode_(values, record, record['Paid By Traveler ID']);
-  deleteById_('Payments', 'Payment ID', record['Payment ID']);
-  return buildPaymentData_();
+    paymentWriteMode_(values, record, record['Paid By Traveler ID']);
+    assertExpectedVersion_(
+      values.expectedUpdatedAt,
+      record['Updated At'],
+      'Payment record'
+    );
+
+    deleteById_('Payments', 'Payment ID', record['Payment ID']);
+    return buildPaymentData_();
+  });
 }
