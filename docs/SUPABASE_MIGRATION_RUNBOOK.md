@@ -2,7 +2,7 @@
 
 ## Current phase: Planner + Packing + Travel controlled runtime cutover
 
-Google Sheets remains the visible read/write source in this release slice. The first browser runtime step is an authenticated Travel Plans shadow read through the top-level PWA Supabase session. The Apps Script iframe never receives Supabase session tokens. The normal Apps Script/Sheets Travel Plans load still runs, while the signed-in PWA reads the same domain from Supabase in parallel and records whether the normalized records match.
+Google Sheets remains the live application source of truth during this shadow stage and remains the visible read/write source in this release slice. The first browser runtime step is an authenticated Travel Plans shadow read through the top-level PWA Supabase session. The Apps Script iframe never receives Supabase session tokens. The normal Apps Script/Sheets Travel Plans load still runs, while the signed-in PWA reads the same domain from Supabase in parallel and records whether the normalized records match.
 
 ### Production shadow snapshot
 
@@ -73,6 +73,6 @@ For each domain: shadow read -> compare -> Supabase read -> dual validation -> S
 
 ## Rollback
 
-For the current Travel Plans stage, rollback is a release-level feature flag: set `supabaseDomains.travelPlans.shadowRead` to `false`. Sheets remains untouched as the visible source, so disabling the shadow read changes no user data. No Supabase session token is sent into the iframe.
+For the current Travel Plans stage, the explicit rollback switch back to Sheets is the release-level `supabaseDomains.travelPlans.shadowRead` flag. Set it to `false` to stop the shadow request. Sheets remains untouched as the visible source, so disabling the shadow read changes no user data. No Supabase session token is sent into the iframe.
 
 After a domain is promoted to Supabase primary reads or writes, retain a release-level feature flag that can restore the last validated Sheets path until that domain has completed its live-test period.
