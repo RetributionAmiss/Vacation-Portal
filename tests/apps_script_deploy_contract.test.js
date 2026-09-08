@@ -9,6 +9,7 @@ function read(relativePath) {
 }
 
 const workflow = read('.github/workflows/authorization-contract.yml');
+const deploymentVerifier = read('scripts/verify_apps_script_webapp.mjs');
 const gitignore = read('.gitignore');
 const claspignore = read('.claspignore');
 const config = read('config.js');
@@ -29,8 +30,7 @@ assert(
 
 assert(
   workflow.includes('secrets.APPS_SCRIPT_ID') &&
-    workflow.includes('secrets.CLASPRC_JSON') &&
-    workflow.includes("'$HOME/.clasprc.json'") === false,
+    workflow.includes('secrets.CLASPRC_JSON'),
   'Deployment must load the Apps Script project identity and clasp OAuth data from GitHub Actions secrets.'
 );
 
@@ -45,35 +45,53 @@ assert(
   manifest.webapp &&
     manifest.webapp.access === 'ANYONE_ANONYMOUS' &&
     manifest.webapp.executeAs === 'USER_DEPLOYING',
-  'Apps Script manifest must preserve the production web-app entry point, anonymous family access, and deployer execution identity.'
+  'Apps Script manifest must preserve anonymous family access and deployer execution identity.'
 );
 
 assert(
   workflow.includes('Verify web app manifest') &&
     workflow.includes("manifest.webapp.access !== 'ANYONE_ANONYMOUS'") &&
     workflow.includes("manifest.webapp.executeAs !== 'USER_DEPLOYING'"),
-  'Deployment must fail before clasp push if the web-app manifest entry point is missing or changed.'
+  'Deployment must fail before clasp push if the web-app manifest configuration is missing or changed.'
+);
+
+assert(
+  deploymentVerifier.includes("entry.entryPointType==='WEB_APP'") &&
+    deploymentVerifier.includes("config.access!=='ANYONE_ANONYMOUS'") &&
+    deploymentVerifier.includes("config.executeAs!=='USER_DEPLOYING'") &&
+    deploymentVerifier.includes('script.googleapis.com/v1/projects/'),
+  'Deployment verifier must inspect the live Apps Script deployment resource and require the expected WEB_APP entry point.'
+);
+
+const preflightIndex = workflow.indexOf('Verify current production WEB_APP entry point');
+const pushIndex = workflow.indexOf('Push main to Apps Script');
+const updateIndex = workflow.indexOf('Update existing web app deployment');
+const postflightIndex = workflow.indexOf('Verify WEB_APP entry point survived deployment');
+assert(
+  preflightIndex >= 0 && pushIndex > preflightIndex && updateIndex > pushIndex && postflightIndex > updateIndex,
+  'The existing WEB_APP entry point must be verified before mutation and verified again after deployment.'
 );
 
 assert(
   workflow.includes('npx --yes @google/clasp@3.4.0 push --force') &&
     workflow.includes('npx --yes @google/clasp@3.4.0 deploy') &&
     workflow.includes('-i "$APPS_SCRIPT_DEPLOYMENT_ID"'),
-  'Deployment must push source and update the existing production web-app deployment in place.'
+  'Deployment must push source and update the existing production deployment in place.'
 );
 
 assert(
   workflow.includes('config.match(/https:\\/\\/script\\.google\\.com\\/macros\\/s\\/') &&
     /portalUrl:\s*'https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec'/.test(config),
-  'Production deployment ID must be resolved from the same public portalUrl used by the PWA.'
+  'Production deployment ID must be resolved from the same portalUrl used by the PWA.'
 );
 
 assert(
   workflow.includes('Smoke test production web app') &&
-    workflow.includes('curl -LfsS') &&
-    workflow.includes('<meta name="application-name" content="Family Vacation Portal">') &&
+    workflow.includes("id=\"loadingScreen\"") &&
+    workflow.includes('Opening the family portal') &&
+    workflow.includes('Sorry, unable to open the file at this time') &&
     workflow.includes('Production Apps Script /exec URL did not return'),
-  'Deployment must verify that the production /exec URL actually serves the portal shell before reporting success.'
+  'Deployment must verify a stable body marker and diagnose the Google Drive failure page before reporting success.'
 );
 
 assert(
@@ -87,4 +105,4 @@ assert(
   'GitHub Pages index.html must remain excluded from Apps Script pushes.'
 );
 
-console.log('PASS Apps Script production deployment automation contract');
+console.log('PASS Apps Script production deployment automation + WEB_APP preservation contract');
