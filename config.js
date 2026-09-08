@@ -5,7 +5,10 @@ window.VACATION_PORTAL_CONFIG = {
   appName: 'Family Vacation Portal',
   shortName: 'Family Trip',
   oneSignalAppId: 'fac4d46d-ba5b-4755-b5b1-8740f59c3b1d',
-  release: 'V4.4.0-alpha2'
+  // The PWA shell sends this value to the Apps Script iframe URL. Bump it
+  // whenever the deployed Apps Script shell changes so browsers cannot keep
+  // showing stale HTML/CSS from a prior deployment under the same /exec URL.
+  release: 'V4.4.0-alpha2.1'
 };
 
 (function installVacationPaymentSnapshotBridge_(){
