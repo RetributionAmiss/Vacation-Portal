@@ -9,6 +9,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const config = read('config.js');
 const auth = read('supabase-auth.js');
+const docs = read('docs/SUPABASE.md');
 const invitation = read('supabase/migrations/20260908041100_auth_invitations_and_membership_claim.sql');
 const privateClaim = read('supabase/migrations/20260908041300_move_invitation_claim_definer_private.sql');
 
@@ -38,8 +39,24 @@ assert(
   'Auth client must persist, refresh, and restore browser sessions.'
 );
 assert(
-  auth.includes('signInWithOtp') && auth.includes('emailRedirectTo: appRedirectUrl()'),
-  'Account onboarding must use passwordless email sign-in and return to the PWA URL.'
+  auth.includes('signInWithOtp') && auth.includes("verifyOtp({") && auth.includes("type: 'email'"),
+  'Account onboarding must send and verify an email OTP inside the PWA.'
+);
+assert(
+  auth.includes('autocomplete="one-time-code"') && auth.includes('Email me a sign-in code'),
+  'The installed PWA must provide a first-class one-time-code entry flow.'
+);
+assert(
+  auth.includes('vacationPortalSupabaseLastEmailV1') && auth.includes('localStorage.setItem(LAST_EMAIL_KEY'),
+  'The PWA should remember the last email used on this device so sign-in is prefilled.'
+);
+assert(
+  auth.includes('vacationPortalSupabasePendingOtpV1') && auth.includes('PENDING_OTP_MAX_AGE_MS'),
+  'A short-lived pending OTP state must survive app switching without persisting verification codes.'
+);
+assert(
+  !auth.includes('emailRedirectTo: appRedirectUrl()'),
+  'Primary installed-app auth must not depend on a Safari magic-link redirect.'
 );
 assert(
   auth.includes("client.rpc('claim_trip_invitations')"),
@@ -56,6 +73,10 @@ assert(
 assert(
   !/postMessage\([^\)]*(?:session|token|access)/i.test(auth),
   'Supabase session/token data must not be posted into the Apps Script iframe.'
+);
+assert(
+  docs.includes('{{ .Token }}') && docs.includes('Email Templates'),
+  'Supabase runbook must document the hosted email OTP template requirement.'
 );
 
 assert(invitation.includes('create table public.trip_invitations'), 'Auth foundation must create trip invitations.');

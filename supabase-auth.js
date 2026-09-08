@@ -4,6 +4,9 @@ const config = window.VACATION_PORTAL_CONFIG || {};
 const supabaseUrl = String(config.supabaseUrl || '').trim();
 const publishableKey = String(config.supabasePublishableKey || '').trim();
 const enabled = Boolean(supabaseUrl && publishableKey);
+const LAST_EMAIL_KEY = 'vacationPortalSupabaseLastEmailV1';
+const PENDING_OTP_KEY = 'vacationPortalSupabasePendingOtpV1';
+const PENDING_OTP_MAX_AGE_MS = 15 * 60 * 1000;
 
 let client = null;
 let currentSession = null;
@@ -15,6 +18,8 @@ let overlay = null;
 let dialog = null;
 let lastFocused = null;
 let initialized = false;
+let pendingEmail = readLastEmail();
+let otpRequested = restorePendingOtp();
 
 const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, character => ({
   '&': '&amp;',
@@ -24,11 +29,54 @@ const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, char
   "'": '&#39;'
 })[character]);
 
-function appRedirectUrl() {
-  const base = new URL(window.location.href);
-  base.hash = '';
-  base.search = '';
-  return base.toString();
+function readLastEmail() {
+  try {
+    return String(localStorage.getItem(LAST_EMAIL_KEY) || '').trim();
+  } catch (error) {
+    return '';
+  }
+}
+
+function saveLastEmail(email) {
+  const value = String(email || '').trim();
+  pendingEmail = value;
+  try {
+    if (value) localStorage.setItem(LAST_EMAIL_KEY, value);
+    else localStorage.removeItem(LAST_EMAIL_KEY);
+  } catch (error) {}
+}
+
+function restorePendingOtp() {
+  try {
+    const pending = JSON.parse(localStorage.getItem(PENDING_OTP_KEY) || 'null');
+    if (!pending || !pending.email || !pending.requestedAt) return false;
+    if (Date.now() - Number(pending.requestedAt) > PENDING_OTP_MAX_AGE_MS) {
+      localStorage.removeItem(PENDING_OTP_KEY);
+      return false;
+    }
+    pendingEmail = String(pending.email || '').trim();
+    return Boolean(pendingEmail);
+  } catch (error) {
+    return false;
+  }
+}
+
+function rememberPendingOtp(email) {
+  saveLastEmail(email);
+  otpRequested = true;
+  try {
+    localStorage.setItem(PENDING_OTP_KEY, JSON.stringify({
+      email: pendingEmail,
+      requestedAt: Date.now()
+    }));
+  } catch (error) {}
+}
+
+function clearPendingOtp() {
+  otpRequested = false;
+  try {
+    localStorage.removeItem(PENDING_OTP_KEY);
+  } catch (error) {}
 }
 
 function ensureStyles() {
@@ -37,49 +85,37 @@ function ensureStyles() {
   style.id = 'vacationSupabaseAuthStyles';
   style.textContent = `
     #supabaseAccountButton{
-      pointer-events:auto!important;
-      display:grid!important;
-      place-items:center!important;
-      width:42px!important;
-      min-width:42px!important;
-      height:42px!important;
-      min-height:42px!important;
-      margin-top:8px!important;
-      padding:0!important;
-      border:1px solid #2a3141!important;
-      border-radius:50%!important;
-      color:#f1d892!important;
-      background:#121827!important;
-      box-shadow:0 5px 16px rgba(0,0,0,.22)!important;
-      font-size:17px!important;
-      line-height:1!important;
-      cursor:pointer!important;
+      pointer-events:auto!important;display:grid!important;place-items:center!important;
+      width:42px!important;min-width:42px!important;height:42px!important;min-height:42px!important;
+      margin-top:8px!important;padding:0!important;border:1px solid #2a3141!important;
+      border-radius:50%!important;color:#f1d892!important;background:#121827!important;
+      box-shadow:0 5px 16px rgba(0,0,0,.22)!important;font-size:17px!important;line-height:1!important;cursor:pointer!important
     }
     #supabaseAccountButton[data-signed-in="true"]{
-      border-color:#d8b565!important;
-      box-shadow:0 0 0 2px rgba(216,181,101,.16),0 5px 16px rgba(0,0,0,.22)!important;
+      border-color:#d8b565!important;box-shadow:0 0 0 2px rgba(216,181,101,.16),0 5px 16px rgba(0,0,0,.22)!important
     }
     .supabase-auth-overlay{
       position:fixed;inset:0;z-index:7000;display:grid;place-items:center;
       padding:max(18px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right))
         max(18px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left));
-      background:rgba(5,9,16,.72);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+      background:rgba(5,9,16,.72);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)
     }
     .supabase-auth-overlay[hidden]{display:none!important}
     .supabase-auth-dialog{
-      width:min(470px,100%);max-height:calc(100dvh - 36px);overflow:auto;
-      padding:22px;border:1px solid #2a3141;border-radius:20px;
-      color:#f7f5ef;background:#121827;box-shadow:0 24px 70px rgba(0,0,0,.45);
+      width:min(470px,100%);max-height:calc(100dvh - 36px);overflow:auto;padding:22px;
+      border:1px solid #2a3141;border-radius:20px;color:#f7f5ef;background:#121827;
+      box-shadow:0 24px 70px rgba(0,0,0,.45)
     }
     .supabase-auth-dialog .eyebrow{margin:0 0 5px;color:#d8b565;font-size:11px;font-weight:900;letter-spacing:.12em}
     .supabase-auth-dialog h2{margin:0 0 8px;color:#f7f5ef;font-family:Georgia,serif}
     .supabase-auth-dialog p{color:#b4bdc9}
     .supabase-auth-dialog label{display:block;margin:16px 0 6px;color:#f7f5ef;font-size:13px;font-weight:800}
     .supabase-auth-dialog input{
-      width:100%;min-height:46px;padding:10px 12px;border:1px solid #343d50;border-radius:10px;
+      box-sizing:border-box;width:100%;min-height:46px;padding:10px 12px;border:1px solid #343d50;border-radius:10px;
       color:#f7f5ef;background:#0d1320;font:inherit;outline:none
     }
     .supabase-auth-dialog input:focus{border-color:#d8b565;box-shadow:0 0 0 3px rgba(216,181,101,.14)}
+    .supabase-auth-dialog .supabase-auth-code{font-size:22px;letter-spacing:.18em;text-align:center;font-variant-numeric:tabular-nums}
     .supabase-auth-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:17px}
     .supabase-auth-actions button{
       min-height:44px;padding:10px 14px;border:1px solid #343d50;border-radius:10px;
@@ -140,6 +176,38 @@ function updateAccountButton() {
   accountButton.title = signedIn ? 'Account · signed in' : 'Sign in';
 }
 
+function signedOutMarkup() {
+  if (otpRequested && pendingEmail) {
+    return `
+      <p class="eyebrow">SUPABASE ACCOUNT</p>
+      <h2 id="supabaseAuthTitle">Enter your sign-in code</h2>
+      <p>We sent a one-time code to <strong class="supabase-auth-email">${esc(pendingEmail)}</strong>. Enter it here to sign in directly inside the app.</p>
+      <label for="supabaseAuthCode">Verification code</label>
+      <input id="supabaseAuthCode" class="supabase-auth-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="10" placeholder="123456">
+      ${authMessage ? `<div class="supabase-auth-status" role="status">${esc(authMessage)}</div>` : ''}
+      <div class="supabase-auth-actions">
+        <button class="primary" type="button" data-auth-action="verify-code" ${authBusy ? 'disabled' : ''}>${authBusy ? 'Verifying…' : 'Verify & sign in'}</button>
+        <button type="button" data-auth-action="resend-code" ${authBusy ? 'disabled' : ''}>Resend code</button>
+        <button type="button" data-auth-action="change-email" ${authBusy ? 'disabled' : ''}>Use a different email</button>
+        <button type="button" data-auth-action="close">Cancel</button>
+      </div>
+      <p class="supabase-auth-footnote">The code is verified by Supabase. Your session stays in the PWA and is not sent into the Apps Script iframe.</p>`;
+  }
+
+  return `
+    <p class="eyebrow">SUPABASE ACCOUNT</p>
+    <h2 id="supabaseAuthTitle">Sign in to your vacation account</h2>
+    <p>Use a one-time email code so the installed app can establish its own secure session without bouncing through Safari.</p>
+    <label for="supabaseAuthEmail">Email address</label>
+    <input id="supabaseAuthEmail" type="email" inputmode="email" autocomplete="email" value="${esc(pendingEmail || readLastEmail())}" placeholder="you@example.com">
+    ${authMessage ? `<div class="supabase-auth-status" role="status">${esc(authMessage)}</div>` : ''}
+    <div class="supabase-auth-actions">
+      <button class="primary" type="button" data-auth-action="send-code" ${authBusy ? 'disabled' : ''}>${authBusy ? 'Sending…' : 'Email me a sign-in code'}</button>
+      <button type="button" data-auth-action="close">Cancel</button>
+    </div>
+    <p class="supabase-auth-footnote">This device remembers the last email you used for convenience. The existing portal continues to work while signed out.</p>`;
+}
+
 function renderAccount() {
   ensureUi();
   if (!dialog) return;
@@ -156,22 +224,11 @@ function renderAccount() {
 
   const user = currentSession && currentSession.user;
   if (!user) {
-    dialog.innerHTML = `
-      <p class="eyebrow">SUPABASE ACCOUNT</p>
-      <h2 id="supabaseAuthTitle">Sign in to your vacation account</h2>
-      <p>Passwordless email sign-in will become the secure identity behind traveler-specific data and permissions.</p>
-      <label for="supabaseAuthEmail">Email address</label>
-      <input id="supabaseAuthEmail" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com">
-      ${authMessage ? `<div class="supabase-auth-status" role="status">${esc(authMessage)}</div>` : ''}
-      <div class="supabase-auth-actions">
-        <button class="primary" type="button" data-auth-action="send-link" ${authBusy ? 'disabled' : ''}>${authBusy ? 'Sending…' : 'Email me a sign-in link'}</button>
-        <button type="button" data-auth-action="close">Cancel</button>
-      </div>
-      <p class="supabase-auth-footnote">The existing portal continues to work even when you are signed out. Supabase data cutover happens domain by domain after validation.</p>`;
+    dialog.innerHTML = signedOutMarkup();
   } else {
     const memberships = currentMemberships.length
       ? `<ul class="supabase-auth-membership">${currentMemberships.map(row => `<li><strong>${esc(row.role || 'traveler')}</strong>${row.traveler_id ? ' · traveler linked' : ''}</li>`).join('')}</ul>`
-      : `<div class="supabase-auth-status">Signed in successfully. No trip membership is linked to this account yet; that link will be created during the controlled migration/onboarding step.</div>`;
+      : '<div class="supabase-auth-status">Signed in successfully. No trip membership is linked to this account yet.</div>';
 
     dialog.innerHTML = `
       <p class="eyebrow">SUPABASE ACCOUNT</p>
@@ -194,7 +251,10 @@ function bindDialogActions() {
     button.addEventListener('click', async () => {
       const action = button.getAttribute('data-auth-action');
       if (action === 'close') return closeAccount();
-      if (action === 'send-link') return sendMagicLink();
+      if (action === 'send-code') return sendEmailCode();
+      if (action === 'verify-code') return verifyEmailCode();
+      if (action === 'resend-code') return sendEmailCode(pendingEmail);
+      if (action === 'change-email') return changeEmail();
       if (action === 'sign-out') return signOut();
       if (action === 'refresh') return refreshMemberships(true);
     });
@@ -217,12 +277,60 @@ function closeAccount() {
   if (lastFocused && typeof lastFocused.focus === 'function') lastFocused.focus();
 }
 
-async function sendMagicLink() {
+function changeEmail() {
+  clearPendingOtp();
+  authMessage = '';
+  renderAccount();
+  setTimeout(() => {
+    const input = document.getElementById('supabaseAuthEmail');
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }, 0);
+}
+
+async function sendEmailCode(explicitEmail) {
   if (!client || authBusy) return;
   const input = document.getElementById('supabaseAuthEmail');
-  const email = String(input && input.value || '').trim();
+  const email = String(explicitEmail || (input && input.value) || pendingEmail || '').trim();
   if (!/^\S+@\S+\.\S+$/.test(email)) {
     authMessage = 'Enter a valid email address.';
+    renderAccount();
+    return;
+  }
+
+  saveLastEmail(email);
+  authBusy = true;
+  authMessage = '';
+  renderAccount();
+  try {
+    const { error } = await client.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: true }
+    });
+    if (error) {
+      authMessage = String(error.message || 'The sign-in code could not be sent.');
+      clearPendingOtp();
+    } else {
+      rememberPendingOtp(email);
+      authMessage = 'Code sent. Check your email, then enter the code here.';
+    }
+  } catch (error) {
+    authMessage = String(error && error.message ? error.message : 'The sign-in code could not be sent.');
+    clearPendingOtp();
+  } finally {
+    authBusy = false;
+    renderAccount();
+  }
+}
+
+async function verifyEmailCode() {
+  if (!client || authBusy || !pendingEmail) return;
+  const input = document.getElementById('supabaseAuthCode');
+  const code = String(input && input.value || '').replace(/\s+/g, '');
+  if (!/^\d{6,10}$/.test(code)) {
+    authMessage = 'Enter the verification code from your email.';
     renderAccount();
     return;
   }
@@ -231,18 +339,24 @@ async function sendMagicLink() {
   authMessage = '';
   renderAccount();
   try {
-    const { error } = await client.auth.signInWithOtp({
-      email,
-      options: {
-        shouldCreateUser: true,
-        emailRedirectTo: appRedirectUrl()
-      }
+    const result = await client.auth.verifyOtp({
+      email: pendingEmail,
+      token: code,
+      type: 'email'
     });
-    authMessage = error
-      ? String(error.message || 'The sign-in email could not be sent.')
-      : 'Check your email and open the secure sign-in link on this device.';
+    if (result.error || !result.data || !result.data.session) {
+      authMessage = String(result.error && result.error.message ? result.error.message : 'That code could not be verified.');
+      return;
+    }
+
+    currentSession = result.data.session;
+    saveLastEmail(currentSession.user && currentSession.user.email ? currentSession.user.email : pendingEmail);
+    clearPendingOtp();
+    await refreshMemberships(false);
+    authMessage = 'Secure account session established.';
+    updateAccountButton();
   } catch (error) {
-    authMessage = String(error && error.message ? error.message : 'The sign-in email could not be sent.');
+    authMessage = String(error && error.message ? error.message : 'That code could not be verified.');
   } finally {
     authBusy = false;
     renderAccount();
@@ -251,6 +365,7 @@ async function sendMagicLink() {
 
 async function signOut() {
   if (!client || authBusy) return;
+  if (currentSession && currentSession.user && currentSession.user.email) saveLastEmail(currentSession.user.email);
   authBusy = true;
   renderAccount();
   try {
@@ -259,6 +374,7 @@ async function signOut() {
     if (!error) {
       currentSession = null;
       currentMemberships = [];
+      clearPendingOtp();
     }
   } catch (error) {
     authMessage = String(error && error.message ? error.message : 'Could not sign out.');
@@ -331,7 +447,11 @@ async function initialize() {
     const initial = await client.auth.getSession();
     currentSession = initial.data && initial.data.session ? initial.data.session : null;
     if (initial.error) console.warn('Supabase session restore failed.', initial.error);
-    if (currentSession) await refreshMemberships(false);
+    if (currentSession) {
+      if (currentSession.user && currentSession.user.email) saveLastEmail(currentSession.user.email);
+      clearPendingOtp();
+      await refreshMemberships(false);
+    }
     updateAccountButton();
   } catch (error) {
     console.warn('Supabase account initialization failed.', error);
@@ -346,6 +466,9 @@ async function initialize() {
       if (overlay && !overlay.hidden) renderAccount();
       return;
     }
+
+    if (session.user && session.user.email) saveLastEmail(session.user.email);
+    clearPendingOtp();
 
     // Defer database work out of the auth callback itself.
     setTimeout(async () => {

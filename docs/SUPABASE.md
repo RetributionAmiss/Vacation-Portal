@@ -4,7 +4,7 @@ Supabase is the target application database for Family Vacation Portal. Google S
 
 ## Current state
 
-The production Supabase project has the migrations in `supabase/migrations/` applied in order. The schema is intentionally empty of vacation data at this stage.
+The production Supabase project has the migrations in `supabase/migrations/` applied in order. Planner, packing, travel, traveler, and related records may exist as validated shadow data while Sheets remains authoritative for the live portal.
 
 The foundation provides:
 
@@ -40,11 +40,34 @@ Initial roles are:
 
 A signed-in user becomes a member of a trip through `trip_members`. RLS checks trip membership in PostgreSQL; browser code is not trusted to enforce row visibility on its own.
 
+## Hosted Auth configuration
+
+The GitHub PWA owns the Supabase browser session. Access and refresh tokens remain in the top-level PWA and are never posted into the Apps Script iframe.
+
+For the installed-app experience, use email OTP rather than relying on a Magic Link opening a separate Safari storage context.
+
+In Supabase Dashboard:
+
+1. Open **Authentication → URL Configuration** and set the Site URL to `https://retributionamiss.github.io/Vacation-Portal/`.
+2. Add that same URL as an allowed redirect URL.
+3. Open **Authentication → Email Templates → Magic Link**.
+4. Change the template so the message contains the Supabase token variable `{{ .Token }}`. Supabase treats the shared email passwordless flow as an OTP when the template exposes the token instead of relying only on the confirmation link.
+
+A minimal template is:
+
+```html
+<h2>Your Family Vacation Portal sign-in code</h2>
+<p>Enter this code in the app:</p>
+<p style="font-size:24px;font-weight:700">{{ .Token }}</p>
+```
+
+The PWA remembers only the last email address used on that device plus a short-lived pending-verification marker. It does not persist the one-time verification code itself.
+
 ## Migration sequence
 
 1. Foundation/schema and RLS — complete.
-2. Supabase Auth/session integration and organizer onboarding.
-3. Planner, packing, and travel migration.
+2. Supabase Auth/session integration and organizer onboarding — in progress.
+3. Planner, packing, and travel migration — shadow copy established; runtime cutover pending.
 4. Payments and budget migration.
 5. Rentals, voting, and room assignments migration.
 6. Realtime subscriptions and IndexedDB cache.
@@ -56,7 +79,7 @@ No app domain should switch to Supabase until its read/write equivalence tests a
 
 Never commit service-role keys, database passwords, access tokens, refresh tokens, or `.env` files containing secrets.
 
-The project URL and browser publishable key may eventually be shipped to the PWA because RLS is the actual data security boundary, but they should only be added when the Auth integration is ready. Service-role credentials remain server-only.
+The project URL and browser publishable key may be shipped to the PWA because RLS is the actual data security boundary. Service-role credentials remain server-only.
 
 ## Schema changes
 
