@@ -1,4 +1,4 @@
-const CACHE_NAME='family-vacation-pwa-v4-4-0-alpha2-12';
+const CACHE_NAME='family-vacation-pwa-v4-4-0-alpha2-13';
 
 const APP_SHELL=[
   './',
@@ -85,7 +85,11 @@ self.addEventListener('fetch',event=>{
   // iOS installed-app cache lag during a guarded cutover test.
   if(
     request.method==='GET' &&
-    (url.pathname.endsWith('/supabase-auth.js') || url.pathname.endsWith('/supabase-domain-bridge.js'))
+    (
+      url.pathname.endsWith('/supabase-auth.js') ||
+      url.pathname.endsWith('/supabase-domain-bridge.js') ||
+      url.pathname.endsWith('/supabase-packing-write-bridge.js')
+    )
   ){
     event.respondWith(networkFirst(request));
     return;
