@@ -1,0 +1,1 @@
+Itinerary shadow-read contract intentionally performs no writes. This fixture exists to make the guarded stage explicit in reviews and should be removed when Itinerary enters shadow-write promotion.
