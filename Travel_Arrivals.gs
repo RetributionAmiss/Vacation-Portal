@@ -38,6 +38,15 @@ function travelArrivalTime_(value) {
   return ('0' + hour).slice(-2) + ':' + ('0' + minute).slice(-2);
 }
 
+function travelArrivalRequestedId_(value) {
+  const id = String(value || '').trim().toUpperCase();
+  if (!id) return '';
+  if (!/^TRAVEL-[A-Z0-9]{10}$/.test(id)) {
+    throw new Error('That travel plan ID is invalid.');
+  }
+  return id;
+}
+
 /*
  * Travel departure/arrival values are clock times, not instants in time.
  * Google Sheets may expose a time-only cell as a Date. Serializing that Date
@@ -110,6 +119,7 @@ function saveMyTravelPlan(values) {
 
   const now = new Date();
   const existing = travelArrivalPlanForTraveler_(travelerId);
+  const requestedId = travelArrivalRequestedId_(values.travelPlanId);
   const record = {
     'Traveler ID': travelerId,
     'Mode': travelArrivalMode_(values.mode),
@@ -126,7 +136,7 @@ function saveMyTravelPlan(values) {
   if (existing) {
     updateById_('Travel Plans', 'Travel Plan ID', existing['Travel Plan ID'], record);
   } else {
-    record['Travel Plan ID'] = uid_('TRAVEL');
+    record['Travel Plan ID'] = requestedId || uid_('TRAVEL');
     record['Created At'] = now;
     appendObject_('Travel Plans', record);
   }
