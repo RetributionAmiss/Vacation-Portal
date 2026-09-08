@@ -5,53 +5,64 @@
    notification controls that still carry the legacy light card.
    ========================================================== */
 
-.traveler-device-panel{
-  background:
+.modal-panel section.traveler-device-panel.wide,
+.modal-panel .traveler-device-panel{
+  background-color:#121827!important;
+  background-image:
     radial-gradient(circle at 92% 8%,rgba(216,181,101,.10),transparent 34%),
     linear-gradient(145deg,#151b2a,#101522)!important;
   color:var(--ink)!important;
   border-color:rgba(216,181,101,.24)!important;
   box-shadow:0 12px 30px rgba(0,0,0,.24)!important
 }
-.traveler-device-panel .eyebrow{
-  color:var(--gold)!important
+.modal-panel .traveler-device-panel .eyebrow{
+  color:var(--gold)!important;
+  background:transparent!important
 }
-.traveler-device-panel h3,
-.traveler-device-panel .traveler-device-status{
+.modal-panel .traveler-device-panel h3,
+.modal-panel .traveler-device-panel .traveler-device-status{
   color:var(--ink)!important
 }
-.traveler-device-panel .muted,
-.traveler-device-panel small{
+.modal-panel .traveler-device-panel>h3,
+.modal-panel .traveler-device-panel>p,
+.modal-panel .traveler-device-panel>small,
+.modal-panel .traveler-device-panel .traveler-device-status>span:not(.status-dot),
+.modal-panel .traveler-device-panel .traveler-device-actions{
+  background:transparent!important
+}
+.modal-panel .traveler-device-panel .muted,
+.modal-panel .traveler-device-panel small{
   color:var(--muted)!important
 }
-.traveler-device-panel .muted strong{
+.modal-panel .traveler-device-panel .muted strong{
   color:var(--gold-soft)!important
 }
-.traveler-device-panel .traveler-device-status{
+.modal-panel .traveler-device-panel .traveler-device-status{
   padding:9px 10px;
-  border:1px solid var(--line);
+  border:1px solid var(--line)!important;
   border-radius:10px;
-  background:#121827!important
+  background-color:#121827!important;
+  background-image:none!important
 }
-.traveler-device-panel .traveler-device-status .status-dot{
+.modal-panel .traveler-device-panel .traveler-device-status .status-dot{
   background:var(--gold)!important;
   box-shadow:0 0 0 3px rgba(216,181,101,.10)
 }
-.traveler-device-panel .traveler-device-status.connected .status-dot,
-.traveler-device-panel .traveler-device-status.enabled .status-dot{
+.modal-panel .traveler-device-panel .traveler-device-status.connected .status-dot,
+.modal-panel .traveler-device-panel .traveler-device-status.enabled .status-dot{
   background:var(--success)!important;
   box-shadow:0 0 0 3px rgba(98,211,148,.10)
 }
-.traveler-device-panel .traveler-device-actions .ghost{
+.modal-panel .traveler-device-panel .traveler-device-actions .ghost{
   background:#151b2a!important;
   color:var(--gold-soft)!important;
   border-color:var(--line)!important
 }
-.traveler-device-panel .traveler-device-actions .ghost:hover{
+.modal-panel .traveler-device-panel .traveler-device-actions .ghost:hover{
   background:#1a2234!important;
   border-color:rgba(216,181,101,.38)!important
 }
-.traveler-device-panel .traveler-device-actions button:not(.ghost){
+.modal-panel .traveler-device-panel .traveler-device-actions button:not(.ghost){
   background:linear-gradient(135deg,#f1d892,#c89e4f)!important;
   color:#080c16!important;
   border-color:rgba(216,181,101,.58)!important
