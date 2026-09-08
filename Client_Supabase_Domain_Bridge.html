@@ -16,7 +16,7 @@
   const REQUEST_TYPE='vacation-portal-supabase-domain-request';
   const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
   const OP_READ_TRAVEL='travelPlans.read';
-  const REQUEST_TIMEOUT_MS=4500;
+  const REQUEST_TIMEOUT_MS=5500;
   const SHADOW_TTL_MS=15000;
   const pending={};
   const legacyTravelLoad=p3TravelArrivalLoad_;
@@ -28,17 +28,33 @@
     return 'supa-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
   }
 
+  function hostTargets_(){
+    const targets=[];
+    try{
+      if(window.parent&&window.parent!==window) targets.push(window.parent);
+    }catch(error){}
+    try{
+      if(window.top&&window.top!==window&&targets.indexOf(window.top)===-1) targets.push(window.top);
+    }catch(error){}
+    return targets;
+  }
+
   function request_(operation){
     return new Promise(function(resolve,reject){
-      if(!window.parent||window.parent===window){
-        reject(new Error('Supabase PWA bridge is unavailable.'));
+      const targets=hostTargets_();
+      if(!targets.length){
+        const error=new Error('Supabase PWA bridge is unavailable.');
+        error.code='bridge_no_host';
+        reject(error);
         return;
       }
 
       const id=requestId_();
       const timer=setTimeout(function(){
         delete pending[id];
-        reject(new Error('Supabase PWA bridge timed out.'));
+        const error=new Error('Supabase PWA bridge timed out.');
+        error.code='bridge_timeout';
+        reject(error);
       },REQUEST_TIMEOUT_MS);
 
       pending[id]={
@@ -46,11 +62,19 @@
         reject:function(error){clearTimeout(timer);reject(error);}
       };
 
-      window.parent.postMessage({
+      const payload={
         type:REQUEST_TYPE,
         requestId:id,
         operation:operation
-      },'*');
+      };
+
+      // Apps Script HTML Service runs the user page inside its own sandbox
+      // iframe. In the installed PWA that can put a Google wrapper between this
+      // page and the GitHub shell, so send to both the immediate parent and the
+      // top window. The PWA host validates the nested Apps Script origin.
+      targets.forEach(function(target){
+        try{target.postMessage(payload,'*');}catch(error){}
+      });
     });
   }
 
@@ -76,7 +100,7 @@
       .sort(function(a,b){return (a.id+'|'+a.travelerId).localeCompare(b.id+'|'+b.travelerId);});
   }
 
-  function announceShadowStatus_(status){
+  function announceShadowStatus_(status,code){
     if(shadowStatusAnnounced||currentView!=='travel'||typeof toast!=='function') return;
     shadowStatusAnnounced=true;
     if(status==='sheets+supabase-shadow-match'){
@@ -88,7 +112,8 @@
       return;
     }
     if(status==='sheets+supabase-shadow-unavailable'){
-      toast('Supabase Travel check was unavailable. Sheets is still being used.',true);
+      const suffix=code?' ('+String(code)+')':'';
+      toast('Supabase Travel check was unavailable'+suffix+'. Sheets is still being used.',true);
     }
   }
 
@@ -114,6 +139,7 @@
   window.addEventListener('message',function(event){
     const data=event&&event.data||{};
     if(data.type!==RESPONSE_TYPE) return;
+    if(event.source!==window.parent&&event.source!==window.top) return;
     const id=String(data.requestId||'');
     const waiter=pending[id];
     if(!waiter) return;
@@ -159,10 +185,18 @@
         }
         recordShadowComparison_(plans,0);
       })
-      .catch(function(){
+      .catch(function(error){
         DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+        DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
         DATA.supabaseDomainSources.travelPlans='sheets+supabase-shadow-unavailable';
-        announceShadowStatus_('sheets+supabase-shadow-unavailable');
+        DATA.supabaseDomainDiagnostics.travelPlans={
+          code:String(error&&error.code||'bridge_error'),
+          message:String(error&&error.message||'Supabase domain request failed.')
+        };
+        announceShadowStatus_(
+          'sheets+supabase-shadow-unavailable',
+          DATA.supabaseDomainDiagnostics.travelPlans.code
+        );
       })
       .then(function(){
         shadowRequestInFlight=false;

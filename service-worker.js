@@ -1,4 +1,4 @@
-const CACHE_NAME='family-vacation-pwa-v4-4-0-alpha2';
+const CACHE_NAME='family-vacation-pwa-v4-4-0-alpha2-8';
 
 const APP_SHELL=[
   './',
@@ -77,6 +77,17 @@ self.addEventListener('fetch',event=>{
     url.pathname.endsWith('/config.js')
   ){
     event.respondWith(networkFirst(request,'./config.js'));
+    return;
+  }
+
+  // Keep the Supabase browser bridge/auth modules current while online. Their
+  // release query string changes on each migration slice, and this also avoids
+  // iOS installed-app cache lag during a guarded cutover test.
+  if(
+    request.method==='GET' &&
+    (url.pathname.endsWith('/supabase-auth.js') || url.pathname.endsWith('/supabase-domain-bridge.js'))
+  ){
+    event.respondWith(networkFirst(request));
     return;
   }
 
