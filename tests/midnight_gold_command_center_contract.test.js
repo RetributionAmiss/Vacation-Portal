@@ -12,6 +12,7 @@ const index = read('AppsScriptIndex.html');
 const theme = read('Styles_Midnight_Gold_Command_Center.html');
 const contrast = read('Styles_Midnight_Gold_Feature_Contrast.html');
 const rentalContrast = read('Styles_Midnight_Gold_Rental_Contrast.html');
+const deviceContrast = read('Styles_Midnight_Gold_Device_Contrast.html');
 
 assert(
   index.includes('<meta name="theme-color" content="#080c16">') &&
@@ -23,11 +24,13 @@ const mobileContainment = index.indexOf("include('Styles_P3_Mobile_Containment')
 const midnightGold = index.indexOf("include('Styles_Midnight_Gold_Command_Center')");
 const featureContrast = index.indexOf("include('Styles_Midnight_Gold_Feature_Contrast')");
 const rentalContrastIndex = index.indexOf("include('Styles_Midnight_Gold_Rental_Contrast')");
+const deviceContrastIndex = index.indexOf("include('Styles_Midnight_Gold_Device_Contrast')");
 assert(
   mobileContainment >= 0 &&
     midnightGold > mobileContainment &&
     featureContrast > midnightGold &&
-    rentalContrastIndex > featureContrast,
+    rentalContrastIndex > featureContrast &&
+    deviceContrastIndex > rentalContrastIndex,
   'Midnight Gold contrast layers must load after existing feature/mobile styles in final override order.'
 );
 
@@ -82,6 +85,17 @@ assert(
   assert(rentalContrast.includes(needle), `Missing Midnight Gold rental contrast coverage: ${needle}`);
 });
 
+[
+  '.traveler-device-panel',
+  '.traveler-device-panel .eyebrow',
+  '.traveler-device-panel .traveler-device-status',
+  '.traveler-device-panel .muted strong',
+  '.traveler-device-panel .traveler-device-actions .ghost',
+  '.traveler-device-panel .traveler-device-actions button:not(.ghost)'
+].forEach((needle) => {
+  assert(deviceContrast.includes(needle), `Missing Midnight Gold traveler device contrast coverage: ${needle}`);
+});
+
 assert(
   contrast.includes('linear-gradient(135deg,#f1d892,#c89e4f)') &&
     contrast.includes('background:#121827!important') &&
@@ -95,6 +109,14 @@ assert(
     rentalContrast.includes('color:var(--gold-soft)!important') &&
     rentalContrast.includes('background:#262e3e!important'),
   'Rental contrast layer must normalize pricing and review surfaces to the Midnight Gold palette.'
+);
+
+assert(
+  deviceContrast.includes('linear-gradient(145deg,#151b2a,#101522)') &&
+    deviceContrast.includes('color:var(--ink)!important') &&
+    deviceContrast.includes('color:var(--gold-soft)!important') &&
+    deviceContrast.includes('background:var(--success)!important'),
+  'Traveler device controls must use readable Midnight Gold dark surfaces, gold actions, and success states.'
 );
 
 assert(
@@ -113,6 +135,7 @@ assert(
   assert(!theme.includes(needle), `Theme layer must remain visual-only and not alter portal behavior/layout: ${needle}`);
   assert(!contrast.includes(needle), `Feature contrast layer must remain visual-only and not alter portal behavior/layout: ${needle}`);
   assert(!rentalContrast.includes(needle), `Rental contrast layer must remain visual-only and not alter portal behavior/layout: ${needle}`);
+  assert(!deviceContrast.includes(needle), `Device contrast layer must remain visual-only and not alter portal behavior/layout: ${needle}`);
 });
 
-console.log('PASS Midnight Gold Command Center visual theme + cross-feature + rental contrast contract');
+console.log('PASS Midnight Gold Command Center visual theme + cross-feature + rental + device contrast contract');
