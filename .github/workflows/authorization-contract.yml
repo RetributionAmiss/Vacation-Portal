@@ -165,7 +165,26 @@ jobs:
           if (!match) {
             throw new Error('Could not resolve the production Apps Script deployment ID from config.js portalUrl.');
           }
+          const url = `https://script.google.com/macros/s/${match[1]}/exec`;
           fs.appendFileSync(process.env.GITHUB_ENV, `APPS_SCRIPT_DEPLOYMENT_ID=${match[1]}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `APPS_SCRIPT_WEBAPP_URL=${url}\n`);
+          NODE
+
+      - name: Verify web app manifest
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const manifest = JSON.parse(fs.readFileSync('appsscript.json', 'utf8'));
+          if (!manifest.webapp) {
+            throw new Error('appsscript.json is missing the webapp configuration.');
+          }
+          if (manifest.webapp.access !== 'ANYONE_ANONYMOUS') {
+            throw new Error('Production web app must remain accessible to family travelers without requiring Google sign-in.');
+          }
+          if (manifest.webapp.executeAs !== 'USER_DEPLOYING') {
+            throw new Error('Production web app must execute as the deploying account so spreadsheet access remains centralized.');
+          }
           NODE
 
       - name: Verify clasp push scope
@@ -181,9 +200,26 @@ jobs:
             -i "$APPS_SCRIPT_DEPLOYMENT_ID" \
             -d "GitHub main ${GITHUB_SHA:0:12}"
 
+      - name: Smoke test production web app
+        shell: bash
+        run: |
+          smoke_url="${APPS_SCRIPT_WEBAPP_URL}?deploymentSmoke=${GITHUB_SHA}"
+          for attempt in $(seq 1 12); do
+            body="$(curl -LfsS --max-time 20 "$smoke_url" 2>/dev/null || true)"
+            if grep -Fq '<meta name="application-name" content="Family Vacation Portal">' <<<"$body"; then
+              echo "Production web app returned the expected portal shell."
+              exit 0
+            fi
+            echo "Smoke test attempt ${attempt}/12 did not return the portal shell yet."
+            sleep 5
+          done
+          echo "::error::Production Apps Script /exec URL did not return the Family Vacation Portal shell after deployment."
+          exit 1
+
       - name: Record deployment summary
         shell: bash
         run: |
           echo "### Apps Script production deployed" >> "$GITHUB_STEP_SUMMARY"
           echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Existing production deployment updated in place." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Production /exec smoke test passed." >> "$GITHUB_STEP_SUMMARY"
