@@ -13,8 +13,8 @@ const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.16'"),
-  'Itinerary shadow-read release must bump the installed PWA cache key.'
+  config.includes("release: 'V4.4.0-alpha2.17'"),
+  'Itinerary shadow diagnostic release must bump the installed PWA cache key.'
 );
 assert(
   config.includes('itinerary:') &&
@@ -78,9 +78,18 @@ assert(
 assert(
   clientBridge.includes("String(row['Planner Type']||'')==='Itinerary'") &&
   clientBridge.includes('Supabase Itinerary check passed — data matches Sheets.') &&
-  clientBridge.includes('Supabase Itinerary check found a difference. Sheets is still being used.') &&
+  clientBridge.includes('Supabase Itinerary difference — ') &&
+  clientBridge.includes("sectionDiff_('activities'") &&
+  clientBridge.includes("sectionDiff_('signups'") &&
+  clientBridge.includes("sectionDiff_('comments'") &&
+  clientBridge.includes("code:'shadow_mismatch'") &&
   clientBridge.includes('Supabase Itinerary check was unavailable'),
-  'The live shadow-read diagnostic must clearly distinguish match, mismatch, and unavailable states.'
+  'The live shadow diagnostic must distinguish match/unavailable states and identify the mismatching Itinerary section.'
+);
+assert(
+  clientBridge.includes("reason:!b?'missing in Supabase':'missing in Sheets'") &&
+  clientBridge.includes("reason:'field '+firstChangedField_(a,b)"),
+  'Itinerary mismatch diagnostics must identify the first missing row or differing field without exposing row contents.'
 );
 assert(
   shell.includes("include('Client_Supabase_Itinerary_Bridge')"),
@@ -93,10 +102,10 @@ assert(
   'The existing Sheets social loader must remain intact as the authoritative path in this stage.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-16') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-17') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
   'The installed PWA must refresh the Itinerary host bridge during guarded live testing.'
 );
 
-console.log('PASS Supabase Itinerary shadow-read equivalence contract');
+console.log('PASS Supabase Itinerary shadow-read mismatch diagnostic contract');
