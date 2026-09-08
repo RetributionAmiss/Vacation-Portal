@@ -11,10 +11,14 @@ const iframeBridge = fs.readFileSync(path.join(root, 'Client_Supabase_Domain_Bri
 const travelServer = fs.readFileSync(path.join(root, 'Travel_Arrivals.gs'), 'utf8');
 const shell = fs.readFileSync(path.join(root, 'AppsScriptIndex.html'), 'utf8');
 const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf8');
+const releaseMatch = config.match(/release:\s*'([^']+)'/);
+assert(releaseMatch, 'The PWA release must be declared in config.js.');
+const release = releaseMatch[1];
+const cacheRelease = release.toLowerCase().replace(/\./g, '-');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.12'"),
-  'Travel primary-write contract must track the current PWA release cache key.'
+  /^V4\.4\.0-alpha2\.\d+$/.test(release),
+  'Travel primary-write contract must run against the active V4.4 alpha release.'
 );
 assert(
   config.includes('travelPlans:') &&
@@ -141,10 +145,10 @@ assert(
   'The bridge override must load after the existing Travel feature.'
 );
 assert(
-  serviceWorker.includes("family-vacation-pwa-v4-4-0-alpha2-12") &&
+  serviceWorker.includes('family-vacation-pwa-' + cacheRelease) &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-domain-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The service worker must keep the Supabase bridge current while Travel remains primary.'
+  'The service worker must track the active release while keeping the Supabase Travel bridge current.'
 );
 
 console.log('PASS Supabase Travel Plans primary read/write with Sheets backup contract');
