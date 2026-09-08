@@ -13,8 +13,8 @@ window.VACATION_PORTAL_CONFIG = {
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
   // Domain cutovers are release-level flags. Travel Plans and Packing are now
-  // Supabase-primary with non-blocking Sheets backups. Itinerary is entering
-  // the same guarded migration path with a read-only Supabase shadow compare.
+  // Supabase-primary with non-blocking Sheets backups. Itinerary remains in
+  // guarded read-only shadow comparison while mismatch details are reconciled.
   supabaseDomains: {
     travelPlans: {
       shadowRead: false,
@@ -39,7 +39,7 @@ window.VACATION_PORTAL_CONFIG = {
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.16'
+  release: 'V4.4.0-alpha2.17'
 };
 
 (function loadVacationSupabaseAuth_(){
