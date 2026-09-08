@@ -87,11 +87,12 @@ assert(
 
 assert(
   workflow.includes('Smoke test production web app') &&
-    workflow.includes("id=\"loadingScreen\"") &&
+    workflow.includes('Family Vacation Portal') &&
+    workflow.includes('loadingScreen') &&
     workflow.includes('Opening the family portal') &&
     workflow.includes('Sorry, unable to open the file at this time') &&
     workflow.includes('Production Apps Script /exec URL did not return'),
-  'Deployment must verify a stable body marker and diagnose the Google Drive failure page before reporting success.'
+  'Deployment must verify stable rendered-shell markers and diagnose the Google Drive failure page before reporting success.'
 );
 
 assert(

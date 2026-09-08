@@ -213,7 +213,9 @@ jobs:
             body_file="$(mktemp)"
             meta="$(curl -L -sS --max-time 20 -D "$header_file" -o "$body_file" -w '%{http_code}|%{url_effective}|%{content_type}' "$smoke_url" || true)"
             body="$(cat "$body_file")"
-            if grep -Fq 'id="loadingScreen"' <<<"$body" && grep -Fq 'Opening the family portal' <<<"$body"; then
+            if grep -Fq 'Family Vacation Portal' <<<"$body" && \
+               grep -Fq 'loadingScreen' <<<"$body" && \
+               grep -Fq 'Opening the family portal' <<<"$body"; then
               echo "Production web app returned the expected portal shell."
               rm -f "$header_file" "$body_file"
               exit 0
