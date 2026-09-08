@@ -1,0 +1,29 @@
+name: Supabase Travel Cutover Contract
+
+on:
+  push:
+    branches:
+      - main
+      - feature/supabase-travel-read-cutover
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  travel-cutover-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate host bridge syntax
+        run: node --check supabase-domain-bridge.js
+      - name: Run guarded Travel Plans cutover contract
+        run: node tests/supabase_travel_read_cutover_contract.test.js

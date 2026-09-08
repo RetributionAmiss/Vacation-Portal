@@ -12,10 +12,20 @@ window.VACATION_PORTAL_CONFIG = {
   supabaseUrl: 'https://rlmsojrxmrfawvdsodkk.supabase.co',
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
+  // Domain cutovers are release-level flags. Travel Plans starts with an
+  // authenticated shadow read while Sheets remains the visible/read-write path.
+  supabaseDomains: {
+    travelPlans: {
+      shadowRead: true,
+      read: false,
+      write: false
+    }
+  },
+
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.6'
+  release: 'V4.4.0-alpha2.7'
 };
 
 (function loadVacationSupabaseAuth_(){
@@ -28,6 +38,19 @@ window.VACATION_PORTAL_CONFIG = {
     document.head.appendChild(script);
   }catch(error){
     console.warn('Supabase account shell could not be loaded.',error);
+  }
+})();
+
+(function loadVacationSupabaseDomainBridge_(){
+  try{
+    const script=document.createElement('script');
+    script.type='module';
+    script.src='./supabase-domain-bridge.js?v='+encodeURIComponent(
+      String(window.VACATION_PORTAL_CONFIG.release||'')
+    );
+    document.head.appendChild(script);
+  }catch(error){
+    console.warn('Supabase domain bridge could not be loaded.',error);
   }
 })();
 

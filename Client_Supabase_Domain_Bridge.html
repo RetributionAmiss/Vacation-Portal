@@ -1,0 +1,174 @@
+<script>
+/*
+ * Controlled Supabase runtime cutover bridge.
+ *
+ * The Apps Script iframe never receives Supabase session tokens. It asks the
+ * top-level PWA shell for an allow-listed domain operation. In the first stage
+ * Sheets remains the visible source while an authenticated Supabase read runs
+ * in parallel and records an equivalence result. A future release flag can
+ * promote the same response to the primary read without changing this bridge.
+ */
+(function installSupabaseTravelReadBridge_(){
+  if(typeof p3TravelArrivalLoad_!=='function') return;
+  if(window.__vacationSupabaseTravelReadBridgeInstalled) return;
+  window.__vacationSupabaseTravelReadBridgeInstalled=true;
+
+  const REQUEST_TYPE='vacation-portal-supabase-domain-request';
+  const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
+  const OP_READ_TRAVEL='travelPlans.read';
+  const REQUEST_TIMEOUT_MS=4500;
+  const SHADOW_TTL_MS=15000;
+  const pending={};
+  const legacyTravelLoad=p3TravelArrivalLoad_;
+  let shadowRequestInFlight=false;
+  let lastShadowRequestAt=0;
+  let shadowStatusAnnounced=false;
+
+  function requestId_(){
+    return 'supa-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  }
+
+  function request_(operation){
+    return new Promise(function(resolve,reject){
+      if(!window.parent||window.parent===window){
+        reject(new Error('Supabase PWA bridge is unavailable.'));
+        return;
+      }
+
+      const id=requestId_();
+      const timer=setTimeout(function(){
+        delete pending[id];
+        reject(new Error('Supabase PWA bridge timed out.'));
+      },REQUEST_TIMEOUT_MS);
+
+      pending[id]={
+        resolve:function(value){clearTimeout(timer);resolve(value);},
+        reject:function(error){clearTimeout(timer);reject(error);}
+      };
+
+      window.parent.postMessage({
+        type:REQUEST_TYPE,
+        requestId:id,
+        operation:operation
+      },'*');
+    });
+  }
+
+  function comparablePlan_(row){
+    row=row||{};
+    return {
+      id:String(row['Travel Plan ID']||''),
+      travelerId:String(row['Traveler ID']||''),
+      mode:String(row.Mode||''),
+      leavingFrom:String(row['Leaving From']||''),
+      departureDate:String(row['Departure Date']||'').slice(0,10),
+      departureTime:String(row['Departure Time']||'').slice(0,5),
+      arrivalDate:String(row['Arrival Date']||'').slice(0,10),
+      arrivalTime:String(row['Arrival Time']||'').slice(0,5),
+      details:String(row['Travel Details']||''),
+      notes:String(row.Notes||'')
+    };
+  }
+
+  function comparablePlans_(rows){
+    return (rows||[])
+      .map(comparablePlan_)
+      .sort(function(a,b){return (a.id+'|'+a.travelerId).localeCompare(b.id+'|'+b.travelerId);});
+  }
+
+  function announceShadowStatus_(status){
+    if(shadowStatusAnnounced||currentView!=='travel'||typeof toast!=='function') return;
+    shadowStatusAnnounced=true;
+    if(status==='sheets+supabase-shadow-match'){
+      toast('Supabase Travel check passed — data matches Sheets.');
+      return;
+    }
+    if(status==='sheets+supabase-shadow-mismatch'){
+      toast('Supabase Travel check found a difference. Sheets is still being used.',true);
+      return;
+    }
+    if(status==='sheets+supabase-shadow-unavailable'){
+      toast('Supabase Travel check was unavailable. Sheets is still being used.',true);
+    }
+  }
+
+  function recordShadowComparison_(supabasePlans,attempt){
+    attempt=Number(attempt||0);
+    if(p3TravelArrivalState_.loading&&attempt<40){
+      setTimeout(function(){recordShadowComparison_(supabasePlans,attempt+1);},100);
+      return;
+    }
+
+    DATA.supabaseTravelShadowPlans=(supabasePlans||[]).map(function(row){return Object.assign({},row);});
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+
+    const sheetJson=JSON.stringify(comparablePlans_(DATA.travelPlans||[]));
+    const supabaseJson=JSON.stringify(comparablePlans_(supabasePlans||[]));
+    const status=sheetJson===supabaseJson
+      ? 'sheets+supabase-shadow-match'
+      : 'sheets+supabase-shadow-mismatch';
+    DATA.supabaseDomainSources.travelPlans=status;
+    announceShadowStatus_(status);
+  }
+
+  window.addEventListener('message',function(event){
+    const data=event&&event.data||{};
+    if(data.type!==RESPONSE_TYPE) return;
+    const id=String(data.requestId||'');
+    const waiter=pending[id];
+    if(!waiter) return;
+    delete pending[id];
+
+    if(data.ok){
+      waiter.resolve(data.data||{});
+      return;
+    }
+
+    const error=new Error(
+      data.error&&data.error.message
+        ? String(data.error.message)
+        : 'Supabase domain request failed.'
+    );
+    error.code=String(data.error&&data.error.code||'bridge_error');
+    waiter.reject(error);
+  });
+
+  p3TravelArrivalLoad_=function(force){
+    // Sheets stays authoritative/visible in this stage, so normal loading and
+    // save/delete behavior remain untouched while the authenticated shadow read
+    // is validated against the same legacy-shaped records.
+    legacyTravelLoad.call(window,force);
+
+    if(shadowRequestInFlight) return;
+    if(!force&&lastShadowRequestAt&&Date.now()-lastShadowRequestAt<SHADOW_TTL_MS) return;
+
+    shadowRequestInFlight=true;
+    lastShadowRequestAt=Date.now();
+    request_(OP_READ_TRAVEL)
+      .then(function(result){
+        const plans=(result&&result.plans)||[];
+        if(result&&result.primary===true){
+          DATA.travelPlans=plans;
+          DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+          DATA.supabaseDomainSources.travelPlans='supabase-primary';
+          p3TravelArrivalState_.loaded=true;
+          p3TravelArrivalState_.loading=false;
+          p3TravelArrivalState_.lastLoaded=Date.now();
+          if(currentView==='travel'||currentView==='dashboard') render();
+          return;
+        }
+        recordShadowComparison_(plans,0);
+      })
+      .catch(function(){
+        DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+        DATA.supabaseDomainSources.travelPlans='sheets+supabase-shadow-unavailable';
+        announceShadowStatus_('sheets+supabase-shadow-unavailable');
+      })
+      .then(function(){
+        shadowRequestInFlight=false;
+      },function(){
+        shadowRequestInFlight=false;
+      });
+  };
+})();
+</script>
