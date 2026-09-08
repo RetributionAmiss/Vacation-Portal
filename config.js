@@ -15,7 +15,7 @@ window.VACATION_PORTAL_CONFIG = {
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.5'
+  release: 'V4.4.0-alpha2.6'
 };
 
 (function loadVacationSupabaseAuth_(){
