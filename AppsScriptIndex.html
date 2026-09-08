@@ -41,6 +41,60 @@
   <?!= include('Styles_Midnight_Gold_Feature_Contrast'); ?>
   <?!= include('Styles_Midnight_Gold_Rental_Contrast'); ?>
   <?!= include('Styles_Midnight_Gold_Device_Contrast'); ?>
+  <style id="travelerDeviceThemeLiveFix">
+    /* Live safeguard: this sits in the evaluated app shell itself so the
+       legacy V4.3.4 #f7faf7 device card can never win on deployed builds. */
+    #modalContent section.traveler-device-panel.wide,
+    #modalContent .traveler-device-panel{
+      background:#121827!important;
+      background-image:linear-gradient(145deg,#151b2a,#101522)!important;
+      color:#f7f5ef!important;
+      border-color:#2a3141!important;
+      box-shadow:0 12px 30px rgba(0,0,0,.24)!important
+    }
+    #modalContent .traveler-device-panel .eyebrow{
+      color:#d8b565!important;
+      background:transparent!important
+    }
+    #modalContent .traveler-device-panel h3,
+    #modalContent .traveler-device-panel .traveler-device-status,
+    #modalContent .traveler-device-panel .traveler-device-status>span:not(.status-dot){
+      color:#f7f5ef!important
+    }
+    #modalContent .traveler-device-panel>p,
+    #modalContent .traveler-device-panel>small,
+    #modalContent .traveler-device-panel .traveler-device-actions{
+      background:transparent!important
+    }
+    #modalContent .traveler-device-panel .muted,
+    #modalContent .traveler-device-panel small{
+      color:#9fa7b5!important
+    }
+    #modalContent .traveler-device-panel .muted strong{
+      color:#f1d892!important
+    }
+    #modalContent .traveler-device-panel .traveler-device-status{
+      background:#151b2a!important;
+      border-color:#2a3141!important
+    }
+    #modalContent .traveler-device-panel .status-dot{
+      background:#d8b565!important
+    }
+    #modalContent .traveler-device-panel .traveler-device-status.connected .status-dot,
+    #modalContent .traveler-device-panel .traveler-device-status.enabled .status-dot{
+      background:#62d394!important
+    }
+    #modalContent .traveler-device-panel .traveler-device-actions .ghost{
+      background:#151b2a!important;
+      color:#f1d892!important;
+      border-color:#2a3141!important
+    }
+    #modalContent .traveler-device-panel .traveler-device-actions button:not(.ghost){
+      background:linear-gradient(135deg,#f1d892,#c89e4f)!important;
+      color:#080c16!important;
+      border-color:rgba(216,181,101,.58)!important
+    }
+  </style>
 </head>
 <body>
   <div id="loadingScreen" class="loading-screen">
