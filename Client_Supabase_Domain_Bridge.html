@@ -3,10 +3,9 @@
  * Controlled Supabase runtime cutover bridge.
  *
  * The Apps Script iframe never receives Supabase session tokens. It asks the
- * top-level PWA shell for an allow-listed domain operation. In the first stage
- * Sheets remains the visible source while an authenticated Supabase read runs
- * in parallel and records an equivalence result. A future release flag can
- * promote the same response to the primary read without changing this bridge.
+ * top-level PWA shell for allow-listed domain operations. Sheets remains the
+ * authoritative visible/write path while authenticated Supabase reads and
+ * mirrored post-Sheets mutations are checked for equivalence.
  */
 (function installSupabaseTravelReadBridge_(){
   if(typeof p3TravelArrivalLoad_!=='function') return;
@@ -16,10 +15,14 @@
   const REQUEST_TYPE='vacation-portal-supabase-domain-request';
   const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
   const OP_READ_TRAVEL='travelPlans.read';
+  const OP_UPSERT_TRAVEL='travelPlans.upsert';
+  const OP_DELETE_TRAVEL='travelPlans.delete';
   const REQUEST_TIMEOUT_MS=5500;
   const SHADOW_TTL_MS=15000;
   const pending={};
   const legacyTravelLoad=p3TravelArrivalLoad_;
+  const legacyTravelSave=typeof p3TravelArrivalSave_==='function'?p3TravelArrivalSave_:null;
+  const legacyTravelDelete=typeof p3TravelArrivalDeleteNow_==='function'?p3TravelArrivalDeleteNow_:null;
   let shadowRequestInFlight=false;
   let lastShadowRequestAt=0;
   let shadowStatusAnnounced=false;
@@ -39,7 +42,7 @@
     return targets;
   }
 
-  function request_(operation){
+  function request_(operation,data){
     return new Promise(function(resolve,reject){
       const targets=hostTargets_();
       if(!targets.length){
@@ -65,7 +68,8 @@
       const payload={
         type:REQUEST_TYPE,
         requestId:id,
-        operation:operation
+        operation:operation,
+        data:data||{}
       };
 
       // Apps Script HTML Service runs the user page inside its own sandbox
@@ -100,6 +104,12 @@
       .sort(function(a,b){return (a.id+'|'+a.travelerId).localeCompare(b.id+'|'+b.travelerId);});
   }
 
+  function plansMatchSheets_(supabasePlans){
+    const sheetJson=JSON.stringify(comparablePlans_(DATA.travelPlans||[]));
+    const supabaseJson=JSON.stringify(comparablePlans_(supabasePlans||[]));
+    return sheetJson===supabaseJson;
+  }
+
   function announceShadowStatus_(status,code){
     if(shadowStatusAnnounced||currentView!=='travel'||typeof toast!=='function') return;
     shadowStatusAnnounced=true;
@@ -127,13 +137,55 @@
     DATA.supabaseTravelShadowPlans=(supabasePlans||[]).map(function(row){return Object.assign({},row);});
     DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
 
-    const sheetJson=JSON.stringify(comparablePlans_(DATA.travelPlans||[]));
-    const supabaseJson=JSON.stringify(comparablePlans_(supabasePlans||[]));
-    const status=sheetJson===supabaseJson
+    const status=plansMatchSheets_(supabasePlans)
       ? 'sheets+supabase-shadow-match'
       : 'sheets+supabase-shadow-mismatch';
     DATA.supabaseDomainSources.travelPlans=status;
     announceShadowStatus_(status);
+  }
+
+  function announceMutationStatus_(action,status,code){
+    if(currentView!=='travel'||typeof toast!=='function') return;
+    const label=action==='delete'?'delete':'save';
+    if(status==='sheets+supabase-shadow-write-match'){
+      toast('Supabase Travel '+label+' check passed — data matches Sheets.');
+      return;
+    }
+    if(status==='sheets+supabase-shadow-write-mismatch'){
+      toast('Supabase Travel '+label+' check found a difference. Sheets is still primary.',true);
+      return;
+    }
+    const suffix=code?' ('+String(code)+')':'';
+    toast('Supabase Travel '+label+' check was unavailable'+suffix+'. Sheets saved successfully.',true);
+  }
+
+  function recordMutationComparison_(action,supabasePlans){
+    DATA.supabaseTravelShadowPlans=(supabasePlans||[]).map(function(row){return Object.assign({},row);});
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+
+    const status=plansMatchSheets_(supabasePlans)
+      ? 'sheets+supabase-shadow-write-match'
+      : 'sheets+supabase-shadow-write-mismatch';
+    DATA.supabaseDomainSources.travelPlans=status;
+    delete DATA.supabaseDomainDiagnostics.travelPlans;
+    announceMutationStatus_(action,status);
+  }
+
+  function recordMutationFailure_(action,error){
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.travelPlans='sheets+supabase-shadow-write-unavailable';
+    DATA.supabaseDomainDiagnostics.travelPlans={
+      operation:action,
+      code:String(error&&error.code||'bridge_error'),
+      message:String(error&&error.message||'Supabase domain request failed.')
+    };
+    announceMutationStatus_(
+      action,
+      'sheets+supabase-shadow-write-unavailable',
+      DATA.supabaseDomainDiagnostics.travelPlans.code
+    );
   }
 
   window.addEventListener('message',function(event){
@@ -158,6 +210,68 @@
     error.code=String(data.error&&data.error.code||'bridge_error');
     waiter.reject(error);
   });
+
+  // Called only after an authoritative Sheets mutation has settled. A failed
+  // mirror never rolls back or blocks the user's Sheets save/delete.
+  window.p3TravelArrivalShadowWrite_=function(action,plan){
+    const normalizedAction=action==='delete'?'delete':'upsert';
+    const operation=normalizedAction==='delete'?OP_DELETE_TRAVEL:OP_UPSERT_TRAVEL;
+    request_(operation,{plan:plan||{}})
+      .then(function(result){
+        recordMutationComparison_(normalizedAction,(result&&result.plans)||[]);
+      })
+      .catch(function(error){
+        recordMutationFailure_(normalizedAction,error);
+      });
+  };
+
+  function waitForTravelMutation_(travelerId,callback,attempt){
+    attempt=Number(attempt||0);
+    if(!p3TravelArrivalPendingFor_(travelerId)){
+      callback();
+      return;
+    }
+    if(attempt>=80) return;
+    setTimeout(function(){waitForTravelMutation_(travelerId,callback,attempt+1);},100);
+  }
+
+  if(legacyTravelSave){
+    p3TravelArrivalSave_=function(event){
+      const travelerId=p3TravelArrivalSelfId_();
+      const before=p3TravelArrivalPlanFor_(travelerId);
+      const beforeComparable=before?JSON.stringify(comparablePlan_(before)):'';
+      const wasPending=travelerId?p3TravelArrivalPendingFor_(travelerId):false;
+      const result=legacyTravelSave.apply(this,arguments);
+      if(!travelerId||wasPending||!p3TravelArrivalPendingFor_(travelerId)) return result;
+
+      waitForTravelMutation_(travelerId,function(){
+        const settled=p3TravelArrivalPlanFor_(travelerId);
+        if(!settled) return;
+        if(String(settled['Travel Plan ID']||'').indexOf('LOCAL-TRAVEL-')===0) return;
+        const settledComparable=JSON.stringify(comparablePlan_(settled));
+        if(beforeComparable&&beforeComparable===settledComparable) return;
+        window.p3TravelArrivalShadowWrite_('upsert',settled);
+      },0);
+      return result;
+    };
+  }
+
+  if(legacyTravelDelete){
+    p3TravelArrivalDeleteNow_=function(){
+      const travelerId=p3TravelArrivalSelfId_();
+      const before=p3TravelArrivalPlanFor_(travelerId);
+      const wasPending=travelerId?p3TravelArrivalPendingFor_(travelerId):false;
+      const result=legacyTravelDelete.apply(this,arguments);
+      if(!travelerId||!before||wasPending||!p3TravelArrivalPendingFor_(travelerId)) return result;
+
+      waitForTravelMutation_(travelerId,function(){
+        const settled=p3TravelArrivalPlanFor_(travelerId);
+        if(settled) return;
+        window.p3TravelArrivalShadowWrite_('delete',before);
+      },0);
+      return result;
+    };
+  }
 
   p3TravelArrivalLoad_=function(force){
     // Sheets stays authoritative/visible in this stage, so normal loading and
