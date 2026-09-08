@@ -5,11 +5,31 @@ window.VACATION_PORTAL_CONFIG = {
   appName: 'Family Vacation Portal',
   shortName: 'Family Trip',
   oneSignalAppId: 'fac4d46d-ba5b-4755-b5b1-8740f59c3b1d',
+
+  // Browser-safe Supabase configuration. The publishable key identifies the
+  // project; Row Level Security and the signed-in user session enforce access.
+  // Never place a service-role key or database password in this file.
+  supabaseUrl: 'https://rlmsojrxmrfawvdsodkk.supabase.co',
+  supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
+
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
-  // whenever the deployed Apps Script shell changes so browsers cannot keep
-  // showing stale HTML/CSS from a prior deployment under the same /exec URL.
-  release: 'V4.4.0-alpha2.4'
+  // whenever the deployed shell changes so browsers cannot keep showing stale
+  // HTML/CSS/host behavior from a prior release.
+  release: 'V4.4.0-alpha2.5'
 };
+
+(function loadVacationSupabaseAuth_(){
+  try{
+    const script=document.createElement('script');
+    script.type='module';
+    script.src='./supabase-auth.js?v='+encodeURIComponent(
+      String(window.VACATION_PORTAL_CONFIG.release||'')
+    );
+    document.head.appendChild(script);
+  }catch(error){
+    console.warn('Supabase account shell could not be loaded.',error);
+  }
+})();
 
 (function installVacationPaymentSnapshotBridge_(){
   const key='vacationPortalPaymentSnapshotV1';
