@@ -3,9 +3,10 @@
  * Controlled Supabase runtime cutover bridge.
  *
  * The Apps Script iframe never receives Supabase session tokens. It asks the
- * top-level PWA shell for an allow-listed domain operation and falls back to
- * the existing Apps Script/Sheets path if the user is signed out, the bridge
- * is unavailable, the release flag is disabled, or Supabase returns an error.
+ * top-level PWA shell for an allow-listed domain operation. In the first stage
+ * Sheets remains the visible source while an authenticated Supabase read runs
+ * in parallel and records an equivalence result. A future release flag can
+ * promote the same response to the primary read without changing this bridge.
  */
 (function installSupabaseTravelReadBridge_(){
   if(typeof p3TravelArrivalLoad_!=='function') return;
@@ -16,8 +17,11 @@
   const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
   const OP_READ_TRAVEL='travelPlans.read';
   const REQUEST_TIMEOUT_MS=4500;
+  const SHADOW_TTL_MS=15000;
   const pending={};
   const legacyTravelLoad=p3TravelArrivalLoad_;
+  let shadowRequestInFlight=false;
+  let lastShadowRequestAt=0;
 
   function requestId_(){
     return 'supa-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
@@ -49,6 +53,45 @@
     });
   }
 
+  function comparablePlan_(row){
+    row=row||{};
+    return {
+      id:String(row['Travel Plan ID']||''),
+      travelerId:String(row['Traveler ID']||''),
+      mode:String(row.Mode||''),
+      leavingFrom:String(row['Leaving From']||''),
+      departureDate:String(row['Departure Date']||'').slice(0,10),
+      departureTime:String(row['Departure Time']||'').slice(0,5),
+      arrivalDate:String(row['Arrival Date']||'').slice(0,10),
+      arrivalTime:String(row['Arrival Time']||'').slice(0,5),
+      details:String(row['Travel Details']||''),
+      notes:String(row.Notes||'')
+    };
+  }
+
+  function comparablePlans_(rows){
+    return (rows||[])
+      .map(comparablePlan_)
+      .sort(function(a,b){return (a.id+'|'+a.travelerId).localeCompare(b.id+'|'+b.travelerId);});
+  }
+
+  function recordShadowComparison_(supabasePlans,attempt){
+    attempt=Number(attempt||0);
+    if(p3TravelArrivalState_.loading&&attempt<40){
+      setTimeout(function(){recordShadowComparison_(supabasePlans,attempt+1);},100);
+      return;
+    }
+
+    DATA.supabaseTravelShadowPlans=(supabasePlans||[]).map(function(row){return Object.assign({},row);});
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+
+    const sheetJson=JSON.stringify(comparablePlans_(DATA.travelPlans||[]));
+    const supabaseJson=JSON.stringify(comparablePlans_(supabasePlans||[]));
+    DATA.supabaseDomainSources.travelPlans=sheetJson===supabaseJson
+      ? 'sheets+supabase-shadow-match'
+      : 'sheets+supabase-shadow-mismatch';
+  }
+
   window.addEventListener('message',function(event){
     const data=event&&event.data||{};
     if(data.type!==RESPONSE_TYPE) return;
@@ -72,27 +115,39 @@
   });
 
   p3TravelArrivalLoad_=function(force){
-    if(p3TravelArrivalState_.loading) return;
-    if(!force&&p3TravelArrivalState_.loaded&&Date.now()-p3TravelArrivalState_.lastLoaded<15000) return;
+    // Sheets stays authoritative/visible in this stage, so normal loading and
+    // save/delete behavior remain untouched while the authenticated shadow read
+    // is validated against the same legacy-shaped records.
+    legacyTravelLoad.call(window,force);
 
-    p3TravelArrivalState_.loading=true;
+    if(shadowRequestInFlight) return;
+    if(!force&&lastShadowRequestAt&&Date.now()-lastShadowRequestAt<SHADOW_TTL_MS) return;
+
+    shadowRequestInFlight=true;
+    lastShadowRequestAt=Date.now();
     request_(OP_READ_TRAVEL)
       .then(function(result){
-        DATA.travelPlans=(result&&result.plans)||[];
-        DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
-        DATA.supabaseDomainSources.travelPlans='supabase';
-        p3TravelArrivalState_.loaded=true;
-        p3TravelArrivalState_.loading=false;
-        p3TravelArrivalState_.lastLoaded=Date.now();
-        if(currentView==='travel'||currentView==='dashboard') render();
+        const plans=(result&&result.plans)||[];
+        if(result&&result.primary===true){
+          DATA.travelPlans=plans;
+          DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+          DATA.supabaseDomainSources.travelPlans='supabase-primary';
+          p3TravelArrivalState_.loaded=true;
+          p3TravelArrivalState_.loading=false;
+          p3TravelArrivalState_.lastLoaded=Date.now();
+          if(currentView==='travel'||currentView==='dashboard') render();
+          return;
+        }
+        recordShadowComparison_(plans,0);
       })
       .catch(function(){
-        // Explicit rollback path: if this release slice is not usable on the
-        // current device/session, preserve the proven Sheets behavior.
-        p3TravelArrivalState_.loading=false;
         DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
-        DATA.supabaseDomainSources.travelPlans='sheets-fallback';
-        legacyTravelLoad.call(window,force);
+        DATA.supabaseDomainSources.travelPlans='sheets+supabase-shadow-unavailable';
+      })
+      .then(function(){
+        shadowRequestInFlight=false;
+      },function(){
+        shadowRequestInFlight=false;
       });
   };
 })();
