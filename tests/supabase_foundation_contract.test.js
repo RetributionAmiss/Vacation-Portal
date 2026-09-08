@@ -14,7 +14,8 @@ const expected = [
   '20260908035906_split_traveler_privacy_and_add_rls.sql',
   '20260908040200_optimize_rls_and_foreign_key_indexes.sql',
   '20260908041100_auth_invitations_and_membership_claim.sql',
-  '20260908041300_move_invitation_claim_definer_private.sql'
+  '20260908041300_move_invitation_claim_definer_private.sql',
+  '20260908041800_align_planner_source_shapes.sql'
 ];
 expected.forEach(name => assert(names.includes(name), `Missing Supabase migration ${name}`));
 
@@ -60,3 +61,4 @@ assert(docs.includes('Never commit service-role keys'), 'Docs must prohibit comm
 
 console.log('PASS Supabase foundation contract');
 require('./supabase_auth_permissions_contract.test.js');
+require('./supabase_planner_shadow_contract.test.js');
