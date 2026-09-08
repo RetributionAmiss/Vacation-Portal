@@ -1,1 +1,0 @@
-The Itinerary cutover contract compares activities, activity signups, and Itinerary planner comments as one domain bundle. At the alpha2.16 gate, Sheets remains authoritative and Supabase is read-only.
