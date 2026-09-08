@@ -1,0 +1,1 @@
+Read-only Supabase comparison; Sheets remains authoritative.
