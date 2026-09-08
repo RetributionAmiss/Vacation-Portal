@@ -8,20 +8,21 @@ const root = path.join(__dirname, '..');
 const config = fs.readFileSync(path.join(root, 'config.js'), 'utf8');
 const hostBridge = fs.readFileSync(path.join(root, 'supabase-domain-bridge.js'), 'utf8');
 const iframeBridge = fs.readFileSync(path.join(root, 'Client_Supabase_Domain_Bridge.html'), 'utf8');
+const travelServer = fs.readFileSync(path.join(root, 'Travel_Arrivals.gs'), 'utf8');
 const shell = fs.readFileSync(path.join(root, 'AppsScriptIndex.html'), 'utf8');
 const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.10'"),
-  'Travel primary-read promotion must bump the PWA release cache key.'
+  config.includes("release: 'V4.4.0-alpha2.11'"),
+  'Travel primary-write promotion must bump the PWA release cache key.'
 );
 assert(
   config.includes('travelPlans:') &&
   config.includes('shadowRead: false') &&
-  config.includes('shadowWrite: true') &&
+  config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
-  config.includes('write: false'),
-  'Travel Plans must read from Supabase while Sheets remains the authoritative mutation path.'
+  config.includes('write: true'),
+  'Travel Plans must read and write through Supabase in the promoted stage.'
 );
 assert(
   config.includes("script.src='./supabase-domain-bridge.js?v='"),
@@ -41,6 +42,11 @@ assert(
   'Host bridge must distinguish shadow and primary read/write stages.'
 );
 assert(
+  hostBridge.includes('writePrimary: travelPrimaryWriteEnabled') &&
+  hostBridge.includes('writeShadow: travelShadowWriteEnabled && !travelPrimaryWriteEnabled'),
+  'The host must advertise the current write mode to the Apps Script iframe.'
+);
+assert(
   hostBridge.includes(".from('trip_members')") &&
   hostBridge.includes(".from('travel_plans')") &&
   hostBridge.includes(".from('travelers')"),
@@ -50,7 +56,7 @@ assert(
   hostBridge.includes(".upsert(row, { onConflict: 'trip_id,traveler_id' })") &&
   hostBridge.includes(".delete()") &&
   hostBridge.includes('assertTravelerMatch(plan, traveler)'),
-  'Mirrored writes must be idempotent per traveler and bound to the signed-in traveler mapping.'
+  'Primary writes must remain idempotent per traveler and bound to the signed-in traveler mapping.'
 );
 assert(
   hostBridge.includes('childFrameForSource(event.source)') &&
@@ -83,30 +89,48 @@ assert(
 assert(
   iframeBridge.includes('announcePrimaryReadStatus_()') &&
   iframeBridge.includes('Supabase Travel primary read passed — loaded from Supabase.'),
-  'The live primary-read stage must expose a one-time success diagnostic.'
+  'The live primary-read stage must retain its one-time success diagnostic.'
 );
 assert(
   fallbackAssignment > primaryRequest && fallbackLoad > fallbackAssignment &&
+  iframeBridge.includes("DATA.supabaseTravelWriteMode='legacy'") &&
   iframeBridge.includes('Using Sheets fallback.'),
-  'A failed primary Supabase read must fall back to an authoritative Sheets load with a safe diagnostic.'
+  'A failed primary Supabase read must fall back to Sheets reads and writes for that runtime.'
 );
 assert(
-  iframeBridge.includes('legacyTravelLoad.call(window,force)') &&
-  iframeBridge.includes("sheets+supabase-shadow-match") &&
-  iframeBridge.includes("sheets+supabase-shadow-mismatch"),
-  'The same deployed bridge must retain a config-only rollback path to shadow reads.'
+  iframeBridge.includes("DATA.supabaseTravelWriteMode='primary'") &&
+  iframeBridge.includes('primaryWriteEnabled_()') &&
+  iframeBridge.includes('return primarySave_(event)') &&
+  iframeBridge.includes('return primaryDelete_()'),
+  'A successful read must activate the guarded Supabase-primary mutation path.'
+);
+assert(
+  iframeBridge.includes('request_(OP_UPSERT_TRAVEL,{plan:optimistic})') &&
+  iframeBridge.includes('request_(OP_DELETE_TRAVEL,{plan:plan})'),
+  'Primary Travel save/delete operations must go to Supabase before any Sheets backup sync.'
+);
+assert(
+  iframeBridge.includes("mirrorPrimaryToSheets_('upsert',settled)") &&
+  iframeBridge.includes("mirrorPrimaryToSheets_('delete',plan)"),
+  'Successful Supabase mutations must mirror to Sheets only after the primary mutation succeeds.'
+);
+assert(
+  iframeBridge.includes('Supabase Travel '+"'+label+'"+' passed — Sheets backup matches.') &&
+  iframeBridge.includes('Sheets backup sync was unavailable'),
+  'Primary mutations must expose safe backup-equivalence and backup-failure diagnostics without rolling back Supabase.'
 );
 assert(
   iframeBridge.includes('legacyTravelSave.apply(this,arguments)') &&
   iframeBridge.includes('legacyTravelDelete.apply(this,arguments)') &&
   iframeBridge.includes("window.p3TravelArrivalShadowWrite_('upsert',settled)") &&
   iframeBridge.includes("window.p3TravelArrivalShadowWrite_('delete',before)"),
-  'Successful settled Sheets saves/deletes must continue triggering non-blocking Supabase mirrors.'
+  'The same deployed bridge must retain the validated Sheets-first rollback path.'
 );
 assert(
-  iframeBridge.includes("sheets+supabase-shadow-write-match") &&
-  iframeBridge.includes('Sheets saved successfully.'),
-  'Mirrored mutation results must still be compared to Sheets without changing the authoritative write outcome.'
+  travelServer.includes('function travelArrivalRequestedId_(value)') &&
+  travelServer.includes('values.travelPlanId') &&
+  travelServer.includes("record['Travel Plan ID'] = requestedId || uid_('TRAVEL')"),
+  'Sheets backup writes must accept the stable Travel ID created by the Supabase-primary client.'
 );
 assert(
   shell.includes("include('Client_Supabase_Domain_Bridge')"),
@@ -117,10 +141,10 @@ assert(
   'The bridge override must load after the existing Travel feature.'
 );
 assert(
-  serviceWorker.includes("family-vacation-pwa-v4-4-0-alpha2-10") &&
+  serviceWorker.includes("family-vacation-pwa-v4-4-0-alpha2-11") &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-domain-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The service worker must refresh the Supabase bridge module during the guarded iOS primary-read test.'
+  'The service worker must refresh the Supabase bridge module during the guarded iOS primary-write test.'
 );
 
-console.log('PASS Supabase Travel Plans primary-read / Sheets-write guarded cutover contract');
+console.log('PASS Supabase Travel Plans primary read/write with Sheets backup contract');
