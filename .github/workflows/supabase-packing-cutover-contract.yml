@@ -7,6 +7,7 @@ on:
       - feature/supabase-packing-read-cutover
       - feature/supabase-packing-shadow-write
       - feature/supabase-packing-primary-read
+      - feature/supabase-packing-primary-write
   pull_request:
     branches:
       - main
@@ -29,5 +30,6 @@ jobs:
         run: |
           node --check supabase-domain-bridge.js
           node --check supabase-packing-write-bridge.js
+          node --check supabase-packing-primary-write-bridge.js
       - name: Run guarded Packing cutover contract
         run: node tests/supabase_packing_read_cutover_contract.test.js
