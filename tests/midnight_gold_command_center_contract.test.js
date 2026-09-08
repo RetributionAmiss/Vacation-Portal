@@ -101,6 +101,14 @@ assert(
 });
 
 assert(
+  index.includes('id="travelerDeviceThemeLiveFix"') &&
+    index.includes('#modalContent section.traveler-device-panel.wide') &&
+    index.includes('background:#121827!important') &&
+    index.includes('color:#f7f5ef!important'),
+  'Evaluated Apps Script shell must contain the live traveler-device fallback so legacy #f7faf7 cannot win.'
+);
+
+assert(
   contrast.includes('linear-gradient(135deg,#f1d892,#c89e4f)') &&
     contrast.includes('background:#121827!important') &&
     contrast.includes('color:var(--ink)!important') &&
@@ -124,7 +132,7 @@ assert(
 );
 
 assert(
-  /release:\s*'V4\.4\.0-alpha2\.1'/.test(pwaConfig) &&
+  /release:\s*'V4\.4\.0-alpha2\.2'/.test(pwaConfig) &&
     pwaShell.includes("'pwaHostRelease'") &&
     pwaShell.includes("String(config.release||'')"),
   'PWA host release must change when the Apps Script shell changes so the iframe URL cannot reuse stale HTML/CSS.'
