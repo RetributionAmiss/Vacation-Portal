@@ -165,9 +165,7 @@ jobs:
           if (!match) {
             throw new Error('Could not resolve the production Apps Script deployment ID from config.js portalUrl.');
           }
-          const url = `https://script.google.com/macros/s/${match[1]}/exec`;
           fs.appendFileSync(process.env.GITHUB_ENV, `APPS_SCRIPT_DEPLOYMENT_ID=${match[1]}\n`);
-          fs.appendFileSync(process.env.GITHUB_ENV, `APPS_SCRIPT_WEBAPP_URL=${url}\n`);
           NODE
 
       - name: Verify web app manifest
@@ -187,8 +185,11 @@ jobs:
           }
           NODE
 
-      - name: Verify clasp push scope
+      - name: Verify clasp authentication and push scope
         run: npx --yes @google/clasp@3.4.0 status
+
+      - name: Verify current production WEB_APP entry point
+        run: node scripts/verify_apps_script_webapp.mjs
 
       - name: Push main to Apps Script
         run: npx --yes @google/clasp@3.4.0 push --force
@@ -200,17 +201,28 @@ jobs:
             -i "$APPS_SCRIPT_DEPLOYMENT_ID" \
             -d "GitHub main ${GITHUB_SHA:0:12}"
 
+      - name: Verify WEB_APP entry point survived deployment
+        run: node scripts/verify_apps_script_webapp.mjs
+
       - name: Smoke test production web app
         shell: bash
         run: |
           smoke_url="${APPS_SCRIPT_WEBAPP_URL}?deploymentSmoke=${GITHUB_SHA}"
           for attempt in $(seq 1 12); do
-            body="$(curl -LfsS --max-time 20 "$smoke_url" 2>/dev/null || true)"
-            if grep -Fq '<meta name="application-name" content="Family Vacation Portal">' <<<"$body"; then
+            header_file="$(mktemp)"
+            body_file="$(mktemp)"
+            meta="$(curl -L -sS --max-time 20 -D "$header_file" -o "$body_file" -w '%{http_code}|%{url_effective}|%{content_type}' "$smoke_url" || true)"
+            body="$(cat "$body_file")"
+            if grep -Fq 'id="loadingScreen"' <<<"$body" && grep -Fq 'Opening the family portal' <<<"$body"; then
               echo "Production web app returned the expected portal shell."
+              rm -f "$header_file" "$body_file"
               exit 0
             fi
-            echo "Smoke test attempt ${attempt}/12 did not return the portal shell yet."
+            echo "Smoke test attempt ${attempt}/12 did not return the portal shell. ${meta}"
+            if grep -Fq 'Sorry, unable to open the file at this time' <<<"$body"; then
+              echo "::warning::Google Drive unable-to-open page returned instead of the Apps Script portal."
+            fi
+            rm -f "$header_file" "$body_file"
             sleep 5
           done
           echo "::error::Production Apps Script /exec URL did not return the Family Vacation Portal shell after deployment."
@@ -221,5 +233,5 @@ jobs:
         run: |
           echo "### Apps Script production deployed" >> "$GITHUB_STEP_SUMMARY"
           echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Existing production deployment updated in place." >> "$GITHUB_STEP_SUMMARY"
-          echo "- Production /exec smoke test passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Existing production WEB_APP deployment updated in place." >> "$GITHUB_STEP_SUMMARY"
+          echo "- WEB_APP entry point and production /exec smoke test passed." >> "$GITHUB_STEP_SUMMARY"
