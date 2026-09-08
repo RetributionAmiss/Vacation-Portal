@@ -197,6 +197,8 @@ async function readTravelPlansFor(activeClient, membership) {
   return {
     source: 'supabase',
     primary: travelPrimaryReadEnabled,
+    writePrimary: travelPrimaryWriteEnabled,
+    writeShadow: travelShadowWriteEnabled && !travelPrimaryWriteEnabled,
     plans: rows.map(row => ({
       'Travel Plan ID': String(row.legacy_id || row.id || ''),
       'Traveler ID': String(travelerLegacyById[String(row.traveler_id || '')] || ''),
