@@ -13,6 +13,8 @@ const theme = read('Styles_Midnight_Gold_Command_Center.html');
 const contrast = read('Styles_Midnight_Gold_Feature_Contrast.html');
 const rentalContrast = read('Styles_Midnight_Gold_Rental_Contrast.html');
 const deviceContrast = read('Styles_Midnight_Gold_Device_Contrast.html');
+const pwaConfig = read('config.js');
+const pwaShell = read('index.html');
 
 assert(
   index.includes('<meta name="theme-color" content="#080c16">') &&
@@ -86,12 +88,14 @@ assert(
 });
 
 [
-  '.traveler-device-panel',
-  '.traveler-device-panel .eyebrow',
-  '.traveler-device-panel .traveler-device-status',
-  '.traveler-device-panel .muted strong',
-  '.traveler-device-panel .traveler-device-actions .ghost',
-  '.traveler-device-panel .traveler-device-actions button:not(.ghost)'
+  '.modal-panel section.traveler-device-panel.wide',
+  '.modal-panel .traveler-device-panel .eyebrow',
+  '.modal-panel .traveler-device-panel .traveler-device-status',
+  '.modal-panel .traveler-device-panel .muted strong',
+  '.modal-panel .traveler-device-panel .traveler-device-actions .ghost',
+  '.modal-panel .traveler-device-panel .traveler-device-actions button:not(.ghost)',
+  'background-color:#121827!important',
+  'background-image:none!important'
 ].forEach((needle) => {
   assert(deviceContrast.includes(needle), `Missing Midnight Gold traveler device contrast coverage: ${needle}`);
 });
@@ -117,6 +121,13 @@ assert(
     deviceContrast.includes('color:var(--gold-soft)!important') &&
     deviceContrast.includes('background:var(--success)!important'),
   'Traveler device controls must use readable Midnight Gold dark surfaces, gold actions, and success states.'
+);
+
+assert(
+  /release:\s*'V4\.4\.0-alpha2\.1'/.test(pwaConfig) &&
+    pwaShell.includes("'pwaHostRelease'") &&
+    pwaShell.includes("String(config.release||'')"),
+  'PWA host release must change when the Apps Script shell changes so the iframe URL cannot reuse stale HTML/CSS.'
 );
 
 assert(
