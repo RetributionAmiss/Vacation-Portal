@@ -1,0 +1,1 @@
+Expected live diagnostic: Supabase Itinerary check passed — data matches Sheets.
