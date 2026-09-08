@@ -137,7 +137,7 @@
     const rightById={};
     left.forEach(function(row){leftById[String(row&&row.id||'')]=row;});
     right.forEach(function(row){rightById[String(row&&row.id||'')]=row;});
-    const ids=Array.from(new Set(Object.keys(leftById).concat(Object.keys(rightById))).sort());
+    const ids=Array.from(new Set(Object.keys(leftById).concat(Object.keys(rightById)))).sort();
     let first=null;
     let differenceCount=0;
 
