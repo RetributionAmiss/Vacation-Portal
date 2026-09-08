@@ -1,21 +1,28 @@
 <script>
 /*
- * Guarded Packing cutover: Sheets stays visible and authoritative while an
- * authenticated Supabase read runs in parallel and is compared field-for-field.
- * Supabase session tokens remain in the top-level PWA shell.
+ * Guarded Packing cutover. Sheets stays visible and authoritative while
+ * authenticated Supabase reads and post-save mutation mirrors are compared
+ * field-for-field. Supabase session tokens remain in the top-level PWA shell.
  */
-(function installSupabasePackingShadowReadBridge_(){
+(function installSupabasePackingBridge_(){
   if(typeof p3PackingLoad_!=='function') return;
   if(window.__vacationSupabasePackingReadBridgeInstalled) return;
   window.__vacationSupabasePackingReadBridgeInstalled=true;
 
-  const REQUEST_TYPE='vacation-portal-supabase-domain-request';
+  const DOMAIN_REQUEST_TYPE='vacation-portal-supabase-domain-request';
+  const PACKING_WRITE_REQUEST_TYPE='vacation-portal-supabase-packing-write-request';
   const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
   const OP_READ_PACKING='packingItems.read';
+  const OP_UPSERT_PACKING='packingItems.upsert';
+  const OP_TOGGLE_PACKING='packingItems.toggle';
+  const OP_DELETE_PACKING='packingItems.delete';
   const REQUEST_TIMEOUT_MS=5500;
   const READ_TTL_MS=15000;
   const pending={};
   const legacyPackingLoad=p3PackingLoad_;
+  const legacyPackingSave=typeof p3PackingSave_==='function'?p3PackingSave_:null;
+  const legacyPackingToggle=typeof p3PackingToggle_==='function'?p3PackingToggle_:null;
+  const legacyPackingDelete=typeof p3PackingDeleteNow_==='function'?p3PackingDeleteNow_:null;
   let shadowRequestInFlight=false;
   let lastShadowRequestAt=0;
   let shadowStatusAnnounced=false;
@@ -35,7 +42,7 @@
     return targets;
   }
 
-  function request_(operation,data){
+  function request_(operation,data,requestType){
     return new Promise(function(resolve,reject){
       const targets=hostTargets_();
       if(!targets.length){
@@ -59,7 +66,7 @@
       };
 
       const payload={
-        type:REQUEST_TYPE,
+        type:requestType||DOMAIN_REQUEST_TYPE,
         requestId:id,
         operation:operation,
         data:data||{}
@@ -113,6 +120,27 @@
     toast('Supabase Packing check was unavailable'+suffix+'. Sheets is still being used.',true);
   }
 
+  function mutationLabel_(action){
+    if(action==='delete') return 'delete';
+    if(action==='toggle') return 'toggle';
+    return 'save';
+  }
+
+  function announceMutationStatus_(action,status,code){
+    if(currentView!=='packing'||typeof toast!=='function') return;
+    const label=mutationLabel_(action);
+    if(status==='match'){
+      toast('Supabase Packing '+label+' check passed — data matches Sheets.');
+      return;
+    }
+    if(status==='mismatch'){
+      toast('Supabase Packing '+label+' check found a difference. Sheets is still primary.',true);
+      return;
+    }
+    const suffix=code?' ('+String(code)+')':'';
+    toast('Supabase Packing '+label+' check was unavailable'+suffix+'. Sheets saved successfully.',true);
+  }
+
   function recordComparison_(supabaseItems,attempt){
     attempt=Number(attempt||0);
     if(p3PackingState_.loading&&attempt<50){
@@ -144,6 +172,77 @@
     announceStatus_('sheets+supabase-packing-shadow-unavailable',code);
   }
 
+  function recordMutationComparison_(action,supabaseItems){
+    DATA.supabasePackingShadowItems=(supabaseItems||[]).map(function(row){return Object.assign({},row);});
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    const matches=itemsMatchSheets_(supabaseItems);
+    DATA.supabaseDomainSources.packingItems=matches
+      ? 'sheets+supabase-packing-shadow-write-match'
+      : 'sheets+supabase-packing-shadow-write-mismatch';
+    delete DATA.supabaseDomainDiagnostics.packingItems;
+    announceMutationStatus_(action,matches?'match':'mismatch');
+  }
+
+  function recordMutationFailure_(action,error){
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    const code=String(error&&error.code||'bridge_error');
+    DATA.supabaseDomainSources.packingItems='sheets+supabase-packing-shadow-write-unavailable';
+    DATA.supabaseDomainDiagnostics.packingItems={
+      operation:action,
+      code:code,
+      message:String(error&&error.message||'Supabase Packing mutation failed.')
+    };
+    announceMutationStatus_(action,'unavailable',code);
+  }
+
+  function pendingKeys_(){
+    try{
+      if(typeof p3PackingPending_==='undefined'||!p3PackingPending_) return [];
+      return Object.keys(p3PackingPending_).filter(function(key){return Boolean(p3PackingPending_[key]);});
+    }catch(error){
+      return [];
+    }
+  }
+
+  function packingPending_(id){
+    return pendingKeys_().indexOf(String(id||''))>=0;
+  }
+
+  function waitForPackingMutation_(pendingId,callback,attempt){
+    attempt=Number(attempt||0);
+    if(!packingPending_(pendingId)){
+      callback();
+      return;
+    }
+    if(attempt>=100){
+      const error=new Error('Sheets Packing mutation did not settle in time.');
+      error.code='sheets_settle_timeout';
+      recordMutationFailure_('save',error);
+      return;
+    }
+    setTimeout(function(){waitForPackingMutation_(pendingId,callback,attempt+1);},100);
+  }
+
+  function shadowWrite_(action,item){
+    let operation=OP_UPSERT_PACKING;
+    const data={item:item||{}};
+    if(action==='delete') operation=OP_DELETE_PACKING;
+    if(action==='toggle'){
+      operation=OP_TOGGLE_PACKING;
+      data.packed=String(item&&item.Packed||'No')==='Yes';
+    }
+
+    request_(operation,data,PACKING_WRITE_REQUEST_TYPE)
+      .then(function(result){
+        recordMutationComparison_(action,(result&&result.items)||[]);
+      })
+      .catch(function(error){
+        recordMutationFailure_(action,error);
+      });
+  }
+
   window.addEventListener('message',function(event){
     const data=event&&event.data||{};
     if(data.type!==RESPONSE_TYPE) return;
@@ -167,6 +266,86 @@
     waiter.reject(error);
   });
 
+  if(legacyPackingSave){
+    p3PackingSave_=function(event,id){
+      const beforeRows=((DATA&&DATA.packingItems)||[]).map(function(row){return Object.assign({},row);});
+      const beforeIds=beforeRows.reduce(function(map,row){
+        map[String(row['Packing ID']||'')]=true;
+        return map;
+      },{});
+      const beforePending=pendingKeys_().reduce(function(map,key){map[key]=true;return map;},{});
+      const editId=String(id||'');
+      const result=legacyPackingSave.apply(this,arguments);
+      const newPending=pendingKeys_().find(function(key){return !beforePending[key];});
+      if(!newPending) return result;
+
+      waitForPackingMutation_(newPending,function(){
+        const rows=(DATA&&DATA.packingItems)||[];
+        let settled=null;
+        if(editId){
+          settled=rows.find(function(row){return String(row['Packing ID']||'')===editId;})||null;
+        }else{
+          settled=rows.find(function(row){
+            const packingId=String(row['Packing ID']||'');
+            return packingId&&packingId.indexOf('LOCAL-PACK-')!==0&&!beforeIds[packingId];
+          })||null;
+        }
+        if(!settled) return;
+        shadowWrite_('save',Object.assign({},settled));
+      },0);
+
+      return result;
+    };
+  }
+
+  if(legacyPackingToggle){
+    p3PackingToggle_=function(id,packed){
+      id=String(id||'');
+      const before=((DATA&&DATA.packingItems)||[]).find(function(row){
+        return String(row['Packing ID']||'')===id;
+      });
+      if(!before) return legacyPackingToggle.apply(this,arguments);
+      const wasPending=packingPending_(id);
+      const result=legacyPackingToggle.apply(this,arguments);
+      if(wasPending||!packingPending_(id)) return result;
+
+      waitForPackingMutation_(id,function(){
+        const settled=((DATA&&DATA.packingItems)||[]).find(function(row){
+          return String(row['Packing ID']||'')===id;
+        });
+        if(!settled) return;
+        const expected=Boolean(packed)?'Yes':'No';
+        if(String(settled.Packed||'No')!==expected) return;
+        shadowWrite_('toggle',Object.assign({},settled));
+      },0);
+
+      return result;
+    };
+  }
+
+  if(legacyPackingDelete){
+    p3PackingDeleteNow_=function(id){
+      id=String(id||'');
+      const before=((DATA&&DATA.packingItems)||[]).find(function(row){
+        return String(row['Packing ID']||'')===id;
+      });
+      if(!before) return legacyPackingDelete.apply(this,arguments);
+      const wasPending=packingPending_(id);
+      const result=legacyPackingDelete.apply(this,arguments);
+      if(wasPending||!packingPending_(id)) return result;
+
+      waitForPackingMutation_(id,function(){
+        const stillThere=((DATA&&DATA.packingItems)||[]).some(function(row){
+          return String(row['Packing ID']||'')===id;
+        });
+        if(stillThere) return;
+        shadowWrite_('delete',Object.assign({},before));
+      },0);
+
+      return result;
+    };
+  }
+
   p3PackingLoad_=function(force){
     const legacyResult=legacyPackingLoad.apply(this,arguments);
     if(shadowRequestInFlight) return legacyResult;
@@ -174,7 +353,7 @@
 
     shadowRequestInFlight=true;
     lastShadowRequestAt=Date.now();
-    request_(OP_READ_PACKING)
+    request_(OP_READ_PACKING,{},DOMAIN_REQUEST_TYPE)
       .then(function(result){
         recordComparison_((result&&result.items)||[],0);
       })

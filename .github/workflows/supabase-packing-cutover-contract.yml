@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feature/supabase-packing-read-cutover
+      - feature/supabase-packing-shadow-write
   pull_request:
     branches:
       - main
@@ -24,6 +25,8 @@ jobs:
         with:
           node-version: '22'
       - name: Validate host bridge syntax
-        run: node --check supabase-domain-bridge.js
+        run: |
+          node --check supabase-domain-bridge.js
+          node --check supabase-packing-write-bridge.js
       - name: Run guarded Packing cutover contract
         run: node tests/supabase_packing_read_cutover_contract.test.js
