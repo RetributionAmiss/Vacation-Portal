@@ -13,8 +13,8 @@ const shell = fs.readFileSync(path.join(root, 'AppsScriptIndex.html'), 'utf8');
 const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.11'"),
-  'Travel primary-write promotion must bump the PWA release cache key.'
+  config.includes("release: 'V4.4.0-alpha2.12'"),
+  'Travel primary-write contract must track the current PWA release cache key.'
 );
 assert(
   config.includes('travelPlans:') &&
@@ -141,10 +141,10 @@ assert(
   'The bridge override must load after the existing Travel feature.'
 );
 assert(
-  serviceWorker.includes("family-vacation-pwa-v4-4-0-alpha2-11") &&
+  serviceWorker.includes("family-vacation-pwa-v4-4-0-alpha2-12") &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-domain-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The service worker must refresh the Supabase bridge module during the guarded iOS primary-write test.'
+  'The service worker must keep the Supabase bridge current while Travel remains primary.'
 );
 
 console.log('PASS Supabase Travel Plans primary read/write with Sheets backup contract');

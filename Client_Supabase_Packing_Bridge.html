@@ -1,0 +1,193 @@
+<script>
+/*
+ * Guarded Packing cutover: Sheets stays visible and authoritative while an
+ * authenticated Supabase read runs in parallel and is compared field-for-field.
+ * Supabase session tokens remain in the top-level PWA shell.
+ */
+(function installSupabasePackingShadowReadBridge_(){
+  if(typeof p3PackingLoad_!=='function') return;
+  if(window.__vacationSupabasePackingReadBridgeInstalled) return;
+  window.__vacationSupabasePackingReadBridgeInstalled=true;
+
+  const REQUEST_TYPE='vacation-portal-supabase-domain-request';
+  const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
+  const OP_READ_PACKING='packingItems.read';
+  const REQUEST_TIMEOUT_MS=5500;
+  const READ_TTL_MS=15000;
+  const pending={};
+  const legacyPackingLoad=p3PackingLoad_;
+  let shadowRequestInFlight=false;
+  let lastShadowRequestAt=0;
+  let shadowStatusAnnounced=false;
+
+  function requestId_(){
+    return 'supa-pack-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  }
+
+  function hostTargets_(){
+    const targets=[];
+    try{
+      if(window.parent&&window.parent!==window) targets.push(window.parent);
+    }catch(error){}
+    try{
+      if(window.top&&window.top!==window&&targets.indexOf(window.top)===-1) targets.push(window.top);
+    }catch(error){}
+    return targets;
+  }
+
+  function request_(operation,data){
+    return new Promise(function(resolve,reject){
+      const targets=hostTargets_();
+      if(!targets.length){
+        const error=new Error('Supabase PWA bridge is unavailable.');
+        error.code='bridge_no_host';
+        reject(error);
+        return;
+      }
+
+      const id=requestId_();
+      const timer=setTimeout(function(){
+        delete pending[id];
+        const error=new Error('Supabase PWA bridge timed out.');
+        error.code='bridge_timeout';
+        reject(error);
+      },REQUEST_TIMEOUT_MS);
+
+      pending[id]={
+        resolve:function(value){clearTimeout(timer);resolve(value);},
+        reject:function(error){clearTimeout(timer);reject(error);}
+      };
+
+      const payload={
+        type:REQUEST_TYPE,
+        requestId:id,
+        operation:operation,
+        data:data||{}
+      };
+
+      targets.forEach(function(target){
+        try{target.postMessage(payload,'*');}catch(error){}
+      });
+    });
+  }
+
+  function comparableItem_(row){
+    row=row||{};
+    return {
+      id:String(row['Packing ID']||''),
+      scope:String(row.Scope||'Personal')==='Shared'?'Shared':'Personal',
+      ownerTravelerId:String(row['Owner Traveler ID']||''),
+      bringingTravelerId:String(row['Bringing Traveler ID']||''),
+      category:String(row.Category||'Other'),
+      item:String(row.Item||'').trim(),
+      quantity:String(row.Quantity===undefined||row.Quantity===null?'':row.Quantity).trim(),
+      packed:String(row.Packed||'No')==='Yes'?'Yes':'No',
+      notes:String(row.Notes||'').trim()
+    };
+  }
+
+  function comparableItems_(rows){
+    return (rows||[])
+      .map(comparableItem_)
+      .sort(function(a,b){return (a.id+'|'+a.ownerTravelerId).localeCompare(b.id+'|'+b.ownerTravelerId);});
+  }
+
+  function itemsMatchSheets_(supabaseItems){
+    const sheetsJson=JSON.stringify(comparableItems_(DATA.packingItems||[]));
+    const supabaseJson=JSON.stringify(comparableItems_(supabaseItems||[]));
+    return sheetsJson===supabaseJson;
+  }
+
+  function announceStatus_(status,code){
+    if(shadowStatusAnnounced||currentView!=='packing'||typeof toast!=='function') return;
+    shadowStatusAnnounced=true;
+    if(status==='sheets+supabase-packing-shadow-match'){
+      toast('Supabase Packing check passed — data matches Sheets.');
+      return;
+    }
+    if(status==='sheets+supabase-packing-shadow-mismatch'){
+      toast('Supabase Packing check found a difference. Sheets is still being used.',true);
+      return;
+    }
+    const suffix=code?' ('+String(code)+')':'';
+    toast('Supabase Packing check was unavailable'+suffix+'. Sheets is still being used.',true);
+  }
+
+  function recordComparison_(supabaseItems,attempt){
+    attempt=Number(attempt||0);
+    if(p3PackingState_.loading&&attempt<50){
+      setTimeout(function(){recordComparison_(supabaseItems,attempt+1);},100);
+      return;
+    }
+
+    DATA.supabasePackingShadowItems=(supabaseItems||[]).map(function(row){return Object.assign({},row);});
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+
+    const status=itemsMatchSheets_(supabaseItems)
+      ? 'sheets+supabase-packing-shadow-match'
+      : 'sheets+supabase-packing-shadow-mismatch';
+    DATA.supabaseDomainSources.packingItems=status;
+    delete DATA.supabaseDomainDiagnostics.packingItems;
+    announceStatus_(status);
+  }
+
+  function recordUnavailable_(error){
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    const code=String(error&&error.code||'bridge_error');
+    DATA.supabaseDomainSources.packingItems='sheets+supabase-packing-shadow-unavailable';
+    DATA.supabaseDomainDiagnostics.packingItems={
+      code:code,
+      message:String(error&&error.message||'Supabase Packing read failed.')
+    };
+    announceStatus_('sheets+supabase-packing-shadow-unavailable',code);
+  }
+
+  window.addEventListener('message',function(event){
+    const data=event&&event.data||{};
+    if(data.type!==RESPONSE_TYPE) return;
+    if(event.source!==window.parent&&event.source!==window.top) return;
+    const id=String(data.requestId||'');
+    const waiter=pending[id];
+    if(!waiter) return;
+    delete pending[id];
+
+    if(data.ok){
+      waiter.resolve(data.data||{});
+      return;
+    }
+
+    const error=new Error(
+      data.error&&data.error.message
+        ? String(data.error.message)
+        : 'Supabase domain request failed.'
+    );
+    error.code=String(data.error&&data.error.code||'bridge_error');
+    waiter.reject(error);
+  });
+
+  p3PackingLoad_=function(force){
+    const legacyResult=legacyPackingLoad.apply(this,arguments);
+    if(shadowRequestInFlight) return legacyResult;
+    if(!force&&lastShadowRequestAt&&Date.now()-lastShadowRequestAt<READ_TTL_MS) return legacyResult;
+
+    shadowRequestInFlight=true;
+    lastShadowRequestAt=Date.now();
+    request_(OP_READ_PACKING)
+      .then(function(result){
+        recordComparison_((result&&result.items)||[],0);
+      })
+      .catch(function(error){
+        recordUnavailable_(error);
+      })
+      .then(function(){
+        shadowRequestInFlight=false;
+      },function(){
+        shadowRequestInFlight=false;
+      });
+
+    return legacyResult;
+  };
+})();
+</script>

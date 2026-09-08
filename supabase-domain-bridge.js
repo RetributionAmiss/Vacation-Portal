@@ -10,12 +10,17 @@ const travelReadEnabled = travelShadowReadEnabled || travelPrimaryReadEnabled;
 const travelShadowWriteEnabled = travelDomainConfig.shadowWrite === true;
 const travelPrimaryWriteEnabled = travelDomainConfig.write === true;
 const travelWriteEnabled = travelShadowWriteEnabled || travelPrimaryWriteEnabled;
+const packingDomainConfig = config.supabaseDomains && config.supabaseDomains.packingItems || {};
+const packingShadowReadEnabled = packingDomainConfig.shadowRead === true;
+const packingPrimaryReadEnabled = packingDomainConfig.read === true;
+const packingReadEnabled = packingShadowReadEnabled || packingPrimaryReadEnabled;
 
 const REQUEST_TYPE = 'vacation-portal-supabase-domain-request';
 const RESPONSE_TYPE = 'vacation-portal-supabase-domain-response';
 const OP_READ_TRAVEL = 'travelPlans.read';
 const OP_UPSERT_TRAVEL = 'travelPlans.upsert';
 const OP_DELETE_TRAVEL = 'travelPlans.delete';
+const OP_READ_PACKING = 'packingItems.read';
 const AUTH_CLIENT_WAIT_MS = 3000;
 const AUTH_CLIENT_POLL_MS = 75;
 
@@ -112,7 +117,7 @@ async function currentMembership(activeClient) {
   if (sessionError) throw sessionError;
   const session = sessionData && sessionData.session;
   if (!session || !session.user) {
-    const error = new Error('Sign in to use the Supabase travel data source.');
+    const error = new Error('Sign in to use the Supabase vacation data source.');
     error.code = 'not_signed_in';
     throw error;
   }
@@ -233,6 +238,78 @@ async function readTravelPlans() {
   return readTravelPlansFor(activeClient, membership);
 }
 
+async function readPackingItemsFor(activeClient, membership) {
+  const { data: items, error: itemError } = await activeClient
+    .from('packing_items')
+    .select('id,legacy_id,trip_id,scope,owner_traveler_id,bringing_traveler_id,category,item,quantity,packed,notes,created_at,updated_at,version')
+    .eq('trip_id', membership.trip_id)
+    .is('archived_at', null)
+    .order('created_at', { ascending: true });
+
+  if (itemError) throw itemError;
+
+  const rows = Array.isArray(items) ? items : [];
+  const travelerIds = Array.from(new Set(
+    rows.reduce((all, row) => {
+      if (row.owner_traveler_id) all.push(row.owner_traveler_id);
+      if (row.bringing_traveler_id) all.push(row.bringing_traveler_id);
+      return all;
+    }, [])
+  ));
+  let travelerLegacyById = {};
+
+  if (travelerIds.length) {
+    const { data: travelers, error: travelerError } = await activeClient
+      .from('travelers')
+      .select('id,legacy_id')
+      .in('id', travelerIds)
+      .eq('trip_id', membership.trip_id)
+      .is('archived_at', null);
+
+    if (travelerError) throw travelerError;
+    travelerLegacyById = (travelers || []).reduce((map, traveler) => {
+      map[String(traveler.id || '')] = String(traveler.legacy_id || '').trim();
+      return map;
+    }, {});
+  }
+
+  return {
+    source: 'supabase',
+    primary: packingPrimaryReadEnabled,
+    shadow: packingShadowReadEnabled && !packingPrimaryReadEnabled,
+    items: rows.map(row => ({
+      'Packing ID': String(row.legacy_id || row.id || ''),
+      'Scope': String(row.scope || '').toLowerCase() === 'shared' ? 'Shared' : 'Personal',
+      'Owner Traveler ID': String(travelerLegacyById[String(row.owner_traveler_id || '')] || ''),
+      'Bringing Traveler ID': String(travelerLegacyById[String(row.bringing_traveler_id || '')] || ''),
+      'Category': String(row.category || 'Other'),
+      'Item': String(row.item || ''),
+      'Quantity': row.quantity === null || row.quantity === undefined ? '' : String(row.quantity),
+      'Packed': row.packed ? 'Yes' : 'No',
+      'Notes': String(row.notes || ''),
+      'Created At': row.created_at || '',
+      'Updated At': row.updated_at || '',
+      'Version': Number(row.version || 0)
+    })),
+    membership: {
+      role: String(membership.role || 'traveler'),
+      travelerLinked: Boolean(membership.traveler_id)
+    }
+  };
+}
+
+async function readPackingItems() {
+  if (!packingReadEnabled) {
+    const disabled = new Error('Supabase Packing reads are disabled by the release flag.');
+    disabled.code = 'feature_disabled';
+    throw disabled;
+  }
+
+  const activeClient = await getSupabaseClient();
+  const membership = await currentMembership(activeClient);
+  return readPackingItemsFor(activeClient, membership);
+}
+
 function assertTravelerMatch(plan, traveler) {
   const requestedTravelerId = String(plan && plan['Traveler ID'] || '').trim();
   const linkedLegacyId = String(traveler && traveler.legacy_id || '').trim();
@@ -332,6 +409,8 @@ async function handleRequest(event) {
       data = await upsertTravelPlan(message.data || {});
     } else if (operation === OP_DELETE_TRAVEL) {
       data = await deleteTravelPlan(message.data || {});
+    } else if (operation === OP_READ_PACKING) {
+      data = await readPackingItems();
     } else {
       const unsupported = new Error('Unsupported Supabase domain operation.');
       unsupported.code = 'unsupported_operation';
