@@ -12,11 +12,12 @@ window.VACATION_PORTAL_CONFIG = {
   supabaseUrl: 'https://rlmsojrxmrfawvdsodkk.supabase.co',
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
-  // Domain cutovers are release-level flags. A disabled/failed domain read
-  // falls back to the existing Apps Script/Sheets path in the iframe.
+  // Domain cutovers are release-level flags. Travel Plans starts with an
+  // authenticated shadow read while Sheets remains the visible/read-write path.
   supabaseDomains: {
     travelPlans: {
-      read: true,
+      shadowRead: true,
+      read: false,
       write: false
     }
   },
