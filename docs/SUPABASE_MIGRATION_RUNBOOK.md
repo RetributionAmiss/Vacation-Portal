@@ -1,8 +1,8 @@
 # Supabase migration runbook
 
-## Current phase: Planner + Packing + Travel shadow migration
+## Current phase: Planner + Packing + Travel controlled runtime cutover
 
-Google Sheets remains the live application source of truth. Supabase currently contains a read-only shadow copy of the first low-risk operational domains so schema/equivalence issues can be found before any browser read or write is cut over.
+Google Sheets remains authoritative for writes in this release slice. The first browser runtime cutover is now limited to signed-in Travel Plans reads through the top-level PWA Supabase session. The Apps Script iframe never receives Supabase session tokens. If the user is signed out, the bridge is unavailable, the release flag is disabled, or Supabase returns an error, Travel Plans automatically fall back to the existing Apps Script/Sheets read path.
 
 ### Production shadow snapshot
 
@@ -46,6 +46,8 @@ Do not make Supabase the application source for a domain until all of these are 
 5. The browser integration has an explicit rollback switch back to Sheets.
 6. Writes are tested for duplicate retry/idempotency behavior and optimistic-concurrency conflicts.
 
+The first four read-side gates are now satisfied for the connected organizer test account and the Travel Plans shadow data. Travel Plans therefore enters guarded Supabase read validation while writes remain on Sheets. Write cutover still requires gate 6 plus live mutation validation.
+
 ## Planned cutover order
 
 Within this release slice, move domains individually rather than all at once:
@@ -58,8 +60,19 @@ Within this release slice, move domains individually rather than all at once:
 
 For each domain: shadow read -> compare -> Supabase read -> dual validation -> Supabase write -> remove Sheets as the interactive source only after live validation.
 
+### Travel Plans current runtime state
+
+- `supabaseDomains.travelPlans.read = true`
+- `supabaseDomains.travelPlans.write = false`
+- Signed-in PWA sessions read active Travel Plans through RLS-protected Supabase tables.
+- Supabase UUID traveler IDs are mapped back to Sheet-compatible `legacy_id` values before data is returned to the iframe.
+- Any bridge/auth/query failure falls back to `getTravelArrivalData()` in Apps Script.
+- Save and delete operations still use the existing Sheets implementation.
+
 ## Rollback
 
-Until the cutover gates pass, rollback is simply to leave the existing Apps Script/Sheets client path enabled. The shadow database can be corrected or rebuilt from the current Sheet by `legacy_id` without changing the user-facing portal.
+For Travel Plans, rollback is a release-level feature flag: set `supabaseDomains.travelPlans.read` to `false`. The iframe will immediately retain the existing Apps Script/Sheets read path. No Supabase session token is sent into the iframe.
 
-After a domain is switched to Supabase, retain a release-level feature flag that can restore the last validated Sheets read path until that domain has completed its live-test period.
+For domains that have not started runtime cutover, rollback remains simply leaving the Apps Script/Sheets client path enabled. The shadow database can be corrected or rebuilt from the current Sheet by `legacy_id` without changing the user-facing portal.
+
+After a domain is switched to Supabase writes, retain a release-level feature flag that can restore the last validated Sheets read/write path until that domain has completed its live-test period.
