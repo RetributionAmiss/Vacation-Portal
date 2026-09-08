@@ -14,6 +14,7 @@ let accountButton = null;
 let overlay = null;
 let dialog = null;
 let lastFocused = null;
+let initialized = false;
 
 const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, character => ({
   '&': '&amp;',
@@ -229,33 +230,43 @@ async function sendMagicLink() {
   authBusy = true;
   authMessage = '';
   renderAccount();
-  const { error } = await client.auth.signInWithOtp({
-    email,
-    options: {
-      shouldCreateUser: true,
-      emailRedirectTo: appRedirectUrl()
-    }
-  });
-  authBusy = false;
-  authMessage = error
-    ? String(error.message || 'The sign-in email could not be sent.')
-    : 'Check your email and open the secure sign-in link on this device.';
-  renderAccount();
+  try {
+    const { error } = await client.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: appRedirectUrl()
+      }
+    });
+    authMessage = error
+      ? String(error.message || 'The sign-in email could not be sent.')
+      : 'Check your email and open the secure sign-in link on this device.';
+  } catch (error) {
+    authMessage = String(error && error.message ? error.message : 'The sign-in email could not be sent.');
+  } finally {
+    authBusy = false;
+    renderAccount();
+  }
 }
 
 async function signOut() {
   if (!client || authBusy) return;
   authBusy = true;
   renderAccount();
-  const { error } = await client.auth.signOut();
-  authBusy = false;
-  authMessage = error ? String(error.message || 'Could not sign out.') : 'Signed out.';
-  if (!error) {
-    currentSession = null;
-    currentMemberships = [];
+  try {
+    const { error } = await client.auth.signOut();
+    authMessage = error ? String(error.message || 'Could not sign out.') : 'Signed out.';
+    if (!error) {
+      currentSession = null;
+      currentMemberships = [];
+    }
+  } catch (error) {
+    authMessage = String(error && error.message ? error.message : 'Could not sign out.');
+  } finally {
+    authBusy = false;
+    updateAccountButton();
+    renderAccount();
   }
-  updateAccountButton();
-  renderAccount();
 }
 
 async function refreshMemberships(showMessage) {
@@ -267,37 +278,43 @@ async function refreshMemberships(showMessage) {
   authBusy = true;
   if (showMessage) renderAccount();
 
-  // Invitations are claimed by a SECURITY DEFINER RPC that only matches the
-  // verified email in the caller's JWT. The browser never receives an admin key.
-  const claim = await client.rpc('claim_trip_invitations');
-  if (claim.error && !/no trip invitation|verified email/i.test(String(claim.error.message || ''))) {
-    console.warn('Trip invitation claim did not complete.', claim.error);
-  }
+  try {
+    // The exposed RPC is SECURITY INVOKER. Its privilege-bearing implementation
+    // lives in the private schema and only matches the verified email in the JWT.
+    const claim = await client.rpc('claim_trip_invitations');
+    if (claim.error) console.warn('Trip invitation claim did not complete.', claim.error);
 
-  const membershipResult = await client
-    .from('trip_members')
-    .select('trip_id,traveler_id,role,active')
-    .eq('auth_user_id', currentSession.user.id)
-    .eq('active', true);
+    const membershipResult = await client
+      .from('trip_members')
+      .select('trip_id,traveler_id,role,active')
+      .eq('auth_user_id', currentSession.user.id)
+      .eq('active', true);
 
-  authBusy = false;
-  if (membershipResult.error) {
-    currentMemberships = [];
-    authMessage = 'Account is signed in, but trip permissions could not be loaded yet.';
-  } else {
-    currentMemberships = membershipResult.data || [];
-    if (showMessage) {
-      authMessage = currentMemberships.length
-        ? 'Trip permissions refreshed.'
-        : 'Account is verified. Trip access has not been linked yet.';
+    if (membershipResult.error) {
+      currentMemberships = [];
+      authMessage = 'Account is signed in, but trip permissions could not be loaded yet.';
+    } else {
+      currentMemberships = membershipResult.data || [];
+      if (showMessage) {
+        authMessage = currentMemberships.length
+          ? 'Trip permissions refreshed.'
+          : 'Account is verified. Trip access has not been linked yet.';
+      }
     }
+  } catch (error) {
+    currentMemberships = [];
+    authMessage = String(error && error.message ? error.message : 'Trip permissions could not be loaded yet.');
+  } finally {
+    authBusy = false;
+    updateAccountButton();
+    if (showMessage) renderAccount();
   }
-  updateAccountButton();
-  if (showMessage) renderAccount();
   return currentMemberships;
 }
 
 async function initialize() {
+  if (initialized) return;
+  initialized = true;
   ensureUi();
   if (!enabled) return;
 
@@ -310,11 +327,16 @@ async function initialize() {
   });
   window.VacationSupabase = client;
 
-  const initial = await client.auth.getSession();
-  currentSession = initial.data && initial.data.session ? initial.data.session : null;
-  if (initial.error) console.warn('Supabase session restore failed.', initial.error);
-  if (currentSession) await refreshMemberships(false);
-  updateAccountButton();
+  try {
+    const initial = await client.auth.getSession();
+    currentSession = initial.data && initial.data.session ? initial.data.session : null;
+    if (initial.error) console.warn('Supabase session restore failed.', initial.error);
+    if (currentSession) await refreshMemberships(false);
+    updateAccountButton();
+  } catch (error) {
+    console.warn('Supabase account initialization failed.', error);
+    authMessage = 'Account services could not initialize. The existing portal is still available.';
+  }
 
   client.auth.onAuthStateChange((event, session) => {
     currentSession = session || null;
@@ -339,5 +361,8 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && overlay && !overlay.hidden) closeAccount();
 });
 
-document.addEventListener('DOMContentLoaded', initialize, { once: true });
-if (document.readyState !== 'loading') initialize();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initialize, { once: true });
+} else {
+  initialize();
+}
