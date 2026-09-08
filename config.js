@@ -13,9 +13,9 @@ window.VACATION_PORTAL_CONFIG = {
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
   // Domain cutovers are release-level flags. Travel Plans is fully primary in
-  // Supabase with a non-blocking Sheets backup. Packing remains Sheets-primary,
-  // but successful Sheets mutations are now mirrored into Supabase and checked
-  // for authenticated field-for-field equivalence.
+  // Supabase with a non-blocking Sheets backup. Packing now reads from Supabase
+  // first while successful Sheets mutations remain authoritative and continue
+  // mirroring into Supabase for equivalence and rollback coverage.
   supabaseDomains: {
     travelPlans: {
       shadowRead: false,
@@ -24,9 +24,9 @@ window.VACATION_PORTAL_CONFIG = {
       write: true
     },
     packingItems: {
-      shadowRead: true,
+      shadowRead: false,
       shadowWrite: true,
-      read: false,
+      read: true,
       write: false
     }
   },
@@ -34,7 +34,7 @@ window.VACATION_PORTAL_CONFIG = {
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.13'
+  release: 'V4.4.0-alpha2.14'
 };
 
 (function loadVacationSupabaseAuth_(){
