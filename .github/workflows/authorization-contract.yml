@@ -31,6 +31,8 @@ jobs:
         run: node tests/secret_scan.js
       - name: Run Apps Script deployment contract
         run: node tests/apps_script_deploy_contract.test.js
+      - name: Run Supabase foundation contract
+        run: node tests/supabase_foundation_contract.test.js
       - name: Run data integrity foundation contract
         run: node tests/data_integrity_foundation_contract.test.js
       - name: Run shared mutation integrity contracts
