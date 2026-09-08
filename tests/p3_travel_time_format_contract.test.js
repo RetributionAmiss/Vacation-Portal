@@ -61,4 +61,5 @@ must(fields.p3TravelDepartureTime.value==='06:05','Edit form must restore normal
 must(fields.p3TravelArrivalTime.value==='14:30','Edit form must restore normalized arrival time.');
 
 new Function(script(travelFormat));
+require('./typed_data_validation_contract.test.js');
 console.log('P3 Travel time formatting contract passed.');

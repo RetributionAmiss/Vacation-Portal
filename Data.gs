@@ -7,14 +7,14 @@ function readSheet_(name) {
     .map(row => {
       const obj = {};
       headers.forEach((header, index) => {
-        obj[header] = serializeValue_(row[index]);
+        obj[header] = serializeFieldValue_(header, row[index]);
       });
       return obj;
     });
 }
 
 function serializeValue_(value) {
-  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Date) return portalNormalizeDateTime_(value);
   return value;
 }
 
