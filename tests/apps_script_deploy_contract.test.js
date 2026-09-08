@@ -12,6 +12,7 @@ const workflow = read('.github/workflows/authorization-contract.yml');
 const gitignore = read('.gitignore');
 const claspignore = read('.claspignore');
 const config = read('config.js');
+const manifest = JSON.parse(read('appsscript.json'));
 
 assert(
   /push:\s*[\s\S]*branches:\s*[\s\S]*- main/.test(workflow),
@@ -41,6 +42,20 @@ assert(
 );
 
 assert(
+  manifest.webapp &&
+    manifest.webapp.access === 'ANYONE_ANONYMOUS' &&
+    manifest.webapp.executeAs === 'USER_DEPLOYING',
+  'Apps Script manifest must preserve the production web-app entry point, anonymous family access, and deployer execution identity.'
+);
+
+assert(
+  workflow.includes('Verify web app manifest') &&
+    workflow.includes("manifest.webapp.access !== 'ANYONE_ANONYMOUS'") &&
+    workflow.includes("manifest.webapp.executeAs !== 'USER_DEPLOYING'"),
+  'Deployment must fail before clasp push if the web-app manifest entry point is missing or changed.'
+);
+
+assert(
   workflow.includes('npx --yes @google/clasp@3.4.0 push --force') &&
     workflow.includes('npx --yes @google/clasp@3.4.0 deploy') &&
     workflow.includes('-i "$APPS_SCRIPT_DEPLOYMENT_ID"'),
@@ -51,6 +66,14 @@ assert(
   workflow.includes('config.match(/https:\\/\\/script\\.google\\.com\\/macros\\/s\\/') &&
     /portalUrl:\s*'https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec'/.test(config),
   'Production deployment ID must be resolved from the same public portalUrl used by the PWA.'
+);
+
+assert(
+  workflow.includes('Smoke test production web app') &&
+    workflow.includes('curl -LfsS') &&
+    workflow.includes('<meta name="application-name" content="Family Vacation Portal">') &&
+    workflow.includes('Production Apps Script /exec URL did not return'),
+  'Deployment must verify that the production /exec URL actually serves the portal shell before reporting success.'
 );
 
 assert(
