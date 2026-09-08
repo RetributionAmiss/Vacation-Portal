@@ -1,6 +1,6 @@
 window.VACATION_PORTAL_CONFIG = {
   // Internal Apps Script backend. Travelers should always use the GitHub Pages URL.
-  portalUrl: 'https://script.google.com/macros/s/AKfycbyJP-qpnZX2o-5h0_cfCFluzswoKmegIKyJcBO2KQHL9XVIc1QOarJniLxh6dKAVR9jVg/exec',
+  portalUrl: 'https://script.google.com/macros/s/AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA/exec',
 
   appName: 'Family Vacation Portal',
   shortName: 'Family Trip',
@@ -8,7 +8,7 @@ window.VACATION_PORTAL_CONFIG = {
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed Apps Script shell changes so browsers cannot keep
   // showing stale HTML/CSS from a prior deployment under the same /exec URL.
-  release: 'V4.4.0-alpha2.3'
+  release: 'V4.4.0-alpha2.4'
 };
 
 (function installVacationPaymentSnapshotBridge_(){
