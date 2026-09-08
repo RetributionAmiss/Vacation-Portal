@@ -4,9 +4,9 @@
  *
  * The Apps Script iframe never receives Supabase session tokens. It asks the
  * top-level PWA shell for allow-listed domain operations. Supabase is now the
- * primary Travel read source. Sheets remains the authoritative mutation path;
- * successful Sheets saves/deletes are mirrored to Supabase and compared.
- * If a primary Supabase read is unavailable, the bridge falls back to Sheets.
+ * primary Travel read/write source. Successful Supabase mutations are mirrored
+ * back to Sheets as a non-blocking rollback/reporting backup. If a primary read
+ * is unavailable, the bridge falls back to the legacy Sheets read/write path.
  */
 (function installSupabaseTravelReadBridge_(){
   if(typeof p3TravelArrivalLoad_!=='function') return;
@@ -106,10 +106,29 @@
       .sort(function(a,b){return (a.id+'|'+a.travelerId).localeCompare(b.id+'|'+b.travelerId);});
   }
 
+  function plansMatch_(left,right){
+    return JSON.stringify(comparablePlans_(left||[]))===JSON.stringify(comparablePlans_(right||[]));
+  }
+
   function plansMatchSheets_(supabasePlans){
-    const sheetJson=JSON.stringify(comparablePlans_(DATA.travelPlans||[]));
-    const supabaseJson=JSON.stringify(comparablePlans_(supabasePlans||[]));
-    return sheetJson===supabaseJson;
+    return plansMatch_(DATA.travelPlans||[],supabasePlans||[]);
+  }
+
+  function setWriteModeFromResult_(result){
+    if(!DATA) return;
+    if(result&&result.writePrimary===true){
+      DATA.supabaseTravelWriteMode='primary';
+      return;
+    }
+    if(result&&result.writeShadow===true){
+      DATA.supabaseTravelWriteMode='shadow';
+      return;
+    }
+    DATA.supabaseTravelWriteMode='legacy';
+  }
+
+  function primaryWriteEnabled_(){
+    return DATA&&DATA.supabaseTravelWriteMode==='primary';
   }
 
   function announceShadowStatus_(status,code){
@@ -139,6 +158,21 @@
     if(currentView!=='travel'||typeof toast!=='function') return;
     const suffix=code?' ('+String(code)+')':'';
     toast('Supabase Travel read was unavailable'+suffix+'. Using Sheets fallback.',true);
+  }
+
+  function announcePrimaryMirrorStatus_(action,status,code){
+    if(currentView!=='travel'||typeof toast!=='function') return;
+    const label=action==='delete'?'delete':'save';
+    if(status==='match'){
+      toast('Supabase Travel '+label+' passed — Sheets backup matches.');
+      return;
+    }
+    if(status==='mismatch'){
+      toast('Supabase Travel '+label+' saved, but the Sheets backup differs.',true);
+      return;
+    }
+    const suffix=code?' ('+String(code)+')':'';
+    toast('Supabase Travel '+label+' saved; Sheets backup sync was unavailable'+suffix+'.',true);
   }
 
   function recordShadowComparison_(supabasePlans,attempt){
@@ -202,6 +236,36 @@
     );
   }
 
+  function recordPrimaryMirrorResult_(action,sheetPlans){
+    DATA.supabaseTravelSheetBackupPlans=(sheetPlans||[]).map(function(row){return Object.assign({},row);});
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    if(plansMatch_(DATA.travelPlans||[],sheetPlans||[])){
+      delete DATA.supabaseDomainDiagnostics.travelPlansBackup;
+      announcePrimaryMirrorStatus_(action,'match');
+      return;
+    }
+    DATA.supabaseDomainDiagnostics.travelPlansBackup={
+      operation:action,
+      code:'backup_mismatch',
+      message:'The Sheets backup does not match the primary Supabase Travel data.'
+    };
+    announcePrimaryMirrorStatus_(action,'mismatch');
+  }
+
+  function recordPrimaryMirrorFailure_(action,error){
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainDiagnostics.travelPlansBackup={
+      operation:action,
+      code:String(error&&error.code||'sheets_backup_error'),
+      message:String(error&&error.message||'Sheets backup sync failed.')
+    };
+    announcePrimaryMirrorStatus_(
+      action,
+      'unavailable',
+      DATA.supabaseDomainDiagnostics.travelPlansBackup.code
+    );
+  }
+
   window.addEventListener('message',function(event){
     const data=event&&event.data||{};
     if(data.type!==RESPONSE_TYPE) return;
@@ -225,13 +289,15 @@
     waiter.reject(error);
   });
 
-  // Called only after an authoritative Sheets mutation has settled. A failed
-  // mirror never rolls back or blocks the user's Sheets save/delete.
+  // Called only after an authoritative Sheets mutation has settled. This is the
+  // rollback/shadow path used when the current runtime is not in primary-write
+  // mode. A failed mirror never rolls back the user's Sheets save/delete.
   window.p3TravelArrivalShadowWrite_=function(action,plan){
     const normalizedAction=action==='delete'?'delete':'upsert';
     const operation=normalizedAction==='delete'?OP_DELETE_TRAVEL:OP_UPSERT_TRAVEL;
     request_(operation,{plan:plan||{}})
       .then(function(result){
+        setWriteModeFromResult_(result);
         recordMutationComparison_(normalizedAction,(result&&result.plans)||[]);
       })
       .catch(function(error){
@@ -249,8 +315,211 @@
     setTimeout(function(){waitForTravelMutation_(travelerId,callback,attempt+1);},100);
   }
 
+  function stableTravelPlanId_(){
+    let seed='';
+    try{
+      if(window.crypto&&typeof window.crypto.randomUUID==='function'){
+        seed=window.crypto.randomUUID().replace(/-/g,'');
+      }
+    }catch(error){}
+    if(!seed){
+      seed=Date.now().toString(36)+Math.random().toString(36).slice(2);
+    }
+    seed=String(seed||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    return 'TRAVEL-'+(seed+'0000000000').slice(0,10);
+  }
+
+  function formPayload_(travelerId){
+    return {
+      travelerId:String(travelerId||''),
+      mode:String(val('p3TravelMode')||'Driving'),
+      leavingFrom:String(val('p3TravelFrom')||''),
+      departureDate:String(val('p3TravelDepartureDate')||''),
+      departureTime:String(val('p3TravelDepartureTime')||''),
+      arrivalDate:String(val('p3TravelArrivalDate')||''),
+      arrivalTime:String(val('p3TravelArrivalTime')||''),
+      travelDetails:String(val('p3TravelDetails')||''),
+      notes:String(val('p3TravelNotes')||'')
+    };
+  }
+
+  function sheetPayloadFromPlan_(plan,deviceId){
+    plan=plan||{};
+    return {
+      deviceId:String(deviceId||''),
+      travelerId:String(plan['Traveler ID']||''),
+      travelPlanId:String(plan['Travel Plan ID']||''),
+      mode:String(plan.Mode||'Driving'),
+      leavingFrom:String(plan['Leaving From']||''),
+      departureDate:String(plan['Departure Date']||'').slice(0,10),
+      departureTime:String(plan['Departure Time']||'').slice(0,5),
+      arrivalDate:String(plan['Arrival Date']||'').slice(0,10),
+      arrivalTime:String(plan['Arrival Time']||'').slice(0,5),
+      travelDetails:String(plan['Travel Details']||''),
+      notes:String(plan.Notes||'')
+    };
+  }
+
+  function mirrorPrimaryToSheets_(action,plan){
+    if(!window.google||!google.script||!google.script.run||typeof p3PlannerSocialEnsureDevice_!=='function'){
+      const error=new Error('Sheets backup bridge is unavailable.');
+      error.code='sheets_bridge_unavailable';
+      recordPrimaryMirrorFailure_(action,error);
+      return;
+    }
+
+    p3PlannerSocialEnsureDevice_(function(deviceId){
+      const runner=google.script.run
+        .withSuccessHandler(function(result){
+          recordPrimaryMirrorResult_(action,(result&&result.plans)||[]);
+        })
+        .withFailureHandler(function(error){
+          recordPrimaryMirrorFailure_(action,error);
+        });
+
+      if(action==='delete'){
+        runner.deleteMyTravelPlan({
+          deviceId:deviceId,
+          travelerId:String(plan&&plan['Traveler ID']||'')
+        });
+        return;
+      }
+
+      runner.saveMyTravelPlan(sheetPayloadFromPlan_(plan,deviceId));
+    },function(error){
+      recordPrimaryMirrorFailure_(action,error);
+    });
+  }
+
+  function primarySave_(event){
+    if(event&&typeof event.preventDefault==='function') event.preventDefault();
+    const travelerId=p3TravelArrivalSelfId_();
+    if(!travelerId||p3TravelArrivalPendingFor_(travelerId)) return false;
+
+    const payload=formPayload_(travelerId);
+    if(!payload.arrivalDate){
+      toast('Choose your estimated arrival date.',true);
+      return false;
+    }
+
+    if(!DATA.travelPlans) DATA.travelPlans=[];
+    const previous=DATA.travelPlans.map(function(row){return Object.assign({},row);});
+    const index=DATA.travelPlans.findIndex(function(row){
+      return String(row['Traveler ID']||'')===String(travelerId);
+    });
+    const existing=index>=0?DATA.travelPlans[index]:null;
+    const optimistic=p3TravelArrivalOptimisticPlan_(payload,existing);
+    if(!existing||String(optimistic['Travel Plan ID']||'').indexOf('LOCAL-TRAVEL-')===0){
+      optimistic['Travel Plan ID']=stableTravelPlanId_();
+    }
+
+    if(index>=0) DATA.travelPlans[index]=optimistic;
+    else DATA.travelPlans.push(optimistic);
+
+    p3TravelArrivalPending_[travelerId]=true;
+    p3TravelArrivalState_.loaded=true;
+    p3TravelArrivalState_.lastLoaded=Date.now();
+    const saveId=typeof beginBackgroundSave_==='function'
+      ?beginBackgroundSave_('Travel plan','travel:'+travelerId)
+      :'';
+
+    closeModal();
+    render();
+
+    function rollback(error){
+      DATA.travelPlans=previous;
+      delete p3TravelArrivalPending_[travelerId];
+      p3TravelArrivalState_.lastLoaded=Date.now();
+      if(saveId&&typeof failBackgroundSave_==='function'){
+        failBackgroundSave_(saveId,error,'Travel plan could not be saved');
+      }else{
+        toast(error&&error.message?error.message:String(error),true);
+      }
+      render();
+    }
+
+    request_(OP_UPSERT_TRAVEL,{plan:optimistic})
+      .then(function(result){
+        setWriteModeFromResult_(result);
+        DATA.travelPlans=(result&&result.plans)||[];
+        DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+        DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+        DATA.supabaseDomainSources.travelPlans='supabase-primary';
+        delete DATA.supabaseDomainDiagnostics.travelPlans;
+        delete p3TravelArrivalPending_[travelerId];
+        p3TravelArrivalState_.loaded=true;
+        p3TravelArrivalState_.loading=false;
+        p3TravelArrivalState_.lastLoaded=Date.now();
+        if(saveId&&typeof completeBackgroundSave_==='function'){
+          completeBackgroundSave_(saveId,'Travel plan updated');
+        }
+        render();
+        const settled=p3TravelArrivalPlanFor_(travelerId)||optimistic;
+        mirrorPrimaryToSheets_('upsert',settled);
+      })
+      .catch(rollback);
+
+    return false;
+  }
+
+  function primaryDelete_(){
+    const travelerId=p3TravelArrivalSelfId_();
+    if(!travelerId||p3TravelArrivalPendingFor_(travelerId)) return false;
+    const plan=p3TravelArrivalPlanFor_(travelerId);
+    if(!plan){closeModal();return false;}
+
+    const previous=(DATA.travelPlans||[]).map(function(row){return Object.assign({},row);});
+    DATA.travelPlans=(DATA.travelPlans||[]).filter(function(row){
+      return String(row['Traveler ID']||'')!==String(travelerId);
+    });
+    p3TravelArrivalPending_[travelerId]=true;
+    p3TravelArrivalState_.lastLoaded=Date.now();
+    const saveId=typeof beginBackgroundSave_==='function'
+      ?beginBackgroundSave_('Travel plan','travel-delete:'+travelerId)
+      :'';
+
+    closeModal();
+    render();
+
+    function rollback(error){
+      DATA.travelPlans=previous;
+      delete p3TravelArrivalPending_[travelerId];
+      p3TravelArrivalState_.lastLoaded=Date.now();
+      if(saveId&&typeof failBackgroundSave_==='function'){
+        failBackgroundSave_(saveId,error,'Travel plan could not be deleted');
+      }else{
+        toast(error&&error.message?error.message:String(error),true);
+      }
+      render();
+    }
+
+    request_(OP_DELETE_TRAVEL,{plan:plan})
+      .then(function(result){
+        setWriteModeFromResult_(result);
+        DATA.travelPlans=(result&&result.plans)||[];
+        DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+        DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+        DATA.supabaseDomainSources.travelPlans='supabase-primary';
+        delete DATA.supabaseDomainDiagnostics.travelPlans;
+        delete p3TravelArrivalPending_[travelerId];
+        p3TravelArrivalState_.loaded=true;
+        p3TravelArrivalState_.loading=false;
+        p3TravelArrivalState_.lastLoaded=Date.now();
+        if(saveId&&typeof completeBackgroundSave_==='function'){
+          completeBackgroundSave_(saveId,'Travel plan removed');
+        }
+        render();
+        mirrorPrimaryToSheets_('delete',plan);
+      })
+      .catch(rollback);
+
+    return false;
+  }
+
   if(legacyTravelSave){
     p3TravelArrivalSave_=function(event){
+      if(primaryWriteEnabled_()) return primarySave_(event);
+
       const travelerId=p3TravelArrivalSelfId_();
       const before=p3TravelArrivalPlanFor_(travelerId);
       const beforeComparable=before?JSON.stringify(comparablePlan_(before)):'';
@@ -272,6 +541,8 @@
 
   if(legacyTravelDelete){
     p3TravelArrivalDeleteNow_=function(){
+      if(primaryWriteEnabled_()) return primaryDelete_();
+
       const travelerId=p3TravelArrivalSelfId_();
       const before=p3TravelArrivalPlanFor_(travelerId);
       const wasPending=travelerId?p3TravelArrivalPendingFor_(travelerId):false;
@@ -296,12 +567,13 @@
     p3TravelArrivalState_.loading=true;
 
     // Supabase is queried first. In the promoted stage a successful response is
-    // the only visible Travel read. If the release flag is rolled back to
-    // shadow mode, or if the Supabase request fails, the legacy Sheets loader
-    // remains available as the explicit fallback path.
+    // the only visible Travel read and also advertises whether writes are
+    // primary. If Supabase is unavailable, the legacy Sheets loader remains the
+    // explicit fallback path and mutations stay on Sheets for that runtime.
     request_(OP_READ_TRAVEL)
       .then(function(result){
         const plans=(result&&result.plans)||[];
+        setWriteModeFromResult_(result);
         if(result&&result.primary===true){
           DATA.travelPlans=plans;
           DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
@@ -325,6 +597,7 @@
       .catch(function(error){
         DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
         DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+        DATA.supabaseTravelWriteMode='legacy';
         DATA.supabaseDomainSources.travelPlans='supabase-primary-fallback-sheets';
         DATA.supabaseDomainDiagnostics.travelPlans={
           code:String(error&&error.code||'bridge_error'),
