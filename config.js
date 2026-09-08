@@ -8,7 +8,7 @@ window.VACATION_PORTAL_CONFIG = {
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed Apps Script shell changes so browsers cannot keep
   // showing stale HTML/CSS from a prior deployment under the same /exec URL.
-  release: 'V4.4.0-alpha2.1'
+  release: 'V4.4.0-alpha2.2'
 };
 
 (function installVacationPaymentSnapshotBridge_(){
