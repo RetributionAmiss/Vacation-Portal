@@ -60,7 +60,16 @@ assert(
     deploymentVerifier.includes("config.access!=='ANYONE_ANONYMOUS'") &&
     deploymentVerifier.includes("config.executeAs!=='USER_DEPLOYING'") &&
     deploymentVerifier.includes('script.googleapis.com/v1/projects/'),
-  'Deployment verifier must inspect the live Apps Script deployment resource and require the expected WEB_APP entry point.'
+  'Deployment verifier must inspect live Apps Script WEB_APP metadata when the persisted OAuth token is current.'
+);
+
+assert(
+  deploymentVerifier.includes("@google/clasp@3.4.0','deployments'") &&
+    deploymentVerifier.includes("response.status===401||response.status===403") &&
+    deploymentVerifier.includes('Family Vacation Portal') &&
+    deploymentVerifier.includes('Opening the family portal') &&
+    deploymentVerifier.includes('configured production deployment ID is not present'),
+  'When the persisted access token is stale, verification must fall back to refreshed clasp ownership plus the anonymous live portal shell rather than disabling the safety gate.'
 );
 
 const preflightIndex = workflow.indexOf('Verify current production WEB_APP entry point');
