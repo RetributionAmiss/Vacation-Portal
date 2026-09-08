@@ -12,11 +12,14 @@ const shell = fs.readFileSync(path.join(root, 'AppsScriptIndex.html'), 'utf8');
 
 assert(
   config.includes("release: 'V4.4.0-alpha2.7'"),
-  'Travel read cutover must bump the PWA release cache key.'
+  'Travel shadow validation must bump the PWA release cache key.'
 );
 assert(
-  config.includes('travelPlans:') && config.includes('read: true') && config.includes('write: false'),
-  'Travel plans must enable Supabase reads while keeping writes on Sheets.'
+  config.includes('travelPlans:') &&
+  config.includes('shadowRead: true') &&
+  config.includes('read: false') &&
+  config.includes('write: false'),
+  'Travel Plans must start in authenticated shadow-read mode while Sheets remains primary.'
 );
 assert(
   config.includes("script.src='./supabase-domain-bridge.js?v='"),
@@ -24,7 +27,12 @@ assert(
 );
 assert(
   hostBridge.includes("const OP_READ_TRAVEL = 'travelPlans.read'"),
-  'Host bridge must allow-list the travel read operation.'
+  'Host bridge must allow-list the Travel Plans read operation.'
+);
+assert(
+  hostBridge.includes('travelShadowReadEnabled') &&
+  hostBridge.includes('travelPrimaryReadEnabled'),
+  'Host bridge must distinguish shadow reads from future primary reads.'
 );
 assert(
   hostBridge.includes(".from('trip_members')") &&
@@ -40,20 +48,21 @@ assert(
 );
 assert(
   iframeBridge.includes('legacyTravelLoad.call(window,force)') &&
-  iframeBridge.includes("DATA.supabaseDomainSources.travelPlans='sheets-fallback'"),
-  'The iframe must retain an explicit Sheets rollback path.'
+  iframeBridge.includes("sheets+supabase-shadow-match") &&
+  iframeBridge.includes("sheets+supabase-shadow-mismatch"),
+  'Sheets must stay visible while the signed-in Supabase result is compared for equivalence.'
 );
 assert(
-  iframeBridge.includes("DATA.supabaseDomainSources.travelPlans='supabase'"),
-  'Successful reads must record Supabase as the runtime source for diagnostics.'
+  iframeBridge.includes("DATA.supabaseDomainSources.travelPlans='supabase-primary'"),
+  'The bridge must have a feature-flag promotion path for a later primary-read release.'
 );
 assert(
   shell.includes("include('Client_Supabase_Domain_Bridge')"),
-  'Apps Script shell must install the travel cutover bridge.'
+  'Apps Script shell must install the Travel Plans shadow bridge.'
 );
 assert(
   shell.indexOf("include('Client_Supabase_Domain_Bridge')") > shell.indexOf("include('Client_P3_Travel_Arrivals')"),
   'The bridge override must load after the existing Travel feature.'
 );
 
-console.log('PASS Supabase Travel Plans guarded read cutover contract');
+console.log('PASS Supabase Travel Plans authenticated shadow-read contract');
