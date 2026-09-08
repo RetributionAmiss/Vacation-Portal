@@ -1,4 +1,4 @@
-const CACHE_NAME='family-vacation-pwa-v4-4-0-alpha2-14';
+const CACHE_NAME='family-vacation-pwa-v4-4-0-alpha2-15';
 
 const APP_SHELL=[
   './',
@@ -88,7 +88,8 @@ self.addEventListener('fetch',event=>{
     (
       url.pathname.endsWith('/supabase-auth.js') ||
       url.pathname.endsWith('/supabase-domain-bridge.js') ||
-      url.pathname.endsWith('/supabase-packing-write-bridge.js')
+      url.pathname.endsWith('/supabase-packing-write-bridge.js') ||
+      url.pathname.endsWith('/supabase-packing-primary-write-bridge.js')
     )
   ){
     event.respondWith(networkFirst(request));
