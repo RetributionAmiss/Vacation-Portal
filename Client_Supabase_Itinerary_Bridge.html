@@ -121,7 +121,80 @@
     });
   }
 
+  function firstChangedField_(a,b){
+    const keys=Object.keys(Object.assign({},a||{},b||{})).filter(function(key){return key!=='id';});
+    for(let i=0;i<keys.length;i++){
+      const key=keys[i];
+      if(JSON.stringify(a&&a[key])!==JSON.stringify(b&&b[key])) return key;
+    }
+    return 'row';
+  }
+
+  function sectionDiff_(label,sheetsRows,supabaseRows){
+    const left=Array.isArray(sheetsRows)?sheetsRows:[];
+    const right=Array.isArray(supabaseRows)?supabaseRows:[];
+    const leftById={};
+    const rightById={};
+    left.forEach(function(row){leftById[String(row&&row.id||'')]=row;});
+    right.forEach(function(row){rightById[String(row&&row.id||'')]=row;});
+    const ids=Array.from(new Set(Object.keys(leftById).concat(Object.keys(rightById))).sort());
+    let first=null;
+    let differenceCount=0;
+
+    ids.forEach(function(id){
+      const a=leftById[id];
+      const b=rightById[id];
+      if(!a||!b){
+        differenceCount++;
+        if(!first){
+          first={id:id,reason:!b?'missing in Supabase':'missing in Sheets'};
+        }
+        return;
+      }
+      if(JSON.stringify(a)!==JSON.stringify(b)){
+        differenceCount++;
+        if(!first){
+          first={id:id,reason:'field '+firstChangedField_(a,b)};
+        }
+      }
+    });
+
+    if(left.length!==right.length&&differenceCount===0){
+      differenceCount=Math.abs(left.length-right.length)||1;
+      first={id:'',reason:'row count'};
+    }
+
+    return {
+      label:label,
+      sheetsCount:left.length,
+      supabaseCount:right.length,
+      matches:differenceCount===0,
+      differenceCount:differenceCount,
+      first:first
+    };
+  }
+
+  function mismatchMessage_(diffs){
+    const mismatches=diffs.filter(function(diff){return !diff.matches;});
+    const parts=diffs.map(function(diff){
+      return diff.label+' '+diff.sheetsCount+'/'+diff.supabaseCount+(diff.matches?' match':' differ');
+    });
+    let detail='';
+    if(mismatches.length&&mismatches[0].first){
+      const first=mismatches[0].first;
+      detail=' First: '+mismatches[0].label+(first.id?' '+first.id:'')+' · '+first.reason+'.';
+    }
+    return 'Supabase Itinerary difference — '+parts.join('; ')+'.'+detail+' Sheets is still being used.';
+  }
+
   function recordResult_(result){
+    const sheetItinerary=itinerary_((DATA&&DATA.itinerary)||[]);
+    const sheetSignups=signups_((DATA&&DATA.itinerarySignups)||[]);
+    const sheetComments=comments_((DATA&&DATA.plannerComments)||[]);
+    const supaItinerary=itinerary_((result&&result.itinerary)||[]);
+    const supaSignups=signups_((result&&result.itinerarySignups)||[]);
+    const supaComments=comments_((result&&result.plannerComments)||[]);
+
     const sheets=comparableBundle_(
       (DATA&&DATA.itinerary)||[],
       (DATA&&DATA.itinerarySignups)||[],
@@ -133,6 +206,12 @@
       (result&&result.plannerComments)||[]
     );
     const matches=sheets===supabase;
+    const diffs=[
+      sectionDiff_('activities',sheetItinerary,supaItinerary),
+      sectionDiff_('signups',sheetSignups,supaSignups),
+      sectionDiff_('comments',sheetComments,supaComments)
+    ];
+
     DATA.supabaseItineraryShadow={
       itinerary:(result&&result.itinerary)||[],
       itinerarySignups:(result&&result.itinerarySignups)||[],
@@ -143,14 +222,21 @@
     DATA.supabaseDomainSources.itinerary=matches
       ?'sheets+supabase-itinerary-shadow-match'
       :'sheets+supabase-itinerary-shadow-mismatch';
-    delete DATA.supabaseDomainDiagnostics.itinerary;
+    if(matches){
+      delete DATA.supabaseDomainDiagnostics.itinerary;
+    }else{
+      DATA.supabaseDomainDiagnostics.itinerary={
+        code:'shadow_mismatch',
+        sections:diffs
+      };
+    }
 
     if(statusAnnounced||currentView!=='itinerary'||typeof toast!=='function') return;
     statusAnnounced=true;
     if(matches){
       toast('Supabase Itinerary check passed — data matches Sheets.');
     }else{
-      toast('Supabase Itinerary check found a difference. Sheets is still being used.',true);
+      toast(mismatchMessage_(diffs),true);
     }
   }
 
