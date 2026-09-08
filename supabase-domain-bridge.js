@@ -11,8 +11,10 @@ const travelReadEnabled = travelShadowReadEnabled || travelPrimaryReadEnabled;
 const REQUEST_TYPE = 'vacation-portal-supabase-domain-request';
 const RESPONSE_TYPE = 'vacation-portal-supabase-domain-response';
 const OP_READ_TRAVEL = 'travelPlans.read';
+const AUTH_CLIENT_WAIT_MS = 3000;
+const AUTH_CLIENT_POLL_MS = 75;
 
-let client = null;
+let fallbackClient = null;
 
 function childFrameForSource(source) {
   try {
@@ -22,9 +24,69 @@ function childFrameForSource(source) {
   }
 }
 
-function reply(target, payload) {
+function isTrustedAppsScriptOrigin(origin) {
+  try {
+    const url = new URL(String(origin || ''));
+    if (url.protocol !== 'https:') return false;
+    const host = String(url.hostname || '').toLowerCase();
+    return host === 'script.google.com' ||
+      host === 'script.googleusercontent.com' ||
+      host.endsWith('.script.googleusercontent.com') ||
+      host.endsWith('-script.googleusercontent.com');
+  } catch (error) {
+    return false;
+  }
+}
+
+function isEligiblePortalRequest(event) {
+  if (!event || !event.source || event.source === window) return false;
+  if (childFrameForSource(event.source)) return true;
+
+  // Apps Script HTML Service itself runs inside an additional Google sandbox
+  // iframe. Requests posted from that inner frame reach the PWA as a nested
+  // source rather than portalFrame.contentWindow, so validate its Google-hosted
+  // origin instead of requiring it to be a direct child frame.
+  return isTrustedAppsScriptOrigin(event.origin);
+}
+
+function reply(target, targetOrigin, payload) {
   if (!target || typeof target.postMessage !== 'function') return;
-  target.postMessage(Object.assign({ type: RESPONSE_TYPE }, payload), '*');
+  target.postMessage(
+    Object.assign({ type: RESPONSE_TYPE }, payload),
+    targetOrigin && targetOrigin !== 'null' ? targetOrigin : '*'
+  );
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function getSupabaseClient() {
+  const deadline = Date.now() + AUTH_CLIENT_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (window.VacationSupabase) return window.VacationSupabase;
+    await wait(AUTH_CLIENT_POLL_MS);
+  }
+
+  // Normally the account shell owns the one browser client. Keep a fallback so
+  // the read bridge can still restore the persisted session if module startup
+  // ordering delays that shared client beyond the readiness window.
+  if (!fallbackClient && supabaseUrl && publishableKey) {
+    fallbackClient = createClient(supabaseUrl, publishableKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: false,
+        detectSessionInUrl: true
+      }
+    });
+  }
+
+  if (!fallbackClient) {
+    const error = new Error('Supabase domain bridge is not configured.');
+    error.code = 'bridge_not_configured';
+    throw error;
+  }
+  return fallbackClient;
 }
 
 function normalizeClock(value) {
@@ -40,8 +102,8 @@ function normalizeDate(value) {
   return match ? match[1] : '';
 }
 
-async function currentMembership() {
-  const { data: sessionData, error: sessionError } = await client.auth.getSession();
+async function currentMembership(activeClient) {
+  const { data: sessionData, error: sessionError } = await activeClient.auth.getSession();
   if (sessionError) throw sessionError;
   const session = sessionData && sessionData.session;
   if (!session || !session.user) {
@@ -50,7 +112,7 @@ async function currentMembership() {
     throw error;
   }
 
-  const { data, error } = await client
+  const { data, error } = await activeClient
     .from('trip_members')
     .select('trip_id,traveler_id,role')
     .eq('auth_user_id', session.user.id)
@@ -79,8 +141,9 @@ async function readTravelPlans() {
     throw disabled;
   }
 
-  const membership = await currentMembership();
-  const { data: plans, error: planError } = await client
+  const activeClient = await getSupabaseClient();
+  const membership = await currentMembership(activeClient);
+  const { data: plans, error: planError } = await activeClient
     .from('travel_plans')
     .select('id,legacy_id,trip_id,traveler_id,mode,leaving_from,departure_date,departure_time,arrival_date,arrival_time,travel_details,notes,created_at,updated_at,version')
     .eq('trip_id', membership.trip_id)
@@ -95,7 +158,7 @@ async function readTravelPlans() {
   let travelerLegacyById = {};
 
   if (travelerIds.length) {
-    const { data: travelers, error: travelerError } = await client
+    const { data: travelers, error: travelerError } = await activeClient
       .from('travelers')
       .select('id,legacy_id')
       .in('id', travelerIds)
@@ -138,16 +201,13 @@ async function handleRequest(event) {
   const message = event && event.data || {};
   if (message.type !== REQUEST_TYPE) return;
 
-  // Only requests coming from an iframe hosted by this PWA shell are eligible.
-  // The Supabase session itself never leaves the top-level PWA.
-  if (!childFrameForSource(event.source)) return;
+  if (!isEligiblePortalRequest(event)) return;
 
   const requestId = String(message.requestId || '').trim();
   const operation = String(message.operation || '').trim();
   if (!requestId) return;
 
   try {
-    if (!client) throw new Error('Supabase domain bridge is not configured.');
     if (operation !== OP_READ_TRAVEL) {
       const unsupported = new Error('Unsupported Supabase domain operation.');
       unsupported.code = 'unsupported_operation';
@@ -155,9 +215,9 @@ async function handleRequest(event) {
     }
 
     const data = await readTravelPlans();
-    reply(event.source, { requestId, operation, ok: true, data });
+    reply(event.source, event.origin, { requestId, operation, ok: true, data });
   } catch (error) {
-    reply(event.source, {
+    reply(event.source, event.origin, {
       requestId,
       operation,
       ok: false,
@@ -170,12 +230,5 @@ async function handleRequest(event) {
 }
 
 if (supabaseUrl && publishableKey) {
-  client = createClient(supabaseUrl, publishableKey, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: false,
-      detectSessionInUrl: true
-    }
-  });
   window.addEventListener('message', handleRequest);
 }
