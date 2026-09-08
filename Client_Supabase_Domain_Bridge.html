@@ -3,9 +3,10 @@
  * Controlled Supabase runtime cutover bridge.
  *
  * The Apps Script iframe never receives Supabase session tokens. It asks the
- * top-level PWA shell for allow-listed domain operations. Sheets remains the
- * authoritative visible/write path while authenticated Supabase reads and
- * mirrored post-Sheets mutations are checked for equivalence.
+ * top-level PWA shell for allow-listed domain operations. Supabase is now the
+ * primary Travel read source. Sheets remains the authoritative mutation path;
+ * successful Sheets saves/deletes are mirrored to Supabase and compared.
+ * If a primary Supabase read is unavailable, the bridge falls back to Sheets.
  */
 (function installSupabaseTravelReadBridge_(){
   if(typeof p3TravelArrivalLoad_!=='function') return;
@@ -18,14 +19,15 @@
   const OP_UPSERT_TRAVEL='travelPlans.upsert';
   const OP_DELETE_TRAVEL='travelPlans.delete';
   const REQUEST_TIMEOUT_MS=5500;
-  const SHADOW_TTL_MS=15000;
+  const READ_TTL_MS=15000;
   const pending={};
   const legacyTravelLoad=p3TravelArrivalLoad_;
   const legacyTravelSave=typeof p3TravelArrivalSave_==='function'?p3TravelArrivalSave_:null;
   const legacyTravelDelete=typeof p3TravelArrivalDeleteNow_==='function'?p3TravelArrivalDeleteNow_:null;
-  let shadowRequestInFlight=false;
-  let lastShadowRequestAt=0;
+  let readRequestInFlight=false;
+  let lastReadRequestAt=0;
   let shadowStatusAnnounced=false;
+  let primaryStatusAnnounced=false;
 
   function requestId_(){
     return 'supa-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
@@ -125,6 +127,18 @@
       const suffix=code?' ('+String(code)+')':'';
       toast('Supabase Travel check was unavailable'+suffix+'. Sheets is still being used.',true);
     }
+  }
+
+  function announcePrimaryReadStatus_(){
+    if(primaryStatusAnnounced||currentView!=='travel'||typeof toast!=='function') return;
+    primaryStatusAnnounced=true;
+    toast('Supabase Travel primary read passed — loaded from Supabase.');
+  }
+
+  function announcePrimaryFallback_(code){
+    if(currentView!=='travel'||typeof toast!=='function') return;
+    const suffix=code?' ('+String(code)+')':'';
+    toast('Supabase Travel read was unavailable'+suffix+'. Using Sheets fallback.',true);
   }
 
   function recordShadowComparison_(supabasePlans,attempt){
@@ -274,48 +288,56 @@
   }
 
   p3TravelArrivalLoad_=function(force){
-    // Sheets stays authoritative/visible in this stage, so normal loading and
-    // save/delete behavior remain untouched while the authenticated shadow read
-    // is validated against the same legacy-shaped records.
-    legacyTravelLoad.call(window,force);
+    if(readRequestInFlight) return;
+    if(!force&&lastReadRequestAt&&Date.now()-lastReadRequestAt<READ_TTL_MS) return;
 
-    if(shadowRequestInFlight) return;
-    if(!force&&lastShadowRequestAt&&Date.now()-lastShadowRequestAt<SHADOW_TTL_MS) return;
+    readRequestInFlight=true;
+    lastReadRequestAt=Date.now();
+    p3TravelArrivalState_.loading=true;
 
-    shadowRequestInFlight=true;
-    lastShadowRequestAt=Date.now();
+    // Supabase is queried first. In the promoted stage a successful response is
+    // the only visible Travel read. If the release flag is rolled back to
+    // shadow mode, or if the Supabase request fails, the legacy Sheets loader
+    // remains available as the explicit fallback path.
     request_(OP_READ_TRAVEL)
       .then(function(result){
         const plans=(result&&result.plans)||[];
         if(result&&result.primary===true){
           DATA.travelPlans=plans;
           DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+          DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
           DATA.supabaseDomainSources.travelPlans='supabase-primary';
+          delete DATA.supabaseDomainDiagnostics.travelPlans;
           p3TravelArrivalState_.loaded=true;
           p3TravelArrivalState_.loading=false;
           p3TravelArrivalState_.lastLoaded=Date.now();
+          announcePrimaryReadStatus_();
           if(currentView==='travel'||currentView==='dashboard') render();
           return;
         }
+
+        // Config rollback path: preserve the previously validated shadow-read
+        // behavior without requiring an Apps Script redeploy.
+        p3TravelArrivalState_.loading=false;
+        legacyTravelLoad.call(window,force);
         recordShadowComparison_(plans,0);
       })
       .catch(function(error){
         DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
         DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
-        DATA.supabaseDomainSources.travelPlans='sheets+supabase-shadow-unavailable';
+        DATA.supabaseDomainSources.travelPlans='supabase-primary-fallback-sheets';
         DATA.supabaseDomainDiagnostics.travelPlans={
           code:String(error&&error.code||'bridge_error'),
           message:String(error&&error.message||'Supabase domain request failed.')
         };
-        announceShadowStatus_(
-          'sheets+supabase-shadow-unavailable',
-          DATA.supabaseDomainDiagnostics.travelPlans.code
-        );
+        p3TravelArrivalState_.loading=false;
+        announcePrimaryFallback_(DATA.supabaseDomainDiagnostics.travelPlans.code);
+        legacyTravelLoad.call(window,true);
       })
       .then(function(){
-        shadowRequestInFlight=false;
+        readRequestInFlight=false;
       },function(){
-        shadowRequestInFlight=false;
+        readRequestInFlight=false;
       });
   };
 })();
