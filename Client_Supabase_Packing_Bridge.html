@@ -1,8 +1,10 @@
 <script>
 /*
- * Guarded Packing cutover. Sheets stays visible and authoritative while
- * authenticated Supabase reads and post-save mutation mirrors are compared
- * field-for-field. Supabase session tokens remain in the top-level PWA shell.
+ * Guarded Packing cutover. Supabase is the primary read source while Sheets
+ * remains the authoritative mutation path. Successful Sheets mutations mirror
+ * back into Supabase and are compared field-for-field. If a primary Supabase
+ * read is unavailable, the existing Sheets loader remains the explicit fallback.
+ * Supabase session tokens remain in the top-level PWA shell.
  */
 (function installSupabasePackingBridge_(){
   if(typeof p3PackingLoad_!=='function') return;
@@ -23,9 +25,10 @@
   const legacyPackingSave=typeof p3PackingSave_==='function'?p3PackingSave_:null;
   const legacyPackingToggle=typeof p3PackingToggle_==='function'?p3PackingToggle_:null;
   const legacyPackingDelete=typeof p3PackingDeleteNow_==='function'?p3PackingDeleteNow_:null;
-  let shadowRequestInFlight=false;
-  let lastShadowRequestAt=0;
+  let readRequestInFlight=false;
+  let lastReadRequestAt=0;
   let shadowStatusAnnounced=false;
+  let primaryStatusAnnounced=false;
 
   function requestId_(){
     return 'supa-pack-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
@@ -118,6 +121,18 @@
     }
     const suffix=code?' ('+String(code)+')':'';
     toast('Supabase Packing check was unavailable'+suffix+'. Sheets is still being used.',true);
+  }
+
+  function announcePrimaryReadStatus_(){
+    if(primaryStatusAnnounced||currentView!=='packing'||typeof toast!=='function') return;
+    primaryStatusAnnounced=true;
+    toast('Supabase Packing primary read passed — loaded from Supabase.');
+  }
+
+  function announcePrimaryFallback_(code){
+    if(currentView!=='packing'||typeof toast!=='function') return;
+    const suffix=code?' ('+String(code)+')':'';
+    toast('Supabase Packing read was unavailable'+suffix+'. Using Sheets fallback.',true);
   }
 
   function mutationLabel_(action){
@@ -347,26 +362,54 @@
   }
 
   p3PackingLoad_=function(force){
-    const legacyResult=legacyPackingLoad.apply(this,arguments);
-    if(shadowRequestInFlight) return legacyResult;
-    if(!force&&lastShadowRequestAt&&Date.now()-lastShadowRequestAt<READ_TTL_MS) return legacyResult;
+    if(readRequestInFlight) return;
+    if(!force&&lastReadRequestAt&&Date.now()-lastReadRequestAt<READ_TTL_MS) return;
 
-    shadowRequestInFlight=true;
-    lastShadowRequestAt=Date.now();
+    readRequestInFlight=true;
+    lastReadRequestAt=Date.now();
+    p3PackingState_.loading=true;
+
     request_(OP_READ_PACKING,{},DOMAIN_REQUEST_TYPE)
       .then(function(result){
-        recordComparison_((result&&result.items)||[],0);
+        const items=(result&&result.items)||[];
+        if(result&&result.primary===true){
+          DATA.packingItems=items;
+          DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+          DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+          DATA.supabaseDomainSources.packingItems='supabase-primary';
+          delete DATA.supabaseDomainDiagnostics.packingItems;
+          p3PackingState_.loaded=true;
+          p3PackingState_.loading=false;
+          p3PackingState_.lastLoaded=Date.now();
+          announcePrimaryReadStatus_();
+          if(currentView==='packing'||currentView==='dashboard') render();
+          return;
+        }
+
+        // Config rollback path: preserve the previously validated Sheets-first
+        // shadow-read behavior if Packing primary reads are disabled again.
+        p3PackingState_.loading=false;
+        legacyPackingLoad.call(window,force);
+        recordComparison_(items,0);
       })
       .catch(function(error){
-        recordUnavailable_(error);
+        DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+        DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+        const code=String(error&&error.code||'bridge_error');
+        DATA.supabaseDomainSources.packingItems='supabase-primary-fallback-sheets';
+        DATA.supabaseDomainDiagnostics.packingItems={
+          code:code,
+          message:String(error&&error.message||'Supabase Packing read failed.')
+        };
+        p3PackingState_.loading=false;
+        announcePrimaryFallback_(code);
+        legacyPackingLoad.call(window,true);
       })
       .then(function(){
-        shadowRequestInFlight=false;
+        readRequestInFlight=false;
       },function(){
-        shadowRequestInFlight=false;
+        readRequestInFlight=false;
       });
-
-    return legacyResult;
   };
 })();
 </script>
