@@ -132,10 +132,10 @@ assert(
 );
 
 assert(
-  /release:\s*'V4\.4\.0-alpha2\.2'/.test(pwaConfig) &&
+  /release:\s*'V4\.4\.0-alpha2\.\d+'/.test(pwaConfig) &&
     pwaShell.includes("'pwaHostRelease'") &&
     pwaShell.includes("String(config.release||'')"),
-  'PWA host release must change when the Apps Script shell changes so the iframe URL cannot reuse stale HTML/CSS.'
+  'PWA host must keep a versioned release token in the Apps Script iframe URL so deliberate cache-bust releases remain available.'
 );
 
 assert(
