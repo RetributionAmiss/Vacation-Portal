@@ -26,10 +26,14 @@ const versionMigration = fs.readFileSync(
   path.join(root, 'supabase/migrations/20260908193800_packing_primary_write_version_guard.sql'),
   'utf8'
 );
+const releaseMatch = config.match(/release:\s*'([^']+)'/);
+assert(releaseMatch, 'The PWA release must be declared in config.js.');
+const release = releaseMatch[1];
+const cacheRelease = release.toLowerCase().replace(/\./g, '-');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.15'"),
-  'Packing primary-write release must bump the PWA cache key.'
+  /^V4\.4\.0-alpha2\.\d+$/.test(release),
+  'Packing primary-write contract must run against the active V4.4 alpha release.'
 );
 assert(
   config.includes('packingItems:') &&
@@ -195,10 +199,10 @@ assert(
   'The primary-toggle RPC must enforce optimistic concurrency without weakening its security boundary.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-15') &&
+  serviceWorker.includes('family-vacation-pwa-'+cacheRelease) &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-packing-primary-write-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The installed PWA must refresh the Packing primary-write host module during the guarded live test.'
+  'The installed PWA must refresh the Packing primary-write host module during guarded live tests.'
 );
 
 console.log('PASS Supabase Packing primary read/write with Sheets backup contract');
