@@ -13,9 +13,9 @@ window.VACATION_PORTAL_CONFIG = {
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
   // Domain cutovers are release-level flags. Travel Plans is fully primary in
-  // Supabase with a non-blocking Sheets backup. Packing starts with an
-  // authenticated shadow read only; Sheets remains the visible source and all
-  // Packing mutations still go to Sheets in this release.
+  // Supabase with a non-blocking Sheets backup. Packing remains Sheets-primary,
+  // but successful Sheets mutations are now mirrored into Supabase and checked
+  // for authenticated field-for-field equivalence.
   supabaseDomains: {
     travelPlans: {
       shadowRead: false,
@@ -25,7 +25,7 @@ window.VACATION_PORTAL_CONFIG = {
     },
     packingItems: {
       shadowRead: true,
-      shadowWrite: false,
+      shadowWrite: true,
       read: false,
       write: false
     }
@@ -34,7 +34,7 @@ window.VACATION_PORTAL_CONFIG = {
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.12'
+  release: 'V4.4.0-alpha2.13'
 };
 
 (function loadVacationSupabaseAuth_(){
@@ -60,6 +60,19 @@ window.VACATION_PORTAL_CONFIG = {
     document.head.appendChild(script);
   }catch(error){
     console.warn('Supabase domain bridge could not be loaded.',error);
+  }
+})();
+
+(function loadVacationSupabasePackingWriteBridge_(){
+  try{
+    const script=document.createElement('script');
+    script.type='module';
+    script.src='./supabase-packing-write-bridge.js?v='+encodeURIComponent(
+      String(window.VACATION_PORTAL_CONFIG.release||'')
+    );
+    document.head.appendChild(script);
+  }catch(error){
+    console.warn('Supabase Packing write bridge could not be loaded.',error);
   }
 })();
 
