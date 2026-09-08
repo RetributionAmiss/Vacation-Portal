@@ -1,0 +1,459 @@
+<script>
+/*
+ * Guarded Packing primary-write promotion. Supabase mutations settle first;
+ * Sheets is then updated as a non-blocking rollback backup. If the current
+ * runtime fell back to Sheets reads, the already-validated Sheets-first write
+ * path remains in control.
+ */
+(function installSupabasePackingPrimaryWrite_(){
+  if(window.__vacationSupabasePackingPrimaryWriteInstalled) return;
+  if(typeof p3PackingSave_!=='function'||typeof p3PackingToggle_!=='function'||typeof p3PackingDeleteNow_!=='function') return;
+  window.__vacationSupabasePackingPrimaryWriteInstalled=true;
+
+  const REQUEST_TYPE='vacation-portal-supabase-packing-primary-write-request';
+  const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
+  const OP_STATUS='packingItems.primaryWriteStatus';
+  const OP_UPSERT='packingItems.primaryUpsert';
+  const OP_TOGGLE='packingItems.primaryToggle';
+  const OP_DELETE='packingItems.primaryDelete';
+  const REQUEST_TIMEOUT_MS=5500;
+  const pending={};
+  const fallbackLoad=p3PackingLoad_;
+  const fallbackSave=p3PackingSave_;
+  const fallbackToggle=p3PackingToggle_;
+  const fallbackDelete=p3PackingDeleteNow_;
+  let configuredWriteMode='unknown';
+  let statusRequestInFlight=false;
+
+  function requestId_(){
+    return 'supa-pack-primary-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  }
+
+  function hostTargets_(){
+    const targets=[];
+    try{
+      if(window.parent&&window.parent!==window) targets.push(window.parent);
+    }catch(error){}
+    try{
+      if(window.top&&window.top!==window&&targets.indexOf(window.top)===-1) targets.push(window.top);
+    }catch(error){}
+    return targets;
+  }
+
+  function request_(operation,data){
+    return new Promise(function(resolve,reject){
+      const targets=hostTargets_();
+      if(!targets.length){
+        const error=new Error('Supabase PWA bridge is unavailable.');
+        error.code='bridge_no_host';
+        reject(error);
+        return;
+      }
+
+      const id=requestId_();
+      const timer=setTimeout(function(){
+        delete pending[id];
+        const error=new Error('Supabase PWA bridge timed out.');
+        error.code='bridge_timeout';
+        reject(error);
+      },REQUEST_TIMEOUT_MS);
+
+      pending[id]={
+        resolve:function(value){clearTimeout(timer);resolve(value);},
+        reject:function(error){clearTimeout(timer);reject(error);}
+      };
+
+      const payload={
+        type:REQUEST_TYPE,
+        requestId:id,
+        operation:operation,
+        data:data||{}
+      };
+      targets.forEach(function(target){
+        try{target.postMessage(payload,'*');}catch(error){}
+      });
+    });
+  }
+
+  window.addEventListener('message',function(event){
+    const data=event&&event.data||{};
+    if(data.type!==RESPONSE_TYPE) return;
+    if(event.source!==window.parent&&event.source!==window.top) return;
+    const id=String(data.requestId||'');
+    const waiter=pending[id];
+    if(!waiter) return;
+    delete pending[id];
+
+    if(data.ok){
+      waiter.resolve(data.data||{});
+      return;
+    }
+
+    const error=new Error(
+      data.error&&data.error.message
+        ?String(data.error.message)
+        :'Supabase Packing primary-write request failed.'
+    );
+    error.code=String(data.error&&data.error.code||'bridge_error');
+    waiter.reject(error);
+  });
+
+  function primeWriteMode_(){
+    if(statusRequestInFlight) return;
+    statusRequestInFlight=true;
+    request_(OP_STATUS,{})
+      .then(function(result){
+        configuredWriteMode=result&&result.writePrimary===true?'primary':'legacy';
+      })
+      .catch(function(){
+        configuredWriteMode='legacy';
+      })
+      .then(function(){statusRequestInFlight=false;},function(){statusRequestInFlight=false;});
+  }
+
+  function primaryWriteEnabled_(){
+    return configuredWriteMode==='primary' &&
+      DATA&&DATA.supabaseDomainSources&&
+      DATA.supabaseDomainSources.packingItems==='supabase-primary';
+  }
+
+  function stablePackingId_(){
+    let seed='';
+    try{
+      if(window.crypto&&typeof window.crypto.randomUUID==='function'){
+        seed=window.crypto.randomUUID().replace(/-/g,'');
+      }
+    }catch(error){}
+    if(!seed) seed=Date.now().toString(36)+Math.random().toString(36).slice(2);
+    seed=String(seed||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    return 'PACK-'+(seed+'0000000000').slice(0,10);
+  }
+
+  function comparableItem_(row){
+    row=row||{};
+    return {
+      id:String(row['Packing ID']||''),
+      scope:String(row.Scope||'Personal')==='Shared'?'Shared':'Personal',
+      ownerTravelerId:String(row['Owner Traveler ID']||''),
+      bringingTravelerId:String(row['Bringing Traveler ID']||''),
+      category:String(row.Category||'Other'),
+      item:String(row.Item||'').trim(),
+      quantity:String(row.Quantity===undefined||row.Quantity===null?'':row.Quantity).trim(),
+      packed:String(row.Packed||'No')==='Yes'?'Yes':'No',
+      notes:String(row.Notes||'').trim()
+    };
+  }
+
+  function comparableItems_(rows){
+    return (rows||[]).map(comparableItem_).sort(function(a,b){
+      return (a.id+'|'+a.ownerTravelerId).localeCompare(b.id+'|'+b.ownerTravelerId);
+    });
+  }
+
+  function listsMatch_(a,b){
+    return JSON.stringify(comparableItems_(a))===JSON.stringify(comparableItems_(b));
+  }
+
+  function mutationLabel_(action){
+    if(action==='delete') return 'delete';
+    if(action==='toggle') return 'toggle';
+    return 'save';
+  }
+
+  function announceBackupStatus_(action,status,code){
+    if(currentView!=='packing'||typeof toast!=='function') return;
+    const label=mutationLabel_(action);
+    if(status==='match'){
+      toast('Supabase Packing '+label+' passed — Sheets backup matches.');
+      return;
+    }
+    if(status==='mismatch'){
+      toast('Supabase Packing '+label+' passed, but Sheets backup differs.',true);
+      return;
+    }
+    const suffix=code?' ('+String(code)+')':'';
+    toast('Supabase Packing '+label+' passed. Sheets backup sync was unavailable'+suffix+'.',true);
+  }
+
+  function recordBackupResult_(action,sheetItems){
+    DATA.supabasePackingSheetBackupItems=(sheetItems||[]).map(function(row){return Object.assign({},row);});
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    if(listsMatch_(DATA.packingItems||[],sheetItems||[])){
+      delete DATA.supabaseDomainDiagnostics.packingItemsBackup;
+      announceBackupStatus_(action,'match');
+      return;
+    }
+    DATA.supabaseDomainDiagnostics.packingItemsBackup={
+      operation:action,
+      code:'backup_mismatch',
+      message:'The Sheets backup does not match the primary Supabase Packing data.'
+    };
+    announceBackupStatus_(action,'mismatch');
+  }
+
+  function recordBackupFailure_(action,error){
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    const code=String(error&&error.code||'sheets_backup_error');
+    DATA.supabaseDomainDiagnostics.packingItemsBackup={
+      operation:action,
+      code:code,
+      message:String(error&&error.message||'Sheets Packing backup sync failed.')
+    };
+    announceBackupStatus_(action,'unavailable',code);
+  }
+
+  function sheetPayloadFromItem_(item,deviceId){
+    item=item||{};
+    const packingId=String(item['Packing ID']||'');
+    return {
+      deviceId:String(deviceId||''),
+      travelerId:String(item['Owner Traveler ID']||''),
+      id:packingId,
+      packingId:packingId,
+      scope:String(item.Scope||'Personal'),
+      category:String(item.Category||'Other'),
+      item:String(item.Item||''),
+      quantity:String(item.Quantity===undefined||item.Quantity===null?'':item.Quantity),
+      bringingTravelerId:String(item['Bringing Traveler ID']||''),
+      notes:String(item.Notes||'')
+    };
+  }
+
+  function mirrorPrimaryToSheets_(action,item){
+    if(!window.google||!google.script||!google.script.run||typeof p3PlannerSocialEnsureDevice_!=='function'){
+      const error=new Error('Sheets backup bridge is unavailable.');
+      error.code='sheets_bridge_unavailable';
+      recordBackupFailure_(action,error);
+      return;
+    }
+
+    p3PlannerSocialEnsureDevice_(function(deviceId){
+      const runner=google.script.run
+        .withSuccessHandler(function(result){
+          recordBackupResult_(action,(result&&result.items)||[]);
+        })
+        .withFailureHandler(function(error){
+          recordBackupFailure_(action,error);
+        });
+
+      if(action==='delete'){
+        runner.deletePackingItem({
+          deviceId:String(deviceId||''),
+          travelerId:String(currentTravelerId||''),
+          id:String(item&&item['Packing ID']||'')
+        });
+        return;
+      }
+
+      if(action==='toggle'){
+        runner.togglePackingItem({
+          deviceId:String(deviceId||''),
+          travelerId:String(currentTravelerId||''),
+          id:String(item&&item['Packing ID']||''),
+          packed:String(item&&item.Packed||'No')==='Yes'
+        });
+        return;
+      }
+
+      runner.savePackingItem(sheetPayloadFromItem_(item,deviceId));
+    },function(error){
+      recordBackupFailure_(action,error);
+    });
+  }
+
+  function markPrimarySuccess_(result){
+    DATA.packingItems=(result&&result.items)||[];
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.packingItems='supabase-primary';
+    delete DATA.supabaseDomainDiagnostics.packingItems;
+    p3PackingState_.loaded=true;
+    p3PackingState_.loading=false;
+    p3PackingState_.lastLoaded=Date.now();
+  }
+
+  function primarySave_(event,id){
+    if(event&&typeof event.preventDefault==='function') event.preventDefault();
+    if(!currentTravelerId) return false;
+
+    const payload={
+      id:String(id||''),
+      travelerId:String(currentTravelerId),
+      scope:String(val('p3PackScope')||'Personal'),
+      category:String(val('p3PackCategory')||'Other'),
+      item:String(val('p3PackItem')||''),
+      quantity:String(val('p3PackQuantity')||''),
+      bringingTravelerId:String(val('p3PackBringer')||''),
+      notes:String(val('p3PackNotes')||'')
+    };
+    if(!payload.item.trim()){
+      toast('Enter an item to pack.',true);
+      return false;
+    }
+
+    if(!DATA.packingItems) DATA.packingItems=[];
+    const previous=DATA.packingItems.map(function(row){return Object.assign({},row);});
+    const existingIndex=payload.id?DATA.packingItems.findIndex(function(row){
+      return String(row['Packing ID']||'')===payload.id;
+    }):-1;
+    const existing=existingIndex>=0?DATA.packingItems[existingIndex]:null;
+    let stableId=payload.id;
+    if(!stableId||stableId.indexOf('LOCAL-PACK-')===0) stableId=stablePackingId_();
+
+    const optimistic=p3PackingOptimisticRow_(payload,stableId,existing);
+    optimistic.Version=existing?Number(existing.Version||0):0;
+    if(existingIndex>=0) DATA.packingItems[existingIndex]=optimistic;
+    else DATA.packingItems.push(optimistic);
+
+    p3PackingPending_[stableId]=true;
+    p3PackingMode_=payload.scope==='Shared'?'shared':'personal';
+    p3PackingState_.loaded=true;
+    p3PackingState_.lastLoaded=Date.now();
+    const saveId=typeof beginBackgroundSave_==='function'
+      ?beginBackgroundSave_('Packing item','packing:'+stableId)
+      :'';
+
+    closeModal();
+    render();
+
+    function rollback(error){
+      DATA.packingItems=previous;
+      delete p3PackingPending_[stableId];
+      p3PackingState_.lastLoaded=Date.now();
+      if(saveId&&typeof failBackgroundSave_==='function'){
+        failBackgroundSave_(saveId,error,'Packing item could not be saved');
+      }else{
+        toast(error&&error.message?error.message:String(error),true);
+      }
+      render();
+    }
+
+    request_(OP_UPSERT,{item:optimistic})
+      .then(function(result){
+        markPrimarySuccess_(result);
+        delete p3PackingPending_[stableId];
+        if(saveId&&typeof completeBackgroundSave_==='function'){
+          completeBackgroundSave_(saveId,'Packing list updated');
+        }
+        render();
+        const settled=(DATA.packingItems||[]).find(function(row){
+          return String(row['Packing ID']||'')===stableId;
+        })||optimistic;
+        mirrorPrimaryToSheets_('save',settled);
+      })
+      .catch(rollback);
+
+    return false;
+  }
+
+  function primaryToggle_(id,packed){
+    id=String(id||'');
+    const rows=(DATA&&DATA.packingItems)||[];
+    const index=rows.findIndex(function(row){return String(row['Packing ID']||'')===id;});
+    if(index<0||!p3PackingCanToggle_(rows[index])||p3PackingPending_[id]) return false;
+
+    const previous=rows.map(function(row){return Object.assign({},row);});
+    const optimistic=Object.assign({},rows[index],{Packed:packed?'Yes':'No'});
+    rows[index]=optimistic;
+    p3PackingPending_[id]=true;
+    render();
+
+    function rollback(error){
+      DATA.packingItems=previous;
+      delete p3PackingPending_[id];
+      toast(error&&error.message?error.message:String(error),true);
+      render();
+    }
+
+    request_(OP_TOGGLE,{item:optimistic,packed:Boolean(packed)})
+      .then(function(result){
+        markPrimarySuccess_(result);
+        delete p3PackingPending_[id];
+        render();
+        const settled=(DATA.packingItems||[]).find(function(row){
+          return String(row['Packing ID']||'')===id;
+        })||optimistic;
+        mirrorPrimaryToSheets_('toggle',settled);
+      })
+      .catch(rollback);
+
+    return false;
+  }
+
+  function primaryDelete_(id){
+    id=String(id||'');
+    if(!id||p3PackingPending_[id]) return false;
+    const rows=(DATA&&DATA.packingItems)||[];
+    const index=rows.findIndex(function(row){return String(row['Packing ID']||'')===id;});
+    if(index<0){closeModal();return false;}
+
+    const item=rows[index];
+    if(String(item['Owner Traveler ID']||'')!==String(currentTravelerId||'')){
+      closeModal();
+      toast('Only the traveler who added this item can delete it.',true);
+      return false;
+    }
+
+    const previous=rows.map(function(row){return Object.assign({},row);});
+    DATA.packingItems=rows.filter(function(row){return String(row['Packing ID']||'')!==id;});
+    p3PackingPending_[id]=true;
+    p3PackingState_.loaded=true;
+    p3PackingState_.lastLoaded=Date.now();
+    const saveId=typeof beginBackgroundSave_==='function'
+      ?beginBackgroundSave_('Packing item','packing-delete:'+id)
+      :'';
+
+    closeModal();
+    render();
+
+    function rollback(error){
+      DATA.packingItems=previous;
+      delete p3PackingPending_[id];
+      p3PackingState_.lastLoaded=Date.now();
+      if(saveId&&typeof failBackgroundSave_==='function'){
+        failBackgroundSave_(saveId,error,'Packing item could not be deleted');
+      }else{
+        toast(error&&error.message?error.message:String(error),true);
+      }
+      render();
+    }
+
+    request_(OP_DELETE,{item:item})
+      .then(function(result){
+        markPrimarySuccess_(result);
+        delete p3PackingPending_[id];
+        if(saveId&&typeof completeBackgroundSave_==='function'){
+          completeBackgroundSave_(saveId,'Packing item removed');
+        }
+        render();
+        mirrorPrimaryToSheets_('delete',item);
+      })
+      .catch(rollback);
+
+    return false;
+  }
+
+  p3PackingLoad_=function(force){
+    const result=fallbackLoad.apply(this,arguments);
+    primeWriteMode_();
+    return result;
+  };
+
+  p3PackingSave_=function(event,id){
+    if(primaryWriteEnabled_()) return primarySave_(event,id);
+    return fallbackSave.apply(this,arguments);
+  };
+
+  p3PackingToggle_=function(id,packed){
+    if(primaryWriteEnabled_()) return primaryToggle_(id,packed);
+    return fallbackToggle.apply(this,arguments);
+  };
+
+  p3PackingDeleteNow_=function(id){
+    if(primaryWriteEnabled_()) return primaryDelete_(id);
+    return fallbackDelete.apply(this,arguments);
+  };
+
+  primeWriteMode_();
+})();
+</script>
