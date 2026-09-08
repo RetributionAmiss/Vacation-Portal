@@ -6,6 +6,7 @@ on:
       - main
       - feature/supabase-packing-read-cutover
       - feature/supabase-packing-shadow-write
+      - feature/supabase-packing-primary-read
   pull_request:
     branches:
       - main
