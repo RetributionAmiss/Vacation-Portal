@@ -2,7 +2,7 @@
 
 ## Current phase: Planner + Packing + Travel controlled runtime cutover
 
-Google Sheets remains authoritative for writes in this release slice. The first browser runtime cutover is now limited to signed-in Travel Plans reads through the top-level PWA Supabase session. The Apps Script iframe never receives Supabase session tokens. If the user is signed out, the bridge is unavailable, the release flag is disabled, or Supabase returns an error, Travel Plans automatically fall back to the existing Apps Script/Sheets read path.
+Google Sheets remains the visible read/write source in this release slice. The first browser runtime step is an authenticated Travel Plans shadow read through the top-level PWA Supabase session. The Apps Script iframe never receives Supabase session tokens. The normal Apps Script/Sheets Travel Plans load still runs, while the signed-in PWA reads the same domain from Supabase in parallel and records whether the normalized records match.
 
 ### Production shadow snapshot
 
@@ -46,7 +46,7 @@ Do not make Supabase the application source for a domain until all of these are 
 5. The browser integration has an explicit rollback switch back to Sheets.
 6. Writes are tested for duplicate retry/idempotency behavior and optimistic-concurrency conflicts.
 
-The first four read-side gates are now satisfied for the connected organizer test account and the Travel Plans shadow data. Travel Plans therefore enters guarded Supabase read validation while writes remain on Sheets. Write cutover still requires gate 6 plus live mutation validation.
+The identity/RLS prerequisites and stored Travel Plans snapshot are ready for live browser validation. Travel Plans therefore enters authenticated shadow-read validation first. Supabase is not promoted to the visible read source until the live PWA reports equivalent normalized Travel Plans data. Write cutover still requires gate 6 plus live mutation validation.
 
 ## Planned cutover order
 
@@ -62,17 +62,17 @@ For each domain: shadow read -> compare -> Supabase read -> dual validation -> S
 
 ### Travel Plans current runtime state
 
-- `supabaseDomains.travelPlans.read = true`
+- `supabaseDomains.travelPlans.shadowRead = true`
+- `supabaseDomains.travelPlans.read = false`
 - `supabaseDomains.travelPlans.write = false`
-- Signed-in PWA sessions read active Travel Plans through RLS-protected Supabase tables.
-- Supabase UUID traveler IDs are mapped back to Sheet-compatible `legacy_id` values before data is returned to the iframe.
-- Any bridge/auth/query failure falls back to `getTravelArrivalData()` in Apps Script.
-- Save and delete operations still use the existing Sheets implementation.
+- Sheets remains the visible Travel Plans source and continues to handle save/delete operations.
+- Signed-in PWA sessions also read active Travel Plans through RLS-protected Supabase tables in parallel.
+- Supabase UUID traveler IDs are mapped back to Sheet-compatible `legacy_id` values before comparison.
+- The iframe records `sheets+supabase-shadow-match`, `sheets+supabase-shadow-mismatch`, or `sheets+supabase-shadow-unavailable` for diagnostics.
+- A later release can promote the same bridge response to `supabase-primary` by enabling the primary read flag after equivalence is validated.
 
 ## Rollback
 
-For Travel Plans, rollback is a release-level feature flag: set `supabaseDomains.travelPlans.read` to `false`. The iframe will immediately retain the existing Apps Script/Sheets read path. No Supabase session token is sent into the iframe.
+For the current Travel Plans stage, rollback is a release-level feature flag: set `supabaseDomains.travelPlans.shadowRead` to `false`. Sheets remains untouched as the visible source, so disabling the shadow read changes no user data. No Supabase session token is sent into the iframe.
 
-For domains that have not started runtime cutover, rollback remains simply leaving the Apps Script/Sheets client path enabled. The shadow database can be corrected or rebuilt from the current Sheet by `legacy_id` without changing the user-facing portal.
-
-After a domain is switched to Supabase writes, retain a release-level feature flag that can restore the last validated Sheets read/write path until that domain has completed its live-test period.
+After a domain is promoted to Supabase primary reads or writes, retain a release-level feature flag that can restore the last validated Sheets path until that domain has completed its live-test period.
