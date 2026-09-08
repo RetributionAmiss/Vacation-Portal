@@ -26,6 +26,15 @@ function packingCategory_(value) {
   return allowed.indexOf(text) >= 0 ? text : 'Other';
 }
 
+function packingRequestedId_(value) {
+  const id = String(value || '').trim().toUpperCase();
+  if (!id) return '';
+  if (!/^PACK-[A-Z0-9]{10}$/.test(id)) {
+    throw new Error('That packing item ID is invalid.');
+  }
+  return id;
+}
+
 function getPackingData() {
   ensurePortalSchemaCurrent_();
   return {
@@ -57,9 +66,16 @@ function savePackingItem(values) {
       throw new Error('That traveler is no longer active.');
     }
 
-    const id = String(values.id || '').trim();
+    const requestedId = packingRequestedId_(values.packingId);
+    const suppliedId = String(values.id || '').trim().toUpperCase();
+    if (requestedId && suppliedId && suppliedId !== requestedId) {
+      throw new Error('That packing item ID is invalid.');
+    }
+    const id = suppliedId || requestedId;
     const existing = id ? packingItem_(id) : null;
-    if (id && !existing) throw new Error('That packing item could not be found.');
+    if (id && !existing && !requestedId) {
+      throw new Error('That packing item could not be found.');
+    }
 
     if (existing && String(existing['Owner Traveler ID'] || '') !== travelerId) {
       throw new Error('TRAVELER_AUTH_REQUIRED: Only the traveler who added this item can edit it.');
@@ -98,7 +114,7 @@ function savePackingItem(values) {
     if (existing) {
       updateById_('Packing Items', 'Packing ID', existing['Packing ID'], record);
     } else {
-      record['Packing ID'] = uid_('PACK');
+      record['Packing ID'] = requestedId || uid_('PACK');
       record['Created At'] = now;
       appendObject_('Packing Items', record);
     }
