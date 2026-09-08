@@ -3,11 +3,10 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const config = window.VACATION_PORTAL_CONFIG || {};
 const supabaseUrl = String(config.supabaseUrl || '').trim();
 const publishableKey = String(config.supabasePublishableKey || '').trim();
-const travelReadEnabled = Boolean(
-  config.supabaseDomains &&
-  config.supabaseDomains.travelPlans &&
-  config.supabaseDomains.travelPlans.read === true
-);
+const travelDomainConfig = config.supabaseDomains && config.supabaseDomains.travelPlans || {};
+const travelShadowReadEnabled = travelDomainConfig.shadowRead === true;
+const travelPrimaryReadEnabled = travelDomainConfig.read === true;
+const travelReadEnabled = travelShadowReadEnabled || travelPrimaryReadEnabled;
 
 const REQUEST_TYPE = 'vacation-portal-supabase-domain-request';
 const RESPONSE_TYPE = 'vacation-portal-supabase-domain-response';
@@ -112,6 +111,7 @@ async function readTravelPlans() {
 
   return {
     source: 'supabase',
+    primary: travelPrimaryReadEnabled,
     plans: rows.map(row => ({
       'Travel Plan ID': String(row.legacy_id || row.id || ''),
       'Traveler ID': String(travelerLegacyById[String(row.traveler_id || '')] || ''),
@@ -173,7 +173,7 @@ if (supabaseUrl && publishableKey) {
   client = createClient(supabaseUrl, publishableKey, {
     auth: {
       persistSession: true,
-      autoRefreshToken: true,
+      autoRefreshToken: false,
       detectSessionInUrl: true
     }
   });
