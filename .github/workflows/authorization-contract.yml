@@ -3,10 +3,15 @@ name: Authorization Contract
 on:
   push:
     branches:
+      - main
       - v4.4.0-alpha1-authorization
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   authorization-contract:
@@ -24,6 +29,8 @@ jobs:
         run: node tests/public_surface_audit.js
       - name: Scan for committed secrets
         run: node tests/secret_scan.js
+      - name: Run Apps Script deployment contract
+        run: node tests/apps_script_deploy_contract.test.js
       - name: Run data integrity foundation contract
         run: node tests/data_integrity_foundation_contract.test.js
       - name: Run shared mutation integrity contracts
@@ -98,3 +105,85 @@ jobs:
         run: node tests/p3_travel_clock_timezone_contract.test.js
       - name: Run P3 startup performance contracts
         run: node tests/p3_startup_performance_contract.test.js
+
+  deploy-apps-script:
+    name: Deploy Apps Script production
+    needs: authorization-contract
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: apps-script-production
+      cancel-in-progress: false
+    env:
+      APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify deployment credentials are configured
+        shell: bash
+        run: |
+          if [[ -z "$APPS_SCRIPT_ID" ]]; then
+            echo "::error::Missing repository secret APPS_SCRIPT_ID."
+            exit 1
+          fi
+          if [[ -z "$CLASPRC_JSON" ]]; then
+            echo "::error::Missing repository secret CLASPRC_JSON."
+            exit 1
+          fi
+
+      - name: Configure clasp project and authentication
+        shell: bash
+        run: |
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          node <<'NODE'
+          const fs = require('fs');
+          const authPath = `${process.env.HOME}/.clasprc.json`;
+          JSON.parse(fs.readFileSync(authPath, 'utf8'));
+          fs.writeFileSync(
+            '.clasp.json',
+            JSON.stringify({ scriptId: process.env.APPS_SCRIPT_ID, rootDir: '.' }, null, 2) + '\n'
+          );
+          NODE
+
+      - name: Resolve existing production web app deployment
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const config = fs.readFileSync('config.js', 'utf8');
+          const match = config.match(/https:\/\/script\.google\.com\/macros\/s\/([^/'"\s]+)\/exec/);
+          if (!match) {
+            throw new Error('Could not resolve the production Apps Script deployment ID from config.js portalUrl.');
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV, `APPS_SCRIPT_DEPLOYMENT_ID=${match[1]}\n`);
+          NODE
+
+      - name: Verify clasp push scope
+        run: npx --yes @google/clasp@3.4.0 status
+
+      - name: Push main to Apps Script
+        run: npx --yes @google/clasp@3.4.0 push --force
+
+      - name: Update existing web app deployment
+        shell: bash
+        run: |
+          npx --yes @google/clasp@3.4.0 deploy \
+            -i "$APPS_SCRIPT_DEPLOYMENT_ID" \
+            -d "GitHub main ${GITHUB_SHA:0:12}"
+
+      - name: Record deployment summary
+        shell: bash
+        run: |
+          echo "### Apps Script production deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Existing production deployment updated in place." >> "$GITHUB_STEP_SUMMARY"
