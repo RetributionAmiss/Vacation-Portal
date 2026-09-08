@@ -22,6 +22,7 @@
   const legacyTravelLoad=p3TravelArrivalLoad_;
   let shadowRequestInFlight=false;
   let lastShadowRequestAt=0;
+  let shadowStatusAnnounced=false;
 
   function requestId_(){
     return 'supa-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
@@ -75,6 +76,22 @@
       .sort(function(a,b){return (a.id+'|'+a.travelerId).localeCompare(b.id+'|'+b.travelerId);});
   }
 
+  function announceShadowStatus_(status){
+    if(shadowStatusAnnounced||currentView!=='travel'||typeof toast!=='function') return;
+    shadowStatusAnnounced=true;
+    if(status==='sheets+supabase-shadow-match'){
+      toast('Supabase Travel check passed — data matches Sheets.');
+      return;
+    }
+    if(status==='sheets+supabase-shadow-mismatch'){
+      toast('Supabase Travel check found a difference. Sheets is still being used.',true);
+      return;
+    }
+    if(status==='sheets+supabase-shadow-unavailable'){
+      toast('Supabase Travel check was unavailable. Sheets is still being used.',true);
+    }
+  }
+
   function recordShadowComparison_(supabasePlans,attempt){
     attempt=Number(attempt||0);
     if(p3TravelArrivalState_.loading&&attempt<40){
@@ -87,9 +104,11 @@
 
     const sheetJson=JSON.stringify(comparablePlans_(DATA.travelPlans||[]));
     const supabaseJson=JSON.stringify(comparablePlans_(supabasePlans||[]));
-    DATA.supabaseDomainSources.travelPlans=sheetJson===supabaseJson
+    const status=sheetJson===supabaseJson
       ? 'sheets+supabase-shadow-match'
       : 'sheets+supabase-shadow-mismatch';
+    DATA.supabaseDomainSources.travelPlans=status;
+    announceShadowStatus_(status);
   }
 
   window.addEventListener('message',function(event){
@@ -143,6 +162,7 @@
       .catch(function(){
         DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
         DATA.supabaseDomainSources.travelPlans='sheets+supabase-shadow-unavailable';
+        announceShadowStatus_('sheets+supabase-shadow-unavailable');
       })
       .then(function(){
         shadowRequestInFlight=false;
