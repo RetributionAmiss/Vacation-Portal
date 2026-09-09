@@ -1,0 +1,125 @@
+name: Apps Script Preview
+
+on:
+  push:
+    branches:
+      - test/supabase-itinerary-primary-read-preview
+    paths-ignore:
+      - config.js
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-preview:
+    name: Deploy Apps Script preview
+    runs-on: ubuntu-latest
+    concurrency:
+      group: apps-script-itinerary-preview
+      cancel-in-progress: false
+    env:
+      APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - name: Check out preview branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify deployment credentials are configured
+        shell: bash
+        run: |
+          if [[ -z "$APPS_SCRIPT_ID" ]]; then
+            echo "::error::Missing repository secret APPS_SCRIPT_ID."
+            exit 1
+          fi
+          if [[ -z "$CLASPRC_JSON" ]]; then
+            echo "::error::Missing repository secret CLASPRC_JSON."
+            exit 1
+          fi
+
+      - name: Configure clasp project and authentication
+        shell: bash
+        run: |
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          node <<'NODE'
+          const fs = require('fs');
+          const authPath = `${process.env.HOME}/.clasprc.json`;
+          JSON.parse(fs.readFileSync(authPath, 'utf8'));
+          fs.writeFileSync(
+            '.clasp.json',
+            JSON.stringify({ scriptId: process.env.APPS_SCRIPT_ID, rootDir: '.' }, null, 2) + '\n'
+          );
+          NODE
+
+      - name: Verify web app manifest
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const manifest = JSON.parse(fs.readFileSync('appsscript.json', 'utf8'));
+          if (!manifest.webapp) throw new Error('appsscript.json is missing webapp configuration.');
+          if (manifest.webapp.access !== 'ANYONE_ANONYMOUS') throw new Error('Preview web app access must match production.');
+          if (manifest.webapp.executeAs !== 'USER_DEPLOYING') throw new Error('Preview web app must execute as deploying account.');
+          NODE
+
+      - name: Verify clasp authentication and push scope
+        run: npx --yes @google/clasp@3.4.0 status
+
+      - name: Push preview branch to Apps Script HEAD
+        run: npx --yes @google/clasp@3.4.0 push --force
+
+      - name: Create isolated preview deployment
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(npx --yes @google/clasp@3.4.0 deploy -d "Itinerary preview ${GITHUB_SHA:0:12}")"
+          printf '%s\n' "$output"
+          deployment_id="$(printf '%s\n' "$output" | grep -Eo 'AKfy[A-Za-z0-9_-]+' | tail -1 || true)"
+          if [[ -z "$deployment_id" ]]; then
+            echo "::error::Could not parse the preview deployment ID from clasp output."
+            exit 1
+          fi
+          preview_url="https://script.google.com/macros/s/${deployment_id}/exec"
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+          echo "PREVIEW_URL=$preview_url" >> "$GITHUB_ENV"
+          echo "PREVIEW_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
+          echo "Preview deployment ID: $deployment_id"
+          echo "Preview Apps Script URL: $preview_url"
+
+      - name: Smoke test preview web app
+        shell: bash
+        run: |
+          smoke_url="${PREVIEW_URL}?deploymentSmoke=${GITHUB_SHA}"
+          for attempt in $(seq 1 12); do
+            body_file="$(mktemp)"
+            meta="$(curl -L -sS --max-time 20 -o "$body_file" -w '%{http_code}|%{url_effective}|%{content_type}' "$smoke_url" || true)"
+            body="$(cat "$body_file")"
+            if grep -Fq 'Family Vacation Portal' <<<"$body" && \
+               grep -Fq 'loadingScreen' <<<"$body" && \
+               grep -Fq 'Opening the family portal' <<<"$body"; then
+              echo "Preview web app returned the expected portal shell."
+              rm -f "$body_file"
+              exit 0
+            fi
+            echo "Smoke test attempt ${attempt}/12 did not return the portal shell. ${meta}"
+            rm -f "$body_file"
+            sleep 5
+          done
+          echo "::error::Preview Apps Script /exec URL did not return the Family Vacation Portal shell."
+          exit 1
+
+      - name: Record preview summary
+        shell: bash
+        run: |
+          echo "### Apps Script preview ready" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Preview deployment: \`${PREVIEW_DEPLOYMENT_ID}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Preview Apps Script URL: ${PREVIEW_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Production deployment was not updated." >> "$GITHUB_STEP_SUMMARY"
