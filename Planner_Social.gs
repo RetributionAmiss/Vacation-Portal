@@ -271,3 +271,107 @@ function savePlannerComment(values) {
     return result;
   });
 }
+
+function notifyItineraryInterest_(traveler, itinerary, signup) {
+  const trip = getSettings_('Trip');
+  const appId = String(trip['OneSignal App ID'] || '').trim();
+  const apiKey = String(
+    PropertiesService.getScriptProperties().getProperty('ONESIGNAL_APP_API_KEY') || ''
+  ).trim();
+
+  if (!appId || !apiKey) {
+    return {sent: false, reason: 'push-not-configured'};
+  }
+
+  const signerId = String(traveler['Traveler ID'] || '');
+  const targetIds = normalizeTravelerRows_(readSheet_('Travelers'))
+    .filter(function (row) {
+      return String(row.Active || 'Yes').toLowerCase() !== 'no' &&
+        String(row['Traveler ID'] || '') !== signerId;
+    })
+    .map(function (row) { return String(row['Traveler ID'] || ''); })
+    .filter(Boolean);
+
+  if (!targetIds.length) return {sent: false, reason: 'no-other-travelers'};
+
+  const dateParts = String(signup['Planned Date'] || '').split('-');
+  const dateLabel = dateParts.length === 3
+    ? dateParts[1] + '/' + dateParts[2] + '/' + dateParts[0]
+    : String(signup['Planned Date'] || '');
+
+  const timeParts = String(signup['Planned Time'] || '').split(':');
+  let timeLabel = String(signup['Planned Time'] || '');
+  if (timeParts.length >= 2) {
+    const hour24 = Number(timeParts[0]);
+    const minute = timeParts[1];
+    const suffix = hour24 >= 12 ? 'PM' : 'AM';
+    const hour12 = ((hour24 + 11) % 12) + 1;
+    timeLabel = hour12 + ':' + minute + ' ' + suffix;
+  }
+
+  const activity = String(itinerary.Activity || 'an activity').trim();
+  const travelerName = String(traveler.Name || 'A traveler').trim();
+  const payload = {
+    app_id: appId,
+    target_channel: 'push',
+    include_aliases: {external_id: targetIds},
+    headings: {en: travelerName + ' wants to go!'},
+    contents: {
+      en: travelerName + ' signed up for ' + activity + ' on ' + dateLabel +
+        ' at ' + timeLabel + '. Want to join them?'
+    }
+  };
+
+  const pwaUrl = String(trip['PWA URL'] || '').trim();
+  if (/^https:\/\//i.test(pwaUrl)) payload.url = pwaUrl;
+
+  const response = UrlFetchApp.fetch('https://api.onesignal.com/notifications', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {Authorization: 'Key ' + apiKey},
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+
+  const code = response.getResponseCode();
+  if (code < 200 || code >= 300) {
+    throw new Error('OneSignal returned HTTP ' + code + '.');
+  }
+
+  return {sent: true, targetCount: targetIds.length};
+}
+
+function clearPlannerSocialForItem_(plannerType, itemId) {
+  const type = String(plannerType || '').trim();
+  const id = String(itemId || '').trim();
+  if (!id) return;
+
+  const ss = getSpreadsheet_();
+  const commentsSheet = ss.getSheetByName('Planner Comments');
+  if (commentsSheet && commentsSheet.getLastRow() > 1) {
+    const values = commentsSheet.getDataRange().getValues();
+    const headers = values[0].map(String);
+    const typeIndex = headers.indexOf('Planner Type');
+    const itemIndex = headers.indexOf('Item ID');
+    for (let r = values.length - 1; r >= 1; r--) {
+      if (String(values[r][typeIndex] || '') === type &&
+          String(values[r][itemIndex] || '') === id) {
+        commentsSheet.deleteRow(r + 1);
+      }
+    }
+  }
+
+  if (type === 'Itinerary') {
+    const signupSheet = ss.getSheetByName('Itinerary Signups');
+    if (signupSheet && signupSheet.getLastRow() > 1) {
+      const values = signupSheet.getDataRange().getValues();
+      const headers = values[0].map(String);
+      const itemIndex = headers.indexOf('Itinerary ID');
+      for (let r = values.length - 1; r >= 1; r--) {
+        if (String(values[r][itemIndex] || '') === id) {
+          signupSheet.deleteRow(r + 1);
+        }
+      }
+    }
+  }
+}
