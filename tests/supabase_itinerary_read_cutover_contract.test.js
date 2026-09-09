@@ -13,16 +13,16 @@ const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.19'"),
-  'Itinerary shadow-write release must bump the installed PWA cache key.'
+  config.includes("release: 'V4.4.0-alpha2.20'"),
+  'Itinerary primary-read release must bump the installed PWA cache key.'
 );
 assert(
   config.includes('itinerary:') &&
-  config.includes('shadowRead: true') &&
+  config.includes('shadowRead: false') &&
   config.includes('shadowWrite: true') &&
-  config.includes('read: false') &&
+  config.includes('read: true') &&
   config.includes('write: false'),
-  'Itinerary must remain Sheets-primary while Supabase shadow reads and writes are enabled.'
+  'Itinerary must read from Supabase while Sheets remains authoritative for writes with shadow mirroring.'
 );
 assert(
   config.includes('travelPlans:') && config.includes('packingItems:') &&
@@ -45,7 +45,7 @@ assert(
   hostBridge.includes(".from('itinerary_signups')") &&
   hostBridge.includes(".from('planner_comments')") &&
   hostBridge.includes(".from('travelers')"),
-  'Itinerary shadow reads must use authenticated RLS-protected Supabase tables and traveler mapping.'
+  'Itinerary primary reads must use authenticated RLS-protected Supabase tables and traveler mapping.'
 );
 assert(
   hostBridge.includes(".eq('planner_type', 'Itinerary')") &&
@@ -57,9 +57,11 @@ assert(
 assert(
   hostBridge.includes('primary: primaryReadEnabled') &&
   hostBridge.includes('shadow: shadowReadEnabled && !primaryReadEnabled') &&
+  hostBridge.includes('primary: primaryReadEnabled,') &&
+  hostBridge.includes('shadow: shadowReadEnabled && !primaryReadEnabled') &&
   !hostBridge.includes('access_token') &&
   !hostBridge.includes('refresh_token'),
-  'The read bridge must stay release-gated and must never pass Supabase session tokens into Apps Script.'
+  'The read bridge must report its release mode on success/failure and never pass Supabase session tokens into Apps Script.'
 );
 
 assert(
@@ -69,52 +71,68 @@ assert(
   clientBridge.includes('legacyEnsure.apply(context,args)') &&
   clientBridge.includes('socialReady_(0,function(socialError)') &&
   clientBridge.includes("if(currentView!=='itinerary')"),
-  'The Itinerary shadow compare must wait for authoritative deferred Sheets activities before loading social rows and comparing.'
+  'The primary-read stage must retain a complete Sheets activities/social fallback before promoting Supabase.'
 );
 assert(
   clientBridge.includes("error.code='sheets_itinerary_not_ready'") &&
   clientBridge.includes("error.code='sheets_social_not_ready'") &&
   clientBridge.includes('Array.isArray(DATA.itinerarySignups)') &&
   clientBridge.includes('Array.isArray(DATA.plannerComments)'),
-  'Source readiness timeouts must fail closed to Sheets instead of reporting a false Supabase mismatch.'
+  'Fallback readiness timeouts must remain explicit instead of silently treating partial Sheets data as complete.'
+);
+assert(
+  clientBridge.includes('if(result&&result.primary===true)') &&
+  clientBridge.includes('recordPrimaryResult_(result)') &&
+  clientBridge.includes('DATA.itinerary=(result&&result.itinerary)||[]') &&
+  clientBridge.includes('DATA.itinerarySignups=(result&&result.itinerarySignups)||[]') &&
+  clientBridge.includes("String(row['Planner Type']||'')!=='Itinerary'") &&
+  clientBridge.includes('DATA.plannerComments=nonItineraryComments.concat(supabaseComments)'),
+  'A primary Supabase response must replace visible Itinerary rows without deleting non-Itinerary planner comments loaded for Meals.'
+);
+assert(
+  clientBridge.includes("DATA.supabaseDomainSources.itinerary='supabase-primary'") &&
+  clientBridge.includes('Supabase Itinerary primary read passed — loaded from Supabase.') &&
+  clientBridge.includes('p2PlannerSocialState_.lastLoaded=Date.now()'),
+  'A successful primary read must identify Supabase as the visible source and keep social freshness state coherent.'
+);
+assert(
+  clientBridge.includes("DATA.supabaseDomainSources.itinerary='supabase-primary-fallback-sheets'") &&
+  clientBridge.includes('Using Sheets fallback.') &&
+  clientBridge.includes('p2PlannerSocialState_.loaded=false') &&
+  clientBridge.includes('loadDeferredPortalData_();') &&
+  clientBridge.includes('error.primary=Boolean(data.error&&data.error.primary)'),
+  'A failed primary read must restore the Sheets fallback path and distinguish primary failures from rollback shadow failures.'
 );
 assert(
   clientBridge.includes('(DATA&&DATA.itinerary)||[]') &&
   clientBridge.includes('(DATA&&DATA.itinerarySignups)||[]') &&
-  clientBridge.includes('(DATA&&DATA.plannerComments)||[]'),
-  'The comparator must cover activities, signups, and Itinerary planner comments together.'
-);
-assert(
-  clientBridge.includes("String(row['Planner Type']||'')==='Itinerary'") &&
-  clientBridge.includes('Supabase Itinerary check passed — data matches Sheets.') &&
-  clientBridge.includes('Supabase Itinerary difference — ') &&
+  clientBridge.includes('(DATA&&DATA.plannerComments)||[]') &&
   clientBridge.includes("sectionDiff_('activities'") &&
   clientBridge.includes("sectionDiff_('signups'") &&
   clientBridge.includes("sectionDiff_('comments'") &&
-  clientBridge.includes("code:'shadow_mismatch'") &&
-  clientBridge.includes('Supabase Itinerary check was unavailable'),
-  'The live shadow diagnostic must distinguish match/unavailable states and identify the mismatching Itinerary section.'
+  clientBridge.includes("code:'shadow_mismatch'"),
+  'The previously validated field-for-field shadow comparator must remain available as a rollback path.'
 );
 assert(
   clientBridge.includes("reason:!b?'missing in Supabase':'missing in Sheets'") &&
   clientBridge.includes("reason:'field '+firstChangedField_(a,b)"),
-  'Itinerary mismatch diagnostics must identify the first missing row or differing field without exposing row contents.'
+  'Itinerary mismatch diagnostics must keep identifying the first missing row or differing field without exposing row contents.'
 );
 assert(
   shell.includes("include('Client_Supabase_Itinerary_Bridge')"),
-  'The evaluated Apps Script shell must include the Itinerary shadow comparator.'
+  'The evaluated Apps Script shell must include the Itinerary read bridge.'
 );
 assert(
   plannerSocial.includes('function getPlannerSocialData()') &&
   plannerSocial.includes("readSheet_('Itinerary Signups')") &&
   plannerSocial.includes("readSheet_('Planner Comments')"),
-  'The existing Sheets social loader must remain intact as the authoritative path.'
+  'The existing Sheets social loader must remain intact as the primary-read rollback source.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-19') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-20') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The installed PWA must refresh the Itinerary read bridge during guarded live testing.'
+  'The installed PWA must refresh the Itinerary read bridge during guarded primary-read testing.'
 );
 
-console.log('PASS Supabase Itinerary shadow-read equivalence contract during shadow-write stage');
+console.log('PASS Supabase Itinerary primary read / Sheets-primary write guarded cutover contract');

@@ -12,14 +12,15 @@ const shell = fs.readFileSync(path.join(root, 'AppsScriptIndex.html'), 'utf8');
 const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf8');
 const plannerCommon = fs.readFileSync(path.join(root, 'Planning_Common.gs'), 'utf8');
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
+const dataHelpers = fs.readFileSync(path.join(root, 'Data.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.19'") &&
-  config.includes('shadowRead: true') &&
+  config.includes("release: 'V4.4.0-alpha2.20'") &&
+  config.includes('shadowRead: false') &&
   config.includes('shadowWrite: true') &&
-  config.includes('read: false') &&
+  config.includes('read: true') &&
   config.includes('write: false'),
-  'Itinerary shadow writes must remain Sheets-primary in alpha2.19.'
+  'Itinerary must use Supabase-primary reads while writes remain Sheets-primary with shadow mirroring in alpha2.20.'
 );
 assert(
   config.includes("script.src='./supabase-itinerary-write-bridge.js?v='"),
@@ -27,7 +28,7 @@ assert(
 );
 assert(
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-19'),
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-20'),
   'The installed PWA must fetch the Itinerary write host bridge network-first.'
 );
 assert(
@@ -122,10 +123,29 @@ assert(
   'Sheets must remain authoritative for Itinerary delete and dependent social cleanup.'
 );
 assert(
+  plannerCommon.includes('sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([row])') &&
+  !plannerCommon.includes('sheet.getRange(sheet.getLastRow() + 1, 1, headers.length).setValues([row])'),
+  'New planner records must write one row across all header columns, not headers.length rows in one column.'
+);
+assert(
   plannerSocial.includes('function saveItineraryInterest(values)') &&
+  plannerSocial.includes("appendObject_('Itinerary Signups', record)") &&
   plannerSocial.includes('function removeItineraryInterest(values)') &&
-  plannerSocial.includes('function savePlannerComment(values)'),
-  'Validated Sheets social mutation endpoints must remain intact.'
+  plannerSocial.includes("deleteById_('Itinerary Signups', 'Signup ID', signup['Signup ID'])") &&
+  plannerSocial.includes('function savePlannerComment(values)') &&
+  plannerSocial.includes("appendObject_('Planner Comments', record)"),
+  'Join, leave, and comment Sheets mutations must stay on the validated append/delete helpers.'
+);
+assert(
+  dataHelpers.includes('function appendObject_(sheetName, object)') &&
+  dataHelpers.includes("sheet.appendRow(headers.map(header => object[header] !== undefined ? object[header] : ''));"),
+  'Social inserts must append exactly one spreadsheet row instead of constructing an ambiguous getRange overload.'
+);
+assert(
+  plannerSocial.includes("if (['Itinerary', 'Meals'].indexOf(plannerType) < 0)") &&
+  plannerSocial.includes("const sheetName = plannerType === 'Meals' ? 'Meals' : 'Itinerary'") &&
+  plannerSocial.includes("const idHeader = plannerType === 'Meals' ? 'Meal ID' : 'Itinerary ID'"),
+  'Planner comments must continue supporting both Itinerary and Meals without cross-domain authorization drift.'
 );
 
-console.log('PASS Supabase Itinerary shadow-write cutover contract');
+console.log('PASS Supabase Itinerary primary read / Sheets-primary shadow-write cutover contract');
