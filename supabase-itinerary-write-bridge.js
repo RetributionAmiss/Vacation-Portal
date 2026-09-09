@@ -130,10 +130,15 @@ function normalizeClock(value) {
 
 function stableLegacyId(value, prefix) {
   const id = String(value || '').trim().toUpperCase();
+  if (!id || id.startsWith('LOCAL-')) {
+    throw codedError('unstable_legacy_id', 'A stable legacy ID is required.');
+  }
   const expectedPrefix = String(prefix || '').trim().toUpperCase();
-  const pattern = new RegExp('^' + expectedPrefix + '-[A-Z0-9]{10}$');
-  if (!pattern.test(id)) {
-    throw codedError('unstable_legacy_id', 'A stable ' + expectedPrefix + ' ID is required.');
+  if (expectedPrefix) {
+    const pattern = new RegExp('^' + expectedPrefix + '-[A-Z0-9]{10}$');
+    if (!pattern.test(id)) {
+      throw codedError('unstable_legacy_id', 'A stable ' + expectedPrefix + ' ID is required.');
+    }
   }
   return id;
 }
@@ -399,7 +404,7 @@ async function upsertItinerarySignup(activeClient, membership, input, strictPrim
   const signup = input && input.signup || {};
   const legacyId = stableLegacyId(signup['Signup ID'], 'SIGNUP');
   const itineraryLegacyId = stableLegacyId(signup['Itinerary ID'], 'PLAN');
-  const travelerLegacyId = stableLegacyId(signup['Traveler ID'], 'TRAV');
+  const travelerLegacyId = stableLegacyId(signup['Traveler ID']);
   const item = await itineraryItemByLegacy(activeClient, membership, itineraryLegacyId, true);
   const traveler = await travelerByLegacy(activeClient, membership, travelerLegacyId);
 
@@ -450,8 +455,7 @@ async function deleteItinerarySignup(activeClient, membership, input, strictPrim
     'PLAN'
   );
   const travelerLegacyId = stableLegacyId(
-    signup['Traveler ID'] || input && input.travelerId,
-    'TRAV'
+    signup['Traveler ID'] || input && input.travelerId
   );
   const item = await itineraryItemByLegacy(activeClient, membership, itineraryLegacyId, false);
   if (!item) {
@@ -482,7 +486,7 @@ async function insertItineraryComment(activeClient, membership, input) {
 
   const legacyId = stableLegacyId(comment['Planner Comment ID'], 'PCOM');
   const itineraryLegacyId = stableLegacyId(comment['Item ID'], 'PLAN');
-  const travelerLegacyId = stableLegacyId(comment['Traveler ID'], 'TRAV');
+  const travelerLegacyId = stableLegacyId(comment['Traveler ID']);
   const item = await itineraryItemByLegacy(activeClient, membership, itineraryLegacyId, true);
   const traveler = await travelerByLegacy(activeClient, membership, travelerLegacyId);
   const text = String(comment.Comment || '').trim();
