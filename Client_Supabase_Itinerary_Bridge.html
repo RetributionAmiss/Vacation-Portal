@@ -1,6 +1,8 @@
 <script>
-/* Guarded Itinerary cutover: Sheets stays primary while Supabase reads the
- * Itinerary, signups, and Itinerary comments in parallel for equivalence. */
+/* Guarded Itinerary read cutover. Sheets is loaded first as the rollback source,
+ * then an authenticated Supabase response becomes the visible Itinerary source
+ * when the release flag marks it primary. Sheets remains authoritative for all
+ * Itinerary mutations and is restored explicitly if a primary read is unavailable. */
 (function installSupabaseItineraryBridge_(){
   if(window.__vacationSupabaseItineraryBridgeInstalled) return;
   if(typeof p2PlannerEnsureSocialData_!=='function') return;
@@ -16,6 +18,7 @@
   let readInFlight=false;
   let lastReadAt=0;
   let statusAnnounced=false;
+  let primaryStatusAnnounced=false;
   let sheetsReadinessInFlight=false;
 
   function requestId_(){
@@ -35,6 +38,7 @@
       if(!targets.length){
         const error=new Error('Supabase PWA bridge is unavailable.');
         error.code='bridge_no_host';
+        error.primary=true;
         reject(error);
         return;
       }
@@ -43,6 +47,7 @@
         delete pending[id];
         const error=new Error('Supabase PWA bridge timed out.');
         error.code='bridge_timeout';
+        error.primary=true;
         reject(error);
       },REQUEST_TIMEOUT_MS);
       pending[id]={
@@ -188,6 +193,14 @@
     return 'Supabase Itinerary difference — '+parts.join('; ')+'.'+detail+' Sheets is still being used.';
   }
 
+  function storeSupabaseSnapshot_(result){
+    DATA.supabaseItineraryShadow={
+      itinerary:(result&&result.itinerary)||[],
+      itinerarySignups:(result&&result.itinerarySignups)||[],
+      plannerComments:(result&&result.plannerComments)||[]
+    };
+  }
+
   function recordResult_(result){
     const sheetItinerary=itinerary_((DATA&&DATA.itinerary)||[]);
     const sheetSignups=signups_((DATA&&DATA.itinerarySignups)||[]);
@@ -213,11 +226,7 @@
       sectionDiff_('comments',sheetComments,supaComments)
     ];
 
-    DATA.supabaseItineraryShadow={
-      itinerary:(result&&result.itinerary)||[],
-      itinerarySignups:(result&&result.itinerarySignups)||[],
-      plannerComments:(result&&result.plannerComments)||[]
-    };
+    storeSupabaseSnapshot_(result);
     DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
     DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
     DATA.supabaseDomainSources.itinerary=matches
@@ -241,6 +250,38 @@
     }
   }
 
+  function recordPrimaryResult_(result){
+    if(!DATA) return;
+
+    const nonItineraryComments=((DATA&&DATA.plannerComments)||[]).filter(function(row){
+      return String(row['Planner Type']||'')!=='Itinerary';
+    });
+    const supabaseComments=(result&&result.plannerComments)||[];
+
+    DATA.itinerary=(result&&result.itinerary)||[];
+    DATA.itinerarySignups=(result&&result.itinerarySignups)||[];
+    DATA.plannerComments=nonItineraryComments.concat(supabaseComments);
+    storeSupabaseSnapshot_(result);
+
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.itinerary='supabase-primary';
+    delete DATA.supabaseDomainDiagnostics.itinerary;
+
+    if(typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_){
+      p2PlannerSocialState_.loaded=true;
+      p2PlannerSocialState_.loading=false;
+      p2PlannerSocialState_.lastLoaded=Date.now();
+    }
+
+    if(!primaryStatusAnnounced&&currentView==='itinerary'&&typeof toast==='function'){
+      primaryStatusAnnounced=true;
+      toast('Supabase Itinerary primary read passed — loaded from Supabase.');
+    }
+
+    if(currentView==='itinerary') render();
+  }
+
   function recordFailure_(error){
     DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
     DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
@@ -253,6 +294,43 @@
     if(statusAnnounced||currentView!=='itinerary'||typeof toast!=='function') return;
     statusAnnounced=true;
     toast('Supabase Itinerary check was unavailable ('+code+'). Sheets is still being used.',true);
+  }
+
+  function requestSheetsFallback_(){
+    try{
+      if(typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_){
+        p2PlannerSocialState_.loaded=false;
+        p2PlannerSocialState_.loading=false;
+        p2PlannerSocialState_.lastLoaded=0;
+      }
+    }catch(error){}
+
+    try{
+      if(
+        typeof loadDeferredPortalData_==='function'&&
+        (typeof portalDeferredLoadBusy_==='undefined'||!portalDeferredLoadBusy_)
+      ){
+        loadDeferredPortalData_();
+      }
+    }catch(error){}
+  }
+
+  function recordPrimaryFailure_(error){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    const code=String(error&&error.code||'bridge_error');
+    DATA.supabaseDomainSources.itinerary='supabase-primary-fallback-sheets';
+    DATA.supabaseDomainDiagnostics.itinerary={
+      code:code,
+      message:String(error&&error.message||'Supabase Itinerary primary read failed.')
+    };
+
+    if(currentView==='itinerary'&&typeof toast==='function'){
+      toast('Supabase Itinerary read was unavailable ('+code+'). Using Sheets fallback.',true);
+    }
+
+    requestSheetsFallback_();
   }
 
   function sheetsItineraryReady_(attempt,callback){
@@ -272,7 +350,7 @@
     }
 
     if(attempt>=100){
-      const error=new Error('Authoritative Sheets Itinerary data did not finish loading in time.');
+      const error=new Error('Authoritative Sheets Itinerary fallback data did not finish loading in time.');
       error.code='sheets_itinerary_not_ready';
       callback(error);
       return;
@@ -295,7 +373,7 @@
       return;
     }
     if(attempt>=75){
-      const error=new Error('Authoritative Sheets Itinerary social data did not finish loading in time.');
+      const error=new Error('Authoritative Sheets Itinerary social fallback data did not finish loading in time.');
       error.code='sheets_social_not_ready';
       callback(error);
       return;
@@ -303,14 +381,26 @@
     setTimeout(function(){socialReady_(attempt+1,callback);},100);
   }
 
-  function shadowRead_(){
+  function itineraryRead_(){
     if(readInFlight) return;
     if(lastReadAt&&Date.now()-lastReadAt<READ_TTL_MS) return;
     readInFlight=true;
     lastReadAt=Date.now();
     request_()
-      .then(recordResult_)
-      .catch(recordFailure_)
+      .then(function(result){
+        if(result&&result.primary===true){
+          recordPrimaryResult_(result);
+          return;
+        }
+        recordResult_(result);
+      })
+      .catch(function(error){
+        if(error&&error.primary===true){
+          recordPrimaryFailure_(error);
+          return;
+        }
+        recordFailure_(error);
+      })
       .then(function(){readInFlight=false;},function(){readInFlight=false;});
   }
 
@@ -328,6 +418,8 @@
     }
     const error=new Error(data.error&&data.error.message?String(data.error.message):'Supabase Itinerary request failed.');
     error.code=String(data.error&&data.error.code||'bridge_error');
+    error.primary=Boolean(data.error&&data.error.primary);
+    error.shadow=Boolean(data.error&&data.error.shadow);
     waiter.reject(error);
   });
 
@@ -356,7 +448,7 @@
           recordFailure_(socialError);
           return;
         }
-        shadowRead_();
+        itineraryRead_();
       });
     });
   };
