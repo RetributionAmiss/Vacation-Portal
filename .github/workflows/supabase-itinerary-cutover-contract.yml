@@ -6,6 +6,7 @@ on:
       - main
       - feature/supabase-itinerary-shadow-read
       - feature/supabase-itinerary-shadow-write
+      - feature/supabase-itinerary-primary-read
   pull_request:
     branches:
       - main
