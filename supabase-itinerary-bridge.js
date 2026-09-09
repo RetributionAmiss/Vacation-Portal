@@ -266,7 +266,9 @@ window.addEventListener('message', event => {
       ok: false,
       error: {
         code: String(error && error.code || error && error.name || 'itinerary_read_error'),
-        message: String(error && error.message || 'Supabase Itinerary read failed.')
+        message: String(error && error.message || 'Supabase Itinerary read failed.'),
+        primary: primaryReadEnabled,
+        shadow: shadowReadEnabled && !primaryReadEnabled
       }
     }));
 });
