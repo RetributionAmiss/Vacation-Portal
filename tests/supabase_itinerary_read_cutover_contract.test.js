@@ -13,16 +13,16 @@ const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.18'"),
-  'Itinerary shadow source-readiness release must bump the installed PWA cache key.'
+  config.includes("release: 'V4.4.0-alpha2.19'"),
+  'Itinerary shadow-write release must bump the installed PWA cache key.'
 );
 assert(
   config.includes('itinerary:') &&
   config.includes('shadowRead: true') &&
-  config.includes('shadowWrite: false') &&
+  config.includes('shadowWrite: true') &&
   config.includes('read: false') &&
   config.includes('write: false'),
-  'Itinerary must remain Sheets-primary while only the Supabase shadow read is enabled.'
+  'Itinerary must remain Sheets-primary while Supabase shadow reads and writes are enabled.'
 );
 assert(
   config.includes('travelPlans:') && config.includes('packingItems:') &&
@@ -31,13 +31,13 @@ assert(
 );
 assert(
   config.includes("script.src='./supabase-itinerary-bridge.js?v='"),
-  'The PWA must load the release-versioned Itinerary host bridge.'
+  'The PWA must load the release-versioned Itinerary read bridge.'
 );
 
 assert(
   hostBridge.includes("const OP_READ = 'itinerary.read'") &&
   hostBridge.includes("const REQUEST_TYPE = 'vacation-portal-supabase-itinerary-request'"),
-  'The Itinerary host bridge must expose only the allow-listed read operation for this stage.'
+  'The Itinerary read host bridge must preserve the allow-listed read operation.'
 );
 assert(
   hostBridge.includes(".from('trip_members')") &&
@@ -59,7 +59,7 @@ assert(
   hostBridge.includes('shadow: shadowReadEnabled && !primaryReadEnabled') &&
   !hostBridge.includes('access_token') &&
   !hostBridge.includes('refresh_token'),
-  'The bridge must stay release-gated and must never pass Supabase session tokens into Apps Script.'
+  'The read bridge must stay release-gated and must never pass Supabase session tokens into Apps Script.'
 );
 
 assert(
@@ -108,13 +108,13 @@ assert(
   plannerSocial.includes('function getPlannerSocialData()') &&
   plannerSocial.includes("readSheet_('Itinerary Signups')") &&
   plannerSocial.includes("readSheet_('Planner Comments')"),
-  'The existing Sheets social loader must remain intact as the authoritative path in this stage.'
+  'The existing Sheets social loader must remain intact as the authoritative path.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-18') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-19') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The installed PWA must refresh the Itinerary host bridge during guarded live testing.'
+  'The installed PWA must refresh the Itinerary read bridge during guarded live testing.'
 );
 
-console.log('PASS Supabase Itinerary shadow-read source-readiness contract');
+console.log('PASS Supabase Itinerary shadow-read equivalence contract during shadow-write stage');
