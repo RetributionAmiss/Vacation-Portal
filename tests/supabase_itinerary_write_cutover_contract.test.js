@@ -122,6 +122,11 @@ assert(
   'Sheets must remain authoritative for Itinerary delete and dependent social cleanup.'
 );
 assert(
+  plannerCommon.includes('sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([row])') &&
+  !plannerCommon.includes('sheet.getRange(sheet.getLastRow() + 1, 1, headers.length).setValues([row])'),
+  'New planner records must write one row across all header columns, not headers.length rows in one column.'
+);
+assert(
   plannerSocial.includes('function saveItineraryInterest(values)') &&
   plannerSocial.includes('function removeItineraryInterest(values)') &&
   plannerSocial.includes('function savePlannerComment(values)'),
