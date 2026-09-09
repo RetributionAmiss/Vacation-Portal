@@ -14,12 +14,12 @@ const plannerCommon = fs.readFileSync(path.join(root, 'Planning_Common.gs'), 'ut
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.19'") &&
-  config.includes('shadowRead: true') &&
+  config.includes("release: 'V4.4.0-alpha2.20'") &&
+  config.includes('shadowRead: false') &&
   config.includes('shadowWrite: true') &&
-  config.includes('read: false') &&
+  config.includes('read: true') &&
   config.includes('write: false'),
-  'Itinerary shadow writes must remain Sheets-primary in alpha2.19.'
+  'Itinerary must use Supabase-primary reads while writes remain Sheets-primary with shadow mirroring in alpha2.20.'
 );
 assert(
   config.includes("script.src='./supabase-itinerary-write-bridge.js?v='"),
@@ -27,7 +27,7 @@ assert(
 );
 assert(
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-19'),
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-20'),
   'The installed PWA must fetch the Itinerary write host bridge network-first.'
 );
 assert(
@@ -128,4 +128,4 @@ assert(
   'Validated Sheets social mutation endpoints must remain intact.'
 );
 
-console.log('PASS Supabase Itinerary shadow-write cutover contract');
+console.log('PASS Supabase Itinerary primary read / Sheets-primary shadow-write cutover contract');
