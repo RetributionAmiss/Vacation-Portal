@@ -73,6 +73,12 @@ jobs:
       - name: Push preview branch to Apps Script HEAD
         run: npx --yes @google/clasp@3.4.0 push --force
 
+      - name: List existing Apps Script deployments
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes @google/clasp@3.4.0 deployments
+
       - name: Create isolated preview deployment
         id: deploy
         shell: bash
