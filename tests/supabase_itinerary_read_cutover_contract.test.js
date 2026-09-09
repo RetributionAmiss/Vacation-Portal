@@ -13,8 +13,8 @@ const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.17'"),
-  'Itinerary shadow diagnostic release must bump the installed PWA cache key.'
+  config.includes("release: 'V4.4.0-alpha2.18'"),
+  'Itinerary shadow source-readiness release must bump the installed PWA cache key.'
 );
 assert(
   config.includes('itinerary:') &&
@@ -64,10 +64,19 @@ assert(
 
 assert(
   clientBridge.includes('const legacyEnsure=p2PlannerEnsureSocialData_') &&
-  clientBridge.includes('const result=legacyEnsure.apply(this,arguments)') &&
-  clientBridge.includes("if(currentView==='itinerary')") &&
-  clientBridge.includes('socialReady_(0,shadowRead_)'),
-  'Sheets must load first and remain authoritative while the Itinerary shadow read runs afterward.'
+  clientBridge.includes('sheetsItineraryReady_(0,function(sheetError)') &&
+  clientBridge.includes('DATA.deferredLoaded===true') &&
+  clientBridge.includes('legacyEnsure.apply(context,args)') &&
+  clientBridge.includes('socialReady_(0,function(socialError)') &&
+  clientBridge.includes("if(currentView!=='itinerary')"),
+  'The Itinerary shadow compare must wait for authoritative deferred Sheets activities before loading social rows and comparing.'
+);
+assert(
+  clientBridge.includes("error.code='sheets_itinerary_not_ready'") &&
+  clientBridge.includes("error.code='sheets_social_not_ready'") &&
+  clientBridge.includes('Array.isArray(DATA.itinerarySignups)') &&
+  clientBridge.includes('Array.isArray(DATA.plannerComments)'),
+  'Source readiness timeouts must fail closed to Sheets instead of reporting a false Supabase mismatch.'
 );
 assert(
   clientBridge.includes('(DATA&&DATA.itinerary)||[]') &&
@@ -102,10 +111,10 @@ assert(
   'The existing Sheets social loader must remain intact as the authoritative path in this stage.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-17') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-18') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
   'The installed PWA must refresh the Itinerary host bridge during guarded live testing.'
 );
 
-console.log('PASS Supabase Itinerary shadow-read mismatch diagnostic contract');
+console.log('PASS Supabase Itinerary shadow-read source-readiness contract');
