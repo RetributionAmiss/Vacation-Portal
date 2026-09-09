@@ -20,6 +20,8 @@ jobs:
     env:
       APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
       CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PREVIEW_DEPLOYMENT_ID: AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg
+      PRODUCTION_DEPLOYMENT_ID: AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA
     steps:
       - name: Check out preview branch
         uses: actions/checkout@v4
@@ -38,6 +40,10 @@ jobs:
           fi
           if [[ -z "$CLASPRC_JSON" ]]; then
             echo "::error::Missing repository secret CLASPRC_JSON."
+            exit 1
+          fi
+          if [[ "$PREVIEW_DEPLOYMENT_ID" == "$PRODUCTION_DEPLOYMENT_ID" ]]; then
+            echo "::error::Preview deployment must never equal the production deployment."
             exit 1
           fi
 
@@ -73,30 +79,35 @@ jobs:
       - name: Push preview branch to Apps Script HEAD
         run: npx --yes @google/clasp@3.4.0 push --force
 
-      - name: List existing Apps Script deployments
+      - name: Verify preview deployment is non-production and available
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes @google/clasp@3.4.0 deployments
+          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+          printf '%s\n' "$deployments"
+          if ! grep -Fq "$PREVIEW_DEPLOYMENT_ID" <<<"$deployments"; then
+            echo "::error::Configured preview deployment was not found."
+            exit 1
+          fi
+          if ! grep -Fq "$PRODUCTION_DEPLOYMENT_ID" <<<"$deployments"; then
+            echo "::error::Production deployment guard could not be verified."
+            exit 1
+          fi
 
-      - name: Create isolated preview deployment
+      - name: Update isolated preview deployment
         id: deploy
         shell: bash
         run: |
           set -euo pipefail
-          output="$(npx --yes @google/clasp@3.4.0 deploy -d "Itinerary preview ${GITHUB_SHA:0:12}")"
-          printf '%s\n' "$output"
-          deployment_id="$(printf '%s\n' "$output" | grep -Eo 'AKfy[A-Za-z0-9_-]+' | tail -1 || true)"
-          if [[ -z "$deployment_id" ]]; then
-            echo "::error::Could not parse the preview deployment ID from clasp output."
+          if [[ "$PREVIEW_DEPLOYMENT_ID" == "$PRODUCTION_DEPLOYMENT_ID" ]]; then
+            echo "::error::Refusing to update production from preview workflow."
             exit 1
           fi
-          preview_url="https://script.google.com/macros/s/${deployment_id}/exec"
-          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+          output="$(npx --yes @google/clasp@3.4.0 deploy -i "$PREVIEW_DEPLOYMENT_ID" -d "Itinerary preview ${GITHUB_SHA:0:12}")"
+          printf '%s\n' "$output"
+          preview_url="https://script.google.com/macros/s/${PREVIEW_DEPLOYMENT_ID}/exec"
           echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
           echo "PREVIEW_URL=$preview_url" >> "$GITHUB_ENV"
-          echo "PREVIEW_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
-          echo "Preview deployment ID: $deployment_id"
           echo "Preview Apps Script URL: $preview_url"
 
       - name: Smoke test preview web app
@@ -126,6 +137,6 @@ jobs:
         run: |
           echo "### Apps Script preview ready" >> "$GITHUB_STEP_SUMMARY"
           echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Preview deployment: \`${PREVIEW_DEPLOYMENT_ID}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Reused obsolete deployment: \`${PREVIEW_DEPLOYMENT_ID}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Preview Apps Script URL: ${PREVIEW_URL}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Production deployment was not updated." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Production deployment \`${PRODUCTION_DEPLOYMENT_ID}\` was not updated." >> "$GITHUB_STEP_SUMMARY"
