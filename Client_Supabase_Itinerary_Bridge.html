@@ -16,6 +16,7 @@
   let readInFlight=false;
   let lastReadAt=0;
   let statusAnnounced=false;
+  let sheetsReadinessInFlight=false;
 
   function requestId_(){
     return 'supa-itin-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
@@ -254,14 +255,49 @@
     toast('Supabase Itinerary check was unavailable ('+code+'). Sheets is still being used.',true);
   }
 
-  function socialReady_(attempt,callback){
+  function sheetsItineraryReady_(attempt,callback){
     attempt=Number(attempt||0);
-    if(!p2PlannerSocialState_||p2PlannerSocialState_.loading!==true){
-      callback();
+    if(DATA&&DATA.deferredLoaded===true&&Array.isArray(DATA.itinerary)){
+      callback(null);
       return;
     }
-    if(attempt>=50){
-      callback();
+
+    if(
+      attempt===0&&
+      typeof loadDeferredPortalData_==='function'&&
+      typeof portalDeferredLoadBusy_!=='undefined'&&
+      !portalDeferredLoadBusy_
+    ){
+      try{loadDeferredPortalData_();}catch(error){}
+    }
+
+    if(attempt>=100){
+      const error=new Error('Authoritative Sheets Itinerary data did not finish loading in time.');
+      error.code='sheets_itinerary_not_ready';
+      callback(error);
+      return;
+    }
+
+    setTimeout(function(){sheetsItineraryReady_(attempt+1,callback);},100);
+  }
+
+  function socialReady_(attempt,callback){
+    attempt=Number(attempt||0);
+    if(
+      p2PlannerSocialState_&&
+      p2PlannerSocialState_.loaded===true&&
+      p2PlannerSocialState_.loading!==true&&
+      DATA&&
+      Array.isArray(DATA.itinerarySignups)&&
+      Array.isArray(DATA.plannerComments)
+    ){
+      callback(null);
+      return;
+    }
+    if(attempt>=75){
+      const error=new Error('Authoritative Sheets Itinerary social data did not finish loading in time.');
+      error.code='sheets_social_not_ready';
+      callback(error);
       return;
     }
     setTimeout(function(){socialReady_(attempt+1,callback);},100);
@@ -296,11 +332,33 @@
   });
 
   p2PlannerEnsureSocialData_=function(){
-    const result=legacyEnsure.apply(this,arguments);
-    if(currentView==='itinerary'){
-      socialReady_(0,shadowRead_);
+    const context=this;
+    const args=arguments;
+
+    if(currentView!=='itinerary'){
+      return legacyEnsure.apply(context,args);
     }
-    return result;
+
+    if(sheetsReadinessInFlight) return;
+    sheetsReadinessInFlight=true;
+
+    sheetsItineraryReady_(0,function(sheetError){
+      if(sheetError){
+        sheetsReadinessInFlight=false;
+        recordFailure_(sheetError);
+        return;
+      }
+
+      legacyEnsure.apply(context,args);
+      socialReady_(0,function(socialError){
+        sheetsReadinessInFlight=false;
+        if(socialError){
+          recordFailure_(socialError);
+          return;
+        }
+        shadowRead_();
+      });
+    });
   };
 })();
 </script>
