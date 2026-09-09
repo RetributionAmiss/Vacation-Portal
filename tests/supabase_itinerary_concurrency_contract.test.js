@@ -69,4 +69,36 @@ assert(
   'Signup removal must also refresh the Sheets token map so a later rejoin cannot inherit a stale deleted-pair token.'
 );
 
+assert(
+  bridgeHtml.includes('installSupabaseItinerarySocialPrimaryGuard_') &&
+  bridgeHtml.includes("const OP_STATUS='itinerary.primaryWriteStatus'") &&
+  bridgeHtml.includes('function resolvePrimaryMode_()') &&
+  bridgeHtml.includes("if(!primarySource_()) return Promise.resolve(false)") &&
+  bridgeHtml.includes("if(result&&result.primaryWrite===true) return true"),
+  'Social mutations must resolve the current primary-write flag at action time instead of trusting the eager startup probe.'
+);
+
+assert(
+  bridgeHtml.includes("if(!primarySource_()) return fallbackSaveInterest.apply(this,arguments)") &&
+  bridgeHtml.includes("if(!primarySource_()) return fallbackRemoveInterest.apply(this,arguments)") &&
+  bridgeHtml.includes("if(type!=='Itinerary'||!primarySource_()) return fallbackSaveComment.apply(this,arguments)") &&
+  bridgeHtml.includes("error.code='primary_write_not_enabled'"),
+  'Sheets-first fallback must be used only when the visible Itinerary read source is not Supabase-primary.'
+);
+
+assert(
+  bridgeHtml.includes('sheetSignupContext_(itemId,travelerId,Boolean(existing))') &&
+  bridgeHtml.includes("request_(OP_SIGNUP_UPSERT,{signup:local},'primary')") &&
+  bridgeHtml.includes("request_(OP_SIGNUP_DELETE,{signup:existing},'primary')") &&
+  bridgeHtml.includes("'Version':existing?Number(existing.Version||0):0"),
+  'Signup update/leave must use the Supabase Version for the primary mutation while capturing Sheets backup state separately.'
+);
+
+assert(
+  bridgeHtml.includes("request_(OP_COMMENT_INSERT,{comment:local},'primary')") &&
+  bridgeHtml.includes("backupComment_(settled,'comment')") &&
+  bridgeHtml.includes("toast('Supabase Itinerary '+label+' passed — Sheets backup matches.')"),
+  'Itinerary comments must go Supabase-first and only then mirror to Sheets with explicit backup diagnostics.'
+);
+
 console.log('PASS Supabase-primary Itinerary / Sheets-backup dual concurrency contract');
