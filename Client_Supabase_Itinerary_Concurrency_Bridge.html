@@ -1,8 +1,14 @@
 <script>
-/* Supabase-primary Itinerary reads still save signups through Sheets. Preserve
- * the Sheets Updated At value that the traveler actually saw so the existing
- * optimistic-concurrency guard compares against the authoritative write source
- * instead of Supabase's independently generated updated_at timestamp. */
+/*
+ * Itinerary signup concurrency has two authorities during cutover:
+ * - Supabase Version protects primary mutations.
+ * - Sheets Updated At protects the non-blocking rollback backup and the
+ *   complete Sheets-first fallback path.
+ *
+ * Preserve the Sheets token captured before Supabase promotion. After a
+ * successful primary mutation, refresh that token directly from Sheets rather
+ * than accidentally caching Supabase's independent updated_at timestamp.
+ */
 (function installSupabaseItineraryConcurrencyBridge_(){
   if(window.__vacationSupabaseItineraryConcurrencyBridgeInstalled) return;
 
@@ -26,6 +32,13 @@
     let sawSheetsLoading=false;
     let captureStartLastLoaded=0;
     let pendingSignupSave=null;
+
+    function primaryRuntime_(){
+      return Boolean(
+        DATA&&DATA.supabaseDomainSources&&
+        DATA.supabaseDomainSources.itinerary==='supabase-primary'
+      );
+    }
 
     function pairKey_(itemId,travelerId){
       const item=String(itemId||'').trim();
@@ -72,21 +85,47 @@
       })||null;
     }
 
+    function refreshSheetTokens_(){
+      if(!window.google||!google.script||!google.script.run) return;
+      google.script.run
+        .withSuccessHandler(function(result){
+          if(result&&Array.isArray(result.itinerarySignups)){
+            cacheRows_(result.itinerarySignups);
+          }
+        })
+        .withFailureHandler(function(){})
+        .getPlannerSocialData();
+    }
+
+    function refreshSheetTokensAfterPrimary_(){
+      // The Sheets backup starts immediately after the primary save callback.
+      // Two quiet refreshes avoid racing a slower Apps Script write while never
+      // replacing visible Supabase data in the UI.
+      setTimeout(refreshSheetTokens_,1200);
+      setTimeout(refreshSheetTokens_,3500);
+    }
+
     function prepareExistingSignup_(itemId,travelerId){
       const row=currentSignup_(itemId,travelerId);
       if(!row) return true;
 
       const token=tokenForRow_(row);
+      row.__supabaseUpdatedAt=String(row['Updated At']||'');
+
       if(!token){
+        if(primaryRuntime_()){
+          // Supabase Version remains authoritative for the primary mutation.
+          // An empty Sheets token makes a stale/missing backup fail closed
+          // instead of allowing the backup to overwrite a newer Sheets row.
+          row['Updated At']='';
+          return true;
+        }
         if(typeof toast==='function'){
           toast('Activity signup version is still syncing. Refresh Itinerary and review the latest signup before saving.',true);
         }
         return false;
       }
 
-      // Keep the Supabase timestamp only for diagnostics. The legacy write path
-      // reads Updated At as its expected Sheets concurrency token.
-      row.__supabaseUpdatedAt=String(row['Updated At']||'');
       row['Updated At']=token.updatedAt;
       return true;
     }
@@ -98,9 +137,9 @@
       pendingSignupSave=null;
     }
 
-    // The original Sheets social loader changes loading true -> false and then
-    // advances lastLoaded. Observe that exact transition so the cached token is
-    // the Sheets snapshot immediately preceding the Supabase primary read.
+    // The Sheets social loader changes loading true -> false and then advances
+    // lastLoaded. Observe that transition so the token captured immediately
+    // before Supabase promotion always belongs to the Sheets backup source.
     const state=p2PlannerSocialState_;
     let loadingValue=Boolean(state.loading);
     try{
@@ -156,13 +195,20 @@
       const travelerId=String(currentTravelerId||'');
       if(!travelerId) return primaryRemoveInterest.apply(this,arguments);
       if(!prepareExistingSignup_(itemId,travelerId)) return;
-      return primaryRemoveInterest.apply(this,arguments);
+      const result=primaryRemoveInterest.apply(this,arguments);
+      if(primaryRuntime_()) refreshSheetTokensAfterPrimary_();
+      return result;
     };
 
     if(originalComplete){
       completeBackgroundSave_=function(saveId,message){
         if(pendingSignupSave&&String(message||'')==='You’re on the activity list'){
-          captureSavedSignup_();
+          if(primaryRuntime_()){
+            pendingSignupSave=null;
+            refreshSheetTokensAfterPrimary_();
+          }else{
+            captureSavedSignup_();
+          }
         }
         return originalComplete.apply(this,arguments);
       };
