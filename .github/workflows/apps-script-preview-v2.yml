@@ -1,0 +1,125 @@
+name: Apps Script Preview V2
+
+on:
+  push:
+    branches:
+      - test/supabase-itinerary-primary-write-preview-v2
+    paths-ignore:
+      - config.js
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-preview:
+    name: Deploy corrected Apps Script preview
+    runs-on: ubuntu-latest
+    concurrency:
+      group: apps-script-itinerary-preview-v2
+      cancel-in-progress: false
+    env:
+      APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PREVIEW_DEPLOYMENT_ID: AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg
+      PRODUCTION_DEPLOYMENT_ID: AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA
+    steps:
+      - name: Check out preview branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify deployment credentials and production guard
+        shell: bash
+        run: |
+          if [[ -z "$APPS_SCRIPT_ID" || -z "$CLASPRC_JSON" ]]; then
+            echo "::error::Apps Script deployment credentials are not configured."
+            exit 1
+          fi
+          if [[ "$PREVIEW_DEPLOYMENT_ID" == "$PRODUCTION_DEPLOYMENT_ID" ]]; then
+            echo "::error::Preview deployment must never equal production."
+            exit 1
+          fi
+
+      - name: Configure clasp
+        shell: bash
+        run: |
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          node <<'NODE'
+          const fs=require('fs');
+          JSON.parse(fs.readFileSync(`${process.env.HOME}/.clasprc.json`,'utf8'));
+          fs.writeFileSync('.clasp.json',JSON.stringify({scriptId:process.env.APPS_SCRIPT_ID,rootDir:'.'},null,2)+'\n');
+          NODE
+
+      - name: Verify web app manifest
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs=require('fs');
+          const manifest=JSON.parse(fs.readFileSync('appsscript.json','utf8'));
+          if(!manifest.webapp) throw new Error('appsscript.json is missing webapp configuration.');
+          if(manifest.webapp.access!=='ANYONE_ANONYMOUS') throw new Error('Preview access must match production.');
+          if(manifest.webapp.executeAs!=='USER_DEPLOYING') throw new Error('Preview must execute as deploying account.');
+          NODE
+
+      - name: Validate corrected social authority contract
+        run: node tests/supabase_itinerary_concurrency_contract.test.js
+
+      - name: Verify clasp authentication and push scope
+        run: npx --yes @google/clasp@3.4.0 status
+
+      - name: Push corrected preview code to Apps Script HEAD
+        run: npx --yes @google/clasp@3.4.0 push --force
+
+      - name: Verify preview and production deployments
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+          printf '%s\n' "$deployments"
+          grep -Fq "$PREVIEW_DEPLOYMENT_ID" <<<"$deployments" || { echo "::error::Preview deployment not found."; exit 1; }
+          grep -Fq "$PRODUCTION_DEPLOYMENT_ID" <<<"$deployments" || { echo "::error::Production deployment guard could not be verified."; exit 1; }
+
+      - name: Update isolated versioned preview deployment
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(npx --yes @google/clasp@3.4.0 deploy -i "$PREVIEW_DEPLOYMENT_ID" -d "Itinerary primary-write social fix ${GITHUB_SHA:0:12}")"
+          printf '%s\n' "$output"
+          preview_url="https://script.google.com/macros/s/${PREVIEW_DEPLOYMENT_ID}/exec"
+          echo "PREVIEW_URL=$preview_url" >> "$GITHUB_ENV"
+
+      - name: Smoke test preview web app
+        shell: bash
+        run: |
+          smoke_url="${PREVIEW_URL}?deploymentSmoke=${GITHUB_SHA}"
+          for attempt in $(seq 1 12); do
+            body="$(curl -L -sS --max-time 20 "$smoke_url" || true)"
+            if grep -Fq 'Family Vacation Portal' <<<"$body" && grep -Fq 'loadingScreen' <<<"$body"; then
+              echo "Corrected preview web app returned the expected portal shell."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Corrected preview did not return the expected portal shell."
+          exit 1
+
+      - name: Confirm production deployment was not updated
+        shell: bash
+        run: |
+          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+          production_line="$(grep -F "$PRODUCTION_DEPLOYMENT_ID" <<<"$deployments" || true)"
+          printf '%s\n' "$production_line"
+          grep -Fq '@199' <<<"$production_line" || { echo "::error::Production is no longer pinned to version 199."; exit 1; }
+
+      - name: Record preview summary
+        shell: bash
+        run: |
+          echo "### Corrected Itinerary primary-write preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Preview deployment: \`${PREVIEW_DEPLOYMENT_ID}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Production deployment remains version 199." >> "$GITHUB_STEP_SUMMARY"
