@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feature/supabase-itinerary-shadow-read
+      - feature/supabase-itinerary-shadow-write
   pull_request:
     branches:
       - main
@@ -25,5 +26,9 @@ jobs:
           node-version: '22'
       - name: Validate Itinerary host bridge syntax
         run: node --check supabase-itinerary-bridge.js
-      - name: Run guarded Itinerary cutover contract
+      - name: Validate Itinerary write host bridge syntax
+        run: node --check supabase-itinerary-write-bridge.js
+      - name: Run guarded Itinerary read cutover contract
         run: node tests/supabase_itinerary_read_cutover_contract.test.js
+      - name: Run guarded Itinerary write cutover contract
+        run: node tests/supabase_itinerary_write_cutover_contract.test.js
