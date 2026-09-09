@@ -114,7 +114,7 @@ function savePlannerRecordFastUnlocked_(sheetName, idHeader, prefix, values) {
   if (rowNumber) {
     sheet.getRange(rowNumber, 1, 1, headers.length).setValues([row]);
   } else {
-    sheet.getRange(sheet.getLastRow() + 1, 1, headers.length).setValues([row]);
+    sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([row]);
   }
 
   const response = {};
