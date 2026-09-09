@@ -138,7 +138,7 @@ assert(
 );
 assert(
   dataHelpers.includes('function appendObject_(sheetName, object)') &&
-  dataHelpers.includes('sheet.appendRow(headers.map(header => object[header] !== undefined ? object[header] :')),
+  dataHelpers.includes("sheet.appendRow(headers.map(header => object[header] !== undefined ? object[header] : ''));"),
   'Social inserts must append exactly one spreadsheet row instead of constructing an ambiguous getRange overload.'
 );
 assert(
