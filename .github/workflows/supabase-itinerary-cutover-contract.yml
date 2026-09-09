@@ -33,3 +33,5 @@ jobs:
         run: node tests/supabase_itinerary_read_cutover_contract.test.js
       - name: Run guarded Itinerary write cutover contract
         run: node tests/supabase_itinerary_write_cutover_contract.test.js
+      - name: Run Sheets-authoritative signup concurrency contract
+        run: node tests/supabase_itinerary_concurrency_contract.test.js
