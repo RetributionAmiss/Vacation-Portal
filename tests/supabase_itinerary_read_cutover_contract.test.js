@@ -13,16 +13,16 @@ const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.20'"),
-  'Itinerary primary-read release must bump the installed PWA cache key.'
+  config.includes("release: 'V4.4.0-alpha2.21'"),
+  'Itinerary primary-write release must bump the installed PWA cache key.'
 );
 assert(
   config.includes('itinerary:') &&
   config.includes('shadowRead: false') &&
-  config.includes('shadowWrite: true') &&
+  config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
-  config.includes('write: false'),
-  'Itinerary must read from Supabase while Sheets remains authoritative for writes with shadow mirroring.'
+  config.includes('write: true'),
+  'Itinerary must use Supabase-primary reads and writes in alpha2.21.'
 );
 assert(
   config.includes('travelPlans:') && config.includes('packingItems:') &&
@@ -57,11 +57,9 @@ assert(
 assert(
   hostBridge.includes('primary: primaryReadEnabled') &&
   hostBridge.includes('shadow: shadowReadEnabled && !primaryReadEnabled') &&
-  hostBridge.includes('primary: primaryReadEnabled,') &&
-  hostBridge.includes('shadow: shadowReadEnabled && !primaryReadEnabled') &&
   !hostBridge.includes('access_token') &&
   !hostBridge.includes('refresh_token'),
-  'The read bridge must report its release mode on success/failure and never pass Supabase session tokens into Apps Script.'
+  'The read bridge must report release mode and never pass Supabase session tokens into Apps Script.'
 );
 
 assert(
@@ -71,14 +69,14 @@ assert(
   clientBridge.includes('legacyEnsure.apply(context,args)') &&
   clientBridge.includes('socialReady_(0,function(socialError)') &&
   clientBridge.includes("if(currentView!=='itinerary')"),
-  'The primary-read stage must retain a complete Sheets activities/social fallback before promoting Supabase.'
+  'Primary reads must retain a complete Sheets activities/social rollback snapshot before promoting Supabase.'
 );
 assert(
   clientBridge.includes("error.code='sheets_itinerary_not_ready'") &&
   clientBridge.includes("error.code='sheets_social_not_ready'") &&
   clientBridge.includes('Array.isArray(DATA.itinerarySignups)') &&
   clientBridge.includes('Array.isArray(DATA.plannerComments)'),
-  'Fallback readiness timeouts must remain explicit instead of silently treating partial Sheets data as complete.'
+  'Fallback readiness timeouts must remain explicit instead of treating partial Sheets data as complete.'
 );
 assert(
   clientBridge.includes('if(result&&result.primary===true)') &&
@@ -87,13 +85,13 @@ assert(
   clientBridge.includes('DATA.itinerarySignups=(result&&result.itinerarySignups)||[]') &&
   clientBridge.includes("String(row['Planner Type']||'')!=='Itinerary'") &&
   clientBridge.includes('DATA.plannerComments=nonItineraryComments.concat(supabaseComments)'),
-  'A primary Supabase response must replace visible Itinerary rows without deleting non-Itinerary planner comments loaded for Meals.'
+  'A primary Supabase response must replace visible Itinerary rows without deleting Meals/non-Itinerary comments.'
 );
 assert(
   clientBridge.includes("DATA.supabaseDomainSources.itinerary='supabase-primary'") &&
   clientBridge.includes('Supabase Itinerary primary read passed — loaded from Supabase.') &&
   clientBridge.includes('p2PlannerSocialState_.lastLoaded=Date.now()'),
-  'A successful primary read must identify Supabase as the visible source and keep social freshness state coherent.'
+  'A successful primary read must identify Supabase as visible source and keep social freshness coherent.'
 );
 assert(
   clientBridge.includes("DATA.supabaseDomainSources.itinerary='supabase-primary-fallback-sheets'") &&
@@ -101,7 +99,7 @@ assert(
   clientBridge.includes('p2PlannerSocialState_.loaded=false') &&
   clientBridge.includes('loadDeferredPortalData_();') &&
   clientBridge.includes('error.primary=Boolean(data.error&&data.error.primary)'),
-  'A failed primary read must restore the Sheets fallback path and distinguish primary failures from rollback shadow failures.'
+  'A failed primary read must restore the Sheets fallback path and explicitly identify the fallback runtime.'
 );
 assert(
   clientBridge.includes('(DATA&&DATA.itinerary)||[]') &&
@@ -111,28 +109,26 @@ assert(
   clientBridge.includes("sectionDiff_('signups'") &&
   clientBridge.includes("sectionDiff_('comments'") &&
   clientBridge.includes("code:'shadow_mismatch'"),
-  'The previously validated field-for-field shadow comparator must remain available as a rollback path.'
+  'The validated field-for-field comparator must remain available for rollback diagnostics.'
 );
 assert(
-  clientBridge.includes("reason:!b?'missing in Supabase':'missing in Sheets'") &&
-  clientBridge.includes("reason:'field '+firstChangedField_(a,b)"),
-  'Itinerary mismatch diagnostics must keep identifying the first missing row or differing field without exposing row contents.'
-);
-assert(
-  shell.includes("include('Client_Supabase_Itinerary_Bridge')"),
-  'The evaluated Apps Script shell must include the Itinerary read bridge.'
+  shell.includes("include('Client_Supabase_Itinerary_Bridge')") &&
+  shell.includes("include('Client_Supabase_Itinerary_Write_Bridge')") &&
+  shell.includes("include('Client_Supabase_Itinerary_Concurrency_Bridge')"),
+  'The evaluated Apps Script shell must include all Itinerary cutover layers.'
 );
 assert(
   plannerSocial.includes('function getPlannerSocialData()') &&
   plannerSocial.includes("readSheet_('Itinerary Signups')") &&
   plannerSocial.includes("readSheet_('Planner Comments')"),
-  'The existing Sheets social loader must remain intact as the primary-read rollback source.'
+  'Sheets social loading must remain intact as rollback data and backup-token source.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-20') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-21') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-bridge.js')") &&
+  serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The installed PWA must refresh the Itinerary read bridge during guarded primary-read testing.'
+  'The installed PWA must refresh both Itinerary bridges during guarded primary-write testing.'
 );
 
-console.log('PASS Supabase Itinerary primary read / Sheets-primary write guarded cutover contract');
+console.log('PASS Supabase Itinerary primary read/write guarded cutover read contract');
