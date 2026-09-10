@@ -1,0 +1,44 @@
+name: Apps Script Alpha2.24 Inspect
+
+on:
+  push:
+    branches:
+      - test/supabase-itinerary-alpha2-24-preview
+    paths:
+      - .github/workflows/apps-script-alpha2-24-inspect.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect served @204 markers
+        shell: bash
+        env:
+          PREVIEW_DEPLOYMENT_ID: AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg
+        run: |
+          set -euo pipefail
+          body="$(mktemp)"
+          url="https://script.google.com/macros/s/${PREVIEW_DEPLOYMENT_ID}/exec?inspect=${GITHUB_SHA}"
+          curl -L -sS --max-time 30 -o "$body" "$url"
+          echo "bytes=$(wc -c < "$body")"
+          for marker in \
+            'Family Vacation Portal' \
+            'Primary path: do not hydrate Sheets first.' \
+            'itinerarySheetsBackup' \
+            'Supabase Itinerary primary read passed' \
+            'p2-comment-composer-open' \
+            'visualViewport' \
+            'p2-comment-confirm' \
+            'deleteP2PlannerComment_' \
+            "window.confirm('Remove this comment?')"; do
+            if grep -Fq "$marker" "$body"; then
+              echo "PRESENT :: $marker"
+            else
+              echo "MISSING :: $marker"
+            fi
+          done
+          echo '--- Supabase/Itinerary snippets ---'
+          grep -Eo '.{0,80}(itinerarySheetsBackup|Supabase Itinerary primary read passed|p2-comment-composer-open|visualViewport|p2-comment-confirm|deleteP2PlannerComment_).{0,120}' "$body" | head -40 || true
