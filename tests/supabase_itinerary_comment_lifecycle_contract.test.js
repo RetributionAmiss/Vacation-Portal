@@ -20,12 +20,12 @@ assert.doesNotThrow(
 );
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.22'") &&
+  config.includes("release: 'V4.4.0-alpha2.23'") &&
   config.includes("script.src='./supabase-itinerary-comment-bridge.js?v='"),
-  'alpha2.22 must load the release-versioned Supabase Itinerary comment bridge.'
+  'alpha2.23 must load the release-versioned Supabase Itinerary comment bridge.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-22') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-23') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-comment-bridge.js')"),
   'The installed PWA must fetch the comment bridge network-first.'
 );
