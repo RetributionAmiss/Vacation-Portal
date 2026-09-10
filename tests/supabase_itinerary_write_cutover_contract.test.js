@@ -15,12 +15,12 @@ const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf
 const dataHelpers = fs.readFileSync(path.join(root, 'Data.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.22'") &&
+  config.includes("release: 'V4.4.0-alpha2.23'") &&
   config.includes('shadowRead: false') &&
   config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
   config.includes('write: true'),
-  'Itinerary must use Supabase-primary reads and writes in alpha2.22.'
+  'Itinerary must use Supabase-primary reads and writes in alpha2.23.'
 );
 assert(
   config.includes("script.src='./supabase-itinerary-write-bridge.js?v='"),
@@ -28,7 +28,7 @@ assert(
 );
 assert(
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-22'),
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-23'),
   'The installed PWA must fetch the current Itinerary write bridge network-first.'
 );
 assert(
