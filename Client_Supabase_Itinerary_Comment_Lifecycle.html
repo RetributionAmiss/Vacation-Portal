@@ -9,15 +9,22 @@
 <script>
 (function installSupabaseItineraryCommentLifecycle_(){
   if(window.__vacationSupabaseItineraryCommentLifecycleInstalled) return;
-  if(typeof p2PlannerComments_!=='function'||typeof p2PlannerCommentSection_!=='function') return;
+  if(typeof p2PlannerEnsureSocialData_!=='function'||typeof p2PlannerCommentSection_!=='function') return;
   window.__vacationSupabaseItineraryCommentLifecycleInstalled=true;
 
   const REQUEST_TYPE='vacation-portal-supabase-itinerary-comment-request';
   const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
+  const OP_COMMENT_STATUS='itinerary.comment.status';
   const OP_COMMENT_DELETE='itinerary.comment.delete';
   const REQUEST_TIMEOUT_MS=6500;
+  const MEMBERSHIP_TTL_MS=30000;
   const pending={};
-  const legacyPlannerComments=p2PlannerComments_;
+  const inheritedEnsureSocial=p2PlannerEnsureSocialData_;
+  const inheritedCommentSection=p2PlannerCommentSection_;
+  let freshnessTimer=0;
+  let lastPrimarySocialStamp=0;
+  let membershipRequestInFlight=false;
+  let membershipCheckedAt=0;
 
   function primaryRuntime_(){
     return Boolean(
@@ -28,6 +35,16 @@
 
   function membershipRole_(){
     return String(DATA&&DATA.supabaseItineraryMembership&&DATA.supabaseItineraryMembership.role||'traveler');
+  }
+
+  function rememberMembership_(result){
+    if(!DATA||!result||!result.membership) return false;
+    const previous=membershipRole_();
+    DATA.supabaseItineraryMembership={
+      role:String(result.membership.role||'traveler'),
+      travelerLinked:Boolean(result.membership.travelerLinked)
+    };
+    return previous!==membershipRole_();
   }
 
   function requestId_(){
@@ -75,38 +92,18 @@
     });
   }
 
-  function rememberSupabaseResponse_(result){
-    if(!DATA||!result) return;
-    if(result.membership){
-      DATA.supabaseItineraryMembership={
-        role:String(result.membership.role||'traveler'),
-        travelerLinked:Boolean(result.membership.travelerLinked)
-      };
-    }
-    if(Array.isArray(result.plannerComments)){
-      DATA.supabaseItineraryShadow=DATA.supabaseItineraryShadow||{};
-      DATA.supabaseItineraryShadow.plannerComments=result.plannerComments.slice();
-    }
-  }
-
+  // IMPORTANT: the Supabase domain bridges share one response event type.
+  // Only consume responses whose request IDs were created by this lifecycle
+  // layer. Alpha2.22 reacted to every successful domain response and could
+  // continuously rerender Itinerary while other bridges were settling.
   window.addEventListener('message',function(event){
     const data=event&&event.data||{};
     if(data.type!==RESPONSE_TYPE) return;
     if(event.source!==window.parent&&event.source!==window.top) return;
-
-    if(data.ok&&data.data){
-      rememberSupabaseResponse_(data.data);
-      // The read/write bridge settles DATA in its promise microtask after this
-      // message event. Render one task later so freshly arrived comments are
-      // visible without opening the comment composer first.
-      if(currentView==='itinerary'){
-        setTimeout(function(){if(currentView==='itinerary') render();},0);
-      }
-    }
-
     const id=String(data.requestId||'');
     const waiter=pending[id];
     if(!waiter) return;
+
     delete pending[id];
     if(data.ok){
       waiter.resolve(data.data||{});
@@ -117,52 +114,101 @@
     waiter.reject(error);
   });
 
-  function authoritativeItineraryComments_(){
-    if(
-      primaryRuntime_()&&
-      DATA&&DATA.supabaseItineraryShadow&&
-      Array.isArray(DATA.supabaseItineraryShadow.plannerComments)
-    ){
-      return DATA.supabaseItineraryShadow.plannerComments;
-    }
-    return null;
+  function ensureMembership_(){
+    if(!primaryRuntime_()||membershipRequestInFlight) return;
+    if(membershipCheckedAt&&Date.now()-membershipCheckedAt<MEMBERSHIP_TTL_MS) return;
+
+    membershipRequestInFlight=true;
+    request_(OP_COMMENT_STATUS,{},'primary')
+      .then(function(result){
+        membershipCheckedAt=Date.now();
+        const changed=rememberMembership_(result);
+        if(changed&&currentView==='itinerary') render();
+      })
+      .catch(function(error){
+        console.warn('Supabase Itinerary comment membership check was unavailable.',error);
+      })
+      .then(function(){membershipRequestInFlight=false;},function(){membershipRequestInFlight=false;});
   }
 
-  p2PlannerComments_=function(type,itemId){
-    if(type==='Itinerary'){
-      const rows=authoritativeItineraryComments_();
-      if(rows){
-        return rows.filter(function(row){
-          return String(row['Planner Type']||'')==='Itinerary'&&
-            String(row['Item ID']||'')===String(itemId||'');
-        }).sort(function(a,b){
-          return String(a['Created At']||'').localeCompare(String(b['Created At']||''));
-        });
-      }
+  function stopFreshnessTimer_(){
+    if(freshnessTimer){
+      clearInterval(freshnessTimer);
+      freshnessTimer=0;
     }
-    return legacyPlannerComments.apply(this,arguments);
+  }
+
+  function scheduleFreshnessRender_(){
+    if(currentView!=='itinerary') return;
+
+    const currentStamp=Number(
+      typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_
+        ?p2PlannerSocialState_.lastLoaded||0
+        :0
+    );
+    if(primaryRuntime_()&&currentStamp&&currentStamp===lastPrimarySocialStamp){
+      ensureMembership_();
+      return;
+    }
+    if(freshnessTimer) return;
+
+    let attempts=0;
+    freshnessTimer=setInterval(function(){
+      attempts++;
+      if(currentView!=='itinerary'){
+        stopFreshnessTimer_();
+        return;
+      }
+
+      if(primaryRuntime_()){
+        ensureMembership_();
+        const stamp=Number(
+          typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_
+            ?p2PlannerSocialState_.lastLoaded||0
+            :0
+        );
+        if(stamp&&stamp!==lastPrimarySocialStamp){
+          lastPrimarySocialStamp=stamp;
+          stopFreshnessTimer_();
+          setTimeout(function(){
+            if(currentView==='itinerary') render();
+          },0);
+          return;
+        }
+      }
+
+      if(attempts>=80) stopFreshnessTimer_();
+    },100);
+  }
+
+  p2PlannerEnsureSocialData_=function(){
+    const result=inheritedEnsureSocial.apply(this,arguments);
+    scheduleFreshnessRender_();
+    return result;
   };
 
-  function canRemove_(type,row){
+  function canRemove_(row){
     const id=String(row&&row['Planner Comment ID']||'');
     if(!/^PCOM-[A-Z0-9]{10}$/i.test(id)) return false;
     if(String(row&&row['Traveler ID']||'')===String(currentTravelerId||'')) return true;
-    return type==='Itinerary'&&primaryRuntime_()&&membershipRole_()==='organizer';
+    return primaryRuntime_()&&membershipRole_()==='organizer';
   }
 
   p2PlannerCommentSection_=function(type,itemId,label){
+    if(type!=='Itinerary') return inheritedCommentSection.apply(this,arguments);
+
     const comments=p2PlannerComments_(type,itemId);
     const visible=comments.slice(-3);
     return `<div class="p2-comment-section">
       <div class="p2-mini-head"><strong>${esc(label)}</strong><button type="button" class="ghost tiny" onclick="openP2PlannerComment_('${escAttr(type)}','${escAttr(itemId)}')">+ Comment</button></div>
       ${visible.length?`<div class="p2-comments">
         ${visible.map(function(row){
-          const removable=canRemove_(type,row);
+          const removable=canRemove_(row);
           const id=String(row['Planner Comment ID']||'');
           return `<div class="p2-comment ${removable?'has-remove':''}">
             <strong>${esc(row.travelerName||row['Traveler Name']||'Traveler')}</strong>
             <span>${esc(row.Comment||'')}</span>
-            ${removable?`<button type="button" class="ghost tiny p2-comment-remove" onclick="deleteP2PlannerComment_('${escAttr(type)}','${escAttr(id)}')">Remove</button>`:''}
+            ${removable?`<button type="button" class="ghost tiny p2-comment-remove" onclick="deleteP2PlannerComment_('Itinerary','${escAttr(id)}')">Remove</button>`:''}
           </div>`;
         }).join('')}
       </div>`:`<p class="p2-empty-mini">No comments yet.</p>`}
@@ -170,24 +216,25 @@
     </div>`;
   };
 
-  function findComment_(type,commentId){
-    const rows=type==='Itinerary'&&authoritativeItineraryComments_()
-      ?authoritativeItineraryComments_()
-      :((DATA&&DATA.plannerComments)||[]);
-    return (rows||[]).find(function(row){
+  function findComment_(commentId){
+    return ((DATA&&DATA.plannerComments)||[]).find(function(row){
       return String(row['Planner Comment ID']||'')===String(commentId||'')&&
-        String(row['Planner Type']||'')===String(type||'');
+        String(row['Planner Type']||'')==='Itinerary';
     })||null;
   }
 
-  function removeLocal_(type,commentId){
+  function cloneComments_(rows){
+    return (rows||[]).map(function(row){return Object.assign({},row);});
+  }
+
+  function removeLocal_(commentId){
     if(DATA&&Array.isArray(DATA.plannerComments)){
       DATA.plannerComments=DATA.plannerComments.filter(function(row){
-        return !(String(row['Planner Comment ID']||'')===String(commentId||'')&&String(row['Planner Type']||'')===String(type||''));
+        return !(String(row['Planner Comment ID']||'')===String(commentId||'')&&String(row['Planner Type']||'')==='Itinerary');
       });
     }
     if(
-      type==='Itinerary'&&DATA&&DATA.supabaseItineraryShadow&&
+      DATA&&DATA.supabaseItineraryShadow&&
       Array.isArray(DATA.supabaseItineraryShadow.plannerComments)
     ){
       DATA.supabaseItineraryShadow.plannerComments=DATA.supabaseItineraryShadow.plannerComments.filter(function(row){
@@ -197,18 +244,17 @@
   }
 
   function restoreLocal_(dataComments,shadowComments){
-    if(DATA){
-      DATA.plannerComments=dataComments;
-      if(DATA.supabaseItineraryShadow&&shadowComments){
-        DATA.supabaseItineraryShadow.plannerComments=shadowComments;
-      }
+    if(!DATA) return;
+    DATA.plannerComments=dataComments;
+    if(DATA.supabaseItineraryShadow&&shadowComments){
+      DATA.supabaseItineraryShadow.plannerComments=shadowComments;
     }
   }
 
   function sheetsPayload_(row){
     const base={
       commentId:String(row['Planner Comment ID']||''),
-      plannerType:String(row['Planner Type']||''),
+      plannerType:'Itinerary',
       travelerId:String(currentTravelerId||''),
       deviceId:String(PWA_DEVICE_ID_||'')
     };
@@ -249,7 +295,7 @@
         onFailure(new Error('Traveler authorization bridge is unavailable.'));
         return;
       }
-      p3PlannerSocialEnsureDevice_(function(){invoke();},onFailure);
+      p3PlannerSocialEnsureDevice_(invoke,onFailure);
       return;
     }
 
@@ -261,15 +307,20 @@
   }
 
   function settlePrimaryComments_(result){
-    rememberSupabaseResponse_(result);
     const nonItinerary=((DATA&&DATA.plannerComments)||[]).filter(function(row){
       return String(row['Planner Type']||'')!=='Itinerary';
     });
-    DATA.plannerComments=nonItinerary.concat((result&&result.plannerComments)||[]);
+    const itineraryComments=(result&&result.plannerComments)||[];
+    DATA.plannerComments=nonItinerary.concat(itineraryComments);
+    if(DATA.supabaseItineraryShadow){
+      DATA.supabaseItineraryShadow.plannerComments=itineraryComments.slice();
+    }
+    rememberMembership_(result);
     if(typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_){
       p2PlannerSocialState_.loaded=true;
       p2PlannerSocialState_.loading=false;
       p2PlannerSocialState_.lastLoaded=Date.now();
+      lastPrimarySocialStamp=p2PlannerSocialState_.lastLoaded;
     }
   }
 
@@ -306,11 +357,9 @@
       }
       render();
       toast('Comment removed.');
-      if(String(row['Planner Type']||'')==='Itinerary'){
-        request_(OP_COMMENT_DELETE,{comment:row},'shadow').catch(function(error){
-          console.warn('Supabase Itinerary comment delete mirror was unavailable.',error);
-        });
-      }
+      request_(OP_COMMENT_DELETE,{comment:row},'shadow').catch(function(error){
+        console.warn('Supabase Itinerary comment delete mirror was unavailable.',error);
+      });
     },function(error){
       restoreLocal_(previousData,previousShadow);
       render();
@@ -319,35 +368,29 @@
   }
 
   window.deleteP2PlannerComment_=function(type,commentId){
-    const row=findComment_(type,commentId);
+    if(type!=='Itinerary') return;
+    const row=findComment_(commentId);
     if(!row) return;
-    if(!canRemove_(type,row)){
-      toast('You can only remove your own comments.',true);
+    if(!canRemove_(row)){
+      toast('You can only remove your own comments unless you are signed in as the organizer.',true);
       return;
     }
     if(!window.confirm('Remove this comment?')) return;
 
-    const previousData=((DATA&&DATA.plannerComments)||[]).map(function(item){return Object.assign({},item);});
+    const previousData=cloneComments_((DATA&&DATA.plannerComments)||[]);
     const previousShadow=(DATA&&DATA.supabaseItineraryShadow&&Array.isArray(DATA.supabaseItineraryShadow.plannerComments))
-      ?DATA.supabaseItineraryShadow.plannerComments.map(function(item){return Object.assign({},item);})
+      ?cloneComments_(DATA.supabaseItineraryShadow.plannerComments)
       :null;
-    removeLocal_(type,commentId);
+    removeLocal_(commentId);
     render();
 
-    const execute=function(){
-      if(type==='Itinerary'&&primaryRuntime_()){
-        primaryDelete_(row,previousData,previousShadow);
-      }else{
-        fallbackDelete_(row,previousData,previousShadow);
-      }
-    };
-
-    const own=String(row['Traveler ID']||'')===String(currentTravelerId||'');
-    if(!own&&type==='Itinerary'&&membershipRole_()==='organizer'&&typeof withOrganizerAuthorization_==='function'){
-      withOrganizerAuthorization_(execute);
-      return;
+    if(primaryRuntime_()){
+      primaryDelete_(row,previousData,previousShadow);
+    }else{
+      fallbackDelete_(row,previousData,previousShadow);
     }
-    execute();
   };
+
+  scheduleFreshnessRender_();
 })();
 </script>
