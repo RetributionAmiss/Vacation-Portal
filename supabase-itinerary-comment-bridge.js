@@ -8,6 +8,7 @@ const publishableKey = String(config.supabasePublishableKey || '').trim();
 
 const REQUEST_TYPE = 'vacation-portal-supabase-itinerary-comment-request';
 const RESPONSE_TYPE = 'vacation-portal-supabase-domain-response';
+const OP_COMMENT_STATUS = 'itinerary.comment.status';
 const OP_COMMENT_DELETE = 'itinerary.comment.delete';
 const AUTH_CLIENT_WAIT_MS = 3000;
 const AUTH_CLIENT_POLL_MS = 75;
@@ -87,7 +88,7 @@ async function currentMembership(activeClient) {
   if (sessionError) throw sessionError;
   const session = sessionData && sessionData.session;
   if (!session || !session.user) {
-    throw codedError('not_signed_in', 'Sign in to remove an Itinerary comment.');
+    throw codedError('not_signed_in', 'Sign in to manage Itinerary comments.');
   }
 
   const { data, error } = await activeClient
@@ -106,6 +107,13 @@ async function currentMembership(activeClient) {
     throw codedError('multiple_memberships', 'Multiple active trips are not supported by this Itinerary cutover slice yet.');
   }
   return rows[0];
+}
+
+function membershipResult(membership) {
+  return {
+    role: String(membership && membership.role || 'traveler'),
+    travelerLinked: Boolean(membership && membership.traveler_id)
+  };
 }
 
 function stableLegacyId(value, prefix) {
@@ -229,10 +237,7 @@ async function deleteComment(activeClient, membership, input, strictPrimary) {
 
   return {
     plannerComments: await readComments(activeClient, membership),
-    membership: {
-      role: String(membership.role || 'traveler'),
-      travelerLinked: Boolean(membership.traveler_id)
-    }
+    membership: membershipResult(membership)
   };
 }
 
@@ -240,12 +245,19 @@ async function handleRequest(data) {
   if (!writeEnabled) {
     throw codedError('feature_disabled', 'Supabase Itinerary writes are disabled by the release flag.');
   }
-  if (String(data && data.operation || '') !== OP_COMMENT_DELETE) {
+
+  const operation = String(data && data.operation || '');
+  if (operation !== OP_COMMENT_STATUS && operation !== OP_COMMENT_DELETE) {
     throw codedError('unsupported_operation', 'Unsupported Supabase Itinerary comment operation.');
   }
 
   const activeClient = await getSupabaseClient();
   const membership = await currentMembership(activeClient);
+
+  if (operation === OP_COMMENT_STATUS) {
+    return { membership: membershipResult(membership) };
+  }
+
   const input = data && data.data || {};
   const strictPrimary = domainConfig.write === true && String(data && data.writeMode || '') === 'primary';
   return deleteComment(activeClient, membership, input, strictPrimary);
