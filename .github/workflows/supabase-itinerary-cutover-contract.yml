@@ -8,6 +8,7 @@ on:
       - feature/supabase-itinerary-shadow-write
       - feature/supabase-itinerary-primary-read
       - feature/supabase-itinerary-primary-write
+      - feature/supabase-itinerary-authority-cleanup
   pull_request:
     branches:
       - main
