@@ -1,8 +1,14 @@
 <script>
-/* Supabase-primary Itinerary reads still save signups through Sheets. Preserve
- * the Sheets Updated At value that the traveler actually saw so the existing
- * optimistic-concurrency guard compares against the authoritative write source
- * instead of Supabase's independently generated updated_at timestamp. */
+/*
+ * Itinerary signup concurrency has two authorities during cutover:
+ * - Supabase Version protects primary mutations.
+ * - Sheets Updated At protects the non-blocking rollback backup and the
+ *   complete Sheets-first fallback path.
+ *
+ * Preserve the Sheets token captured before Supabase promotion. After a
+ * successful primary mutation, refresh that token directly from Sheets rather
+ * than accidentally caching Supabase's independent updated_at timestamp.
+ */
 (function installSupabaseItineraryConcurrencyBridge_(){
   if(window.__vacationSupabaseItineraryConcurrencyBridgeInstalled) return;
 
@@ -26,6 +32,13 @@
     let sawSheetsLoading=false;
     let captureStartLastLoaded=0;
     let pendingSignupSave=null;
+
+    function primaryRuntime_(){
+      return Boolean(
+        DATA&&DATA.supabaseDomainSources&&
+        DATA.supabaseDomainSources.itinerary==='supabase-primary'
+      );
+    }
 
     function pairKey_(itemId,travelerId){
       const item=String(itemId||'').trim();
@@ -72,21 +85,47 @@
       })||null;
     }
 
+    function refreshSheetTokens_(){
+      if(!window.google||!google.script||!google.script.run) return;
+      google.script.run
+        .withSuccessHandler(function(result){
+          if(result&&Array.isArray(result.itinerarySignups)){
+            cacheRows_(result.itinerarySignups);
+          }
+        })
+        .withFailureHandler(function(){})
+        .getPlannerSocialData();
+    }
+
+    function refreshSheetTokensAfterPrimary_(){
+      // The Sheets backup starts immediately after the primary save callback.
+      // Two quiet refreshes avoid racing a slower Apps Script write while never
+      // replacing visible Supabase data in the UI.
+      setTimeout(refreshSheetTokens_,1200);
+      setTimeout(refreshSheetTokens_,3500);
+    }
+
     function prepareExistingSignup_(itemId,travelerId){
       const row=currentSignup_(itemId,travelerId);
       if(!row) return true;
 
       const token=tokenForRow_(row);
+      row.__supabaseUpdatedAt=String(row['Updated At']||'');
+
       if(!token){
+        if(primaryRuntime_()){
+          // Supabase Version remains authoritative for the primary mutation.
+          // An empty Sheets token makes a stale/missing backup fail closed
+          // instead of allowing the backup to overwrite a newer Sheets row.
+          row['Updated At']='';
+          return true;
+        }
         if(typeof toast==='function'){
           toast('Activity signup version is still syncing. Refresh Itinerary and review the latest signup before saving.',true);
         }
         return false;
       }
 
-      // Keep the Supabase timestamp only for diagnostics. The legacy write path
-      // reads Updated At as its expected Sheets concurrency token.
-      row.__supabaseUpdatedAt=String(row['Updated At']||'');
       row['Updated At']=token.updatedAt;
       return true;
     }
@@ -98,9 +137,9 @@
       pendingSignupSave=null;
     }
 
-    // The original Sheets social loader changes loading true -> false and then
-    // advances lastLoaded. Observe that exact transition so the cached token is
-    // the Sheets snapshot immediately preceding the Supabase primary read.
+    // The Sheets social loader changes loading true -> false and then advances
+    // lastLoaded. Observe that transition so the token captured immediately
+    // before Supabase promotion always belongs to the Sheets backup source.
     const state=p2PlannerSocialState_;
     let loadingValue=Boolean(state.loading);
     try{
@@ -156,13 +195,20 @@
       const travelerId=String(currentTravelerId||'');
       if(!travelerId) return primaryRemoveInterest.apply(this,arguments);
       if(!prepareExistingSignup_(itemId,travelerId)) return;
-      return primaryRemoveInterest.apply(this,arguments);
+      const result=primaryRemoveInterest.apply(this,arguments);
+      if(primaryRuntime_()) refreshSheetTokensAfterPrimary_();
+      return result;
     };
 
     if(originalComplete){
       completeBackgroundSave_=function(saveId,message){
         if(pendingSignupSave&&String(message||'')==='You’re on the activity list'){
-          captureSavedSignup_();
+          if(primaryRuntime_()){
+            pendingSignupSave=null;
+            refreshSheetTokensAfterPrimary_();
+          }else{
+            captureSavedSignup_();
+          }
         }
         return originalComplete.apply(this,arguments);
       };
@@ -181,5 +227,516 @@
   // This include is evaluated after both Itinerary bridges. Defer one task so
   // every wrapped function is the final release version before installing.
   setTimeout(install_,0);
+})();
+
+/*
+ * Final social-write authority guard.
+ *
+ * The original primary-write bridge performs an eager status probe during
+ * startup. A slow-loading outer PWA module can make that one probe resolve to
+ * legacy mode even after the visible Itinerary source has successfully
+ * promoted to Supabase. This final layer resolves the write flag at mutation
+ * time for signup/update/leave/comment operations.
+ *
+ * If the visible read source is Supabase-primary, a failed status check never
+ * falls through to Sheets. That would split read/write authority. Instead the
+ * mutation fails visibly and leaves both stores untouched. Sheets-first writes
+ * remain available only when the visible Itinerary source itself is Sheets.
+ */
+(function installSupabaseItinerarySocialPrimaryGuard_(){
+  if(window.__vacationSupabaseItinerarySocialPrimaryGuardInstalled) return;
+
+  function install_(){
+    if(window.__vacationSupabaseItinerarySocialPrimaryGuardInstalled) return;
+    if(typeof saveP2ItineraryInterest_!=='function'||typeof removeP2ItineraryInterest_!=='function') return;
+    if(typeof saveP2PlannerComment_!=='function') return;
+
+    window.__vacationSupabaseItinerarySocialPrimaryGuardInstalled=true;
+
+    const fallbackSaveInterest=saveP2ItineraryInterest_;
+    const fallbackRemoveInterest=removeP2ItineraryInterest_;
+    const fallbackSaveComment=saveP2PlannerComment_;
+
+    const REQUEST_TYPE='vacation-portal-supabase-itinerary-write-request';
+    const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
+    const OP_STATUS='itinerary.primaryWriteStatus';
+    const OP_SIGNUP_UPSERT='itinerary.signup.upsert';
+    const OP_SIGNUP_DELETE='itinerary.signup.delete';
+    const OP_COMMENT_INSERT='itinerary.comment.insert';
+    const REQUEST_TIMEOUT_MS=6500;
+    const pending={};
+
+    function requestId_(){
+      return 'supa-itin-social-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+    }
+
+    function stableId_(prefix){
+      let seed='';
+      try{
+        if(window.crypto&&typeof window.crypto.randomUUID==='function'){
+          seed=window.crypto.randomUUID().replace(/-/g,'');
+        }
+      }catch(error){}
+      if(!seed) seed=Date.now().toString(36)+Math.random().toString(36).slice(2);
+      seed=String(seed||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+      return String(prefix||'ID').toUpperCase()+'-'+(seed+'0000000000').slice(0,10);
+    }
+
+    function hostTargets_(){
+      const targets=[];
+      try{if(window.parent&&window.parent!==window) targets.push(window.parent);}catch(error){}
+      try{if(window.top&&window.top!==window&&targets.indexOf(window.top)===-1) targets.push(window.top);}catch(error){}
+      return targets;
+    }
+
+    function request_(operation,data,writeMode){
+      return new Promise(function(resolve,reject){
+        const targets=hostTargets_();
+        if(!targets.length){
+          const error=new Error('Supabase PWA write bridge is unavailable.');
+          error.code='bridge_no_host';
+          reject(error);
+          return;
+        }
+
+        const id=requestId_();
+        const timer=setTimeout(function(){
+          delete pending[id];
+          const error=new Error('Supabase PWA write bridge timed out.');
+          error.code='bridge_timeout';
+          reject(error);
+        },REQUEST_TIMEOUT_MS);
+
+        pending[id]={
+          resolve:function(value){clearTimeout(timer);resolve(value);},
+          reject:function(error){clearTimeout(timer);reject(error);}
+        };
+
+        const payload={
+          type:REQUEST_TYPE,
+          requestId:id,
+          operation:String(operation||''),
+          data:data||{}
+        };
+        if(writeMode) payload.writeMode=String(writeMode);
+        targets.forEach(function(target){try{target.postMessage(payload,'*');}catch(error){}});
+      });
+    }
+
+    window.addEventListener('message',function(event){
+      const data=event&&event.data||{};
+      if(data.type!==RESPONSE_TYPE) return;
+      if(event.source!==window.parent&&event.source!==window.top) return;
+      const id=String(data.requestId||'');
+      const waiter=pending[id];
+      if(!waiter) return;
+      delete pending[id];
+      if(data.ok){
+        waiter.resolve(data.data||{});
+        return;
+      }
+      const error=new Error(data.error&&data.error.message?String(data.error.message):'Supabase Itinerary social write failed.');
+      error.code=String(data.error&&data.error.code||'bridge_error');
+      waiter.reject(error);
+    });
+
+    function primarySource_(){
+      return Boolean(
+        DATA&&DATA.supabaseDomainSources&&
+        DATA.supabaseDomainSources.itinerary==='supabase-primary'
+      );
+    }
+
+    function resolvePrimaryMode_(){
+      if(!primarySource_()) return Promise.resolve(false);
+      return request_(OP_STATUS,{}).then(function(result){
+        if(result&&result.primaryWrite===true) return true;
+        const error=new Error('Supabase Itinerary primary writes are not enabled for this preview.');
+        error.code='primary_write_not_enabled';
+        throw error;
+      });
+    }
+
+    function date_(value){
+      const match=String(value||'').trim().match(/^(\d{4}-\d{2}-\d{2})/);
+      return match?match[1]:'';
+    }
+
+    function time_(value){
+      const match=String(value||'').trim().match(/^(\d{1,2}):(\d{2})/);
+      if(!match) return '';
+      return String(Number(match[1])).padStart(2,'0')+':'+match[2];
+    }
+
+    function comparableSignup_(row){
+      row=row||{};
+      return {
+        id:String(row['Signup ID']||''),
+        itineraryId:String(row['Itinerary ID']||''),
+        travelerId:String(row['Traveler ID']||''),
+        plannedDate:date_(row['Planned Date']),
+        plannedTime:time_(row['Planned Time'])
+      };
+    }
+
+    function comparableComment_(row){
+      row=row||{};
+      return {
+        id:String(row['Planner Comment ID']||''),
+        itemId:String(row['Item ID']||''),
+        travelerId:String(row['Traveler ID']||''),
+        travelerName:String(row['Traveler Name']||row.travelerName||'').trim(),
+        comment:String(row.Comment||'').trim()
+      };
+    }
+
+    function same_(left,right){
+      return JSON.stringify(left||null)===JSON.stringify(right||null);
+    }
+
+    function markPrimarySuccess_(result){
+      const nonItineraryComments=((DATA&&DATA.plannerComments)||[]).filter(function(row){
+        return String(row['Planner Type']||'')!=='Itinerary';
+      });
+      DATA.itinerary=(result&&result.itinerary)||[];
+      DATA.itinerarySignups=(result&&result.itinerarySignups)||[];
+      DATA.plannerComments=nonItineraryComments.concat((result&&result.plannerComments)||[]);
+      DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+      DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+      DATA.supabaseDomainSources.itinerary='supabase-primary';
+      DATA.supabaseDomainSources.itineraryWrite='supabase-primary';
+      delete DATA.supabaseDomainDiagnostics.itinerary;
+      if(typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_){
+        p2PlannerSocialState_.loaded=true;
+        p2PlannerSocialState_.loading=false;
+        p2PlannerSocialState_.lastLoaded=Date.now();
+      }
+    }
+
+    function recordPrimaryFailure_(label,error,saveId,fallbackMessage){
+      DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+      DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+      const code=String(error&&error.code||'itinerary_social_primary_error');
+      DATA.supabaseDomainSources.itineraryWrite='supabase-primary-write-failed';
+      DATA.supabaseDomainDiagnostics.itineraryWrite={
+        code:code,
+        operation:String(label||'social write'),
+        message:String(error&&error.message||'Supabase Itinerary social write failed.')
+      };
+      if(saveId&&typeof failBackgroundSave_==='function'){
+        failBackgroundSave_(saveId,error,fallbackMessage||'Itinerary update could not be saved');
+      }else if(typeof toast==='function'){
+        toast('Supabase Itinerary '+String(label||'write')+' failed ('+code+'): '+String(error&&error.message||'Unknown error'),true);
+      }
+    }
+
+    function recordBackup_(label,status,code){
+      DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+      DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+      if(status==='match'){
+        DATA.supabaseDomainSources.itineraryWrite='supabase-primary+sheets-backup-match';
+        delete DATA.supabaseDomainDiagnostics.itineraryBackup;
+        if(typeof toast==='function') toast('Supabase Itinerary '+label+' passed — Sheets backup matches.');
+        return;
+      }
+      const failureCode=String(code||'sheets_backup_unavailable');
+      DATA.supabaseDomainSources.itineraryWrite='supabase-primary+sheets-backup-unavailable';
+      DATA.supabaseDomainDiagnostics.itineraryBackup={code:failureCode,operation:label};
+      if(typeof toast==='function'){
+        toast('Supabase Itinerary '+label+' passed. Sheets backup sync was unavailable ('+failureCode+').',true);
+      }
+    }
+
+    function withDevice_(){
+      return new Promise(function(resolve,reject){
+        if(typeof p3PlannerSocialEnsureDevice_!=='function'){
+          const error=new Error('Sheets backup device bridge is unavailable.');
+          error.code='sheets_bridge_unavailable';
+          reject(error);
+          return;
+        }
+        p3PlannerSocialEnsureDevice_(resolve,reject);
+      });
+    }
+
+    function sheetSignupContext_(itemId,travelerId,existingPrimary){
+      if(!existingPrimary){
+        return Promise.resolve({available:true,exists:false,updatedAt:''});
+      }
+      if(!window.google||!google.script||!google.script.run){
+        return Promise.resolve({available:false,code:'sheets_bridge_unavailable'});
+      }
+      return new Promise(function(resolve){
+        google.script.run
+          .withSuccessHandler(function(result){
+            const row=((result&&result.itinerarySignups)||[]).find(function(candidate){
+              return String(candidate['Itinerary ID']||'')===String(itemId||'')&&
+                String(candidate['Traveler ID']||'')===String(travelerId||'');
+            })||null;
+            if(!row){
+              resolve({available:false,code:'sheets_backup_row_missing'});
+              return;
+            }
+            const token=String(row['Updated At']||'');
+            if(!token){
+              resolve({available:false,code:'sheets_backup_token_missing'});
+              return;
+            }
+            resolve({available:true,exists:true,updatedAt:token,signupId:String(row['Signup ID']||'')});
+          })
+          .withFailureHandler(function(){
+            resolve({available:false,code:'sheets_backup_read_failed'});
+          })
+          .getPlannerSocialData();
+      });
+    }
+
+    function backupSignupSave_(signup,context,label){
+      if(!context||context.available!==true){
+        recordBackup_(label,'unavailable',context&&context.code||'sheets_backup_token_unavailable');
+        return;
+      }
+      withDevice_().then(function(deviceId){
+        google.script.run
+          .withSuccessHandler(function(result){
+            const saved=result&&result.signup;
+            recordBackup_(label,same_(comparableSignup_(signup),comparableSignup_(saved))?'match':'unavailable','sheets_backup_mismatch');
+          })
+          .withFailureHandler(function(error){
+            recordBackup_(label,'unavailable',String(error&&error.message||'sheets_backup_error'));
+          })
+          .saveItineraryInterest({
+            deviceId:String(deviceId||''),
+            travelerId:String(signup&&signup['Traveler ID']||''),
+            itineraryId:String(signup&&signup['Itinerary ID']||''),
+            signupId:String(signup&&signup['Signup ID']||''),
+            plannedDate:String(signup&&signup['Planned Date']||''),
+            plannedTime:String(signup&&signup['Planned Time']||''),
+            expectedUpdatedAt:String(context.updatedAt||''),
+            requestId:String(signup&&signup['Signup ID']||'')
+          });
+      }).catch(function(error){
+        recordBackup_(label,'unavailable',String(error&&error.code||'sheets_bridge_unavailable'));
+      });
+    }
+
+    function backupSignupDelete_(signup,context,label){
+      if(!context||context.available!==true){
+        recordBackup_(label,'unavailable',context&&context.code||'sheets_backup_token_unavailable');
+        return;
+      }
+      withDevice_().then(function(deviceId){
+        google.script.run
+          .withSuccessHandler(function(){recordBackup_(label,'match');})
+          .withFailureHandler(function(error){recordBackup_(label,'unavailable',String(error&&error.message||'sheets_backup_error'));})
+          .removeItineraryInterest({
+            deviceId:String(deviceId||''),
+            travelerId:String(signup&&signup['Traveler ID']||''),
+            itineraryId:String(signup&&signup['Itinerary ID']||''),
+            expectedUpdatedAt:String(context.updatedAt||'')
+          });
+      }).catch(function(error){
+        recordBackup_(label,'unavailable',String(error&&error.code||'sheets_bridge_unavailable'));
+      });
+    }
+
+    function backupComment_(comment,label){
+      withDevice_().then(function(deviceId){
+        google.script.run
+          .withSuccessHandler(function(saved){
+            recordBackup_(label,same_(comparableComment_(comment),comparableComment_(saved))?'match':'unavailable','sheets_backup_mismatch');
+          })
+          .withFailureHandler(function(error){recordBackup_(label,'unavailable',String(error&&error.message||'sheets_backup_error'));})
+          .savePlannerComment({
+            deviceId:String(deviceId||''),
+            travelerId:String(comment&&comment['Traveler ID']||''),
+            plannerType:'Itinerary',
+            itemId:String(comment&&comment['Item ID']||''),
+            commentId:String(comment&&comment['Planner Comment ID']||''),
+            comment:String(comment&&comment.Comment||''),
+            requestId:String(comment&&comment['Planner Comment ID']||'')
+          });
+      }).catch(function(error){
+        recordBackup_(label,'unavailable',String(error&&error.code||'sheets_bridge_unavailable'));
+      });
+    }
+
+    function primarySaveSignup_(event,itemId){
+      if(event&&typeof event.preventDefault==='function') event.preventDefault();
+      const traveler=typeof currentTraveler==='function'?currentTraveler():null;
+      const travelerId=String(currentTravelerId||'');
+      if(!traveler||!travelerId){
+        if(typeof toast==='function') toast('Choose your saved traveler profile first.',true);
+        return;
+      }
+      const plannedDate=String(typeof val==='function'?val('p2InterestDate')||'':'');
+      const plannedTime=String(typeof val==='function'?val('p2InterestTime')||'':'');
+      if(!plannedDate||!plannedTime){
+        if(typeof toast==='function') toast('Choose a day and time.',true);
+        return;
+      }
+
+      if(!DATA.itinerarySignups) DATA.itinerarySignups=[];
+      const previous=DATA.itinerarySignups.map(function(row){return Object.assign({},row);});
+      const existingIndex=DATA.itinerarySignups.findIndex(function(row){
+        return String(row['Itinerary ID']||'')===String(itemId||'')&&String(row['Traveler ID']||'')===travelerId;
+      });
+      const existing=existingIndex>=0?DATA.itinerarySignups[existingIndex]:null;
+      const stableId=existing?String(existing['Signup ID']||''):stableId_('SIGNUP');
+      const local={
+        'Signup ID':stableId,
+        'Itinerary ID':String(itemId||''),
+        'Traveler ID':travelerId,
+        'Planned Date':plannedDate,
+        'Planned Time':plannedTime,
+        travelerName:String(traveler.Name||''),
+        'Created At':existing?existing['Created At']:new Date().toISOString(),
+        'Updated At':existing?existing['Updated At']:new Date().toISOString(),
+        'Version':existing?Number(existing.Version||0):0
+      };
+      if(existingIndex>=0) DATA.itinerarySignups[existingIndex]=local;
+      else DATA.itinerarySignups.push(local);
+
+      if(typeof closeModal==='function') closeModal();
+      if(typeof render==='function') render();
+      const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Activity signup','itinerary-interest:'+itemId):'';
+
+      const rollback=function(error){
+        DATA.itinerarySignups=previous;
+        recordPrimaryFailure_('signup',error,saveId,'Signup could not be saved');
+        if(typeof render==='function') render();
+      };
+
+      sheetSignupContext_(itemId,travelerId,Boolean(existing)).then(function(context){
+        request_(OP_SIGNUP_UPSERT,{signup:local},'primary')
+          .then(function(result){
+            markPrimarySuccess_(result);
+            if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'You’re on the activity list');
+            if(typeof render==='function') render();
+            const settled=(DATA.itinerarySignups||[]).find(function(row){
+              return String(row['Itinerary ID']||'')===String(itemId||'')&&String(row['Traveler ID']||'')===travelerId;
+            })||local;
+            backupSignupSave_(settled,context,'signup');
+          })
+          .catch(rollback);
+      });
+    }
+
+    function primaryRemoveSignup_(itemId){
+      const travelerId=String(currentTravelerId||'');
+      if(!travelerId) return;
+      const previous=(DATA.itinerarySignups||[]).map(function(row){return Object.assign({},row);});
+      const existing=(DATA.itinerarySignups||[]).find(function(row){
+        return String(row['Itinerary ID']||'')===String(itemId||'')&&String(row['Traveler ID']||'')===travelerId;
+      })||null;
+      if(!existing){
+        if(typeof closeModal==='function') closeModal();
+        return;
+      }
+
+      DATA.itinerarySignups=(DATA.itinerarySignups||[]).filter(function(row){
+        return !(String(row['Itinerary ID']||'')===String(itemId||'')&&String(row['Traveler ID']||'')===travelerId);
+      });
+      if(typeof closeModal==='function') closeModal();
+      if(typeof render==='function') render();
+
+      const rollback=function(error){
+        DATA.itinerarySignups=previous;
+        recordPrimaryFailure_('signup removal',error,'','Signup could not be removed');
+        if(typeof render==='function') render();
+      };
+
+      sheetSignupContext_(itemId,travelerId,true).then(function(context){
+        request_(OP_SIGNUP_DELETE,{signup:existing},'primary')
+          .then(function(result){
+            markPrimarySuccess_(result);
+            if(typeof render==='function') render();
+            backupSignupDelete_(existing,context,'signup removal');
+          })
+          .catch(rollback);
+      });
+    }
+
+    function primarySaveComment_(event,type,itemId){
+      if(event&&typeof event.preventDefault==='function') event.preventDefault();
+      const text=String(typeof val==='function'?val('p2PlannerCommentText')||'':'').trim();
+      if(!text) return;
+      const traveler=typeof currentTraveler==='function'?currentTraveler():null;
+      const travelerId=String(currentTravelerId||'');
+      if(!traveler||!travelerId){
+        if(typeof toast==='function') toast('Choose your saved traveler profile first.',true);
+        return;
+      }
+
+      const stableId=stableId_('PCOM');
+      const local={
+        'Planner Comment ID':stableId,
+        'Planner Type':'Itinerary',
+        'Item ID':String(itemId||''),
+        'Traveler ID':travelerId,
+        'Traveler Name':String(traveler.Name||''),
+        travelerName:String(traveler.Name||''),
+        Comment:text,
+        'Created At':new Date().toISOString(),
+        'Version':0
+      };
+      if(!DATA.plannerComments) DATA.plannerComments=[];
+      DATA.plannerComments.push(local);
+      if(typeof closeModal==='function') closeModal();
+      if(typeof render==='function') render();
+      const saveId=typeof beginBackgroundSave_==='function'?beginBackgroundSave_('Planner comment','planner-comment:'+itemId):'';
+
+      const rollback=function(error){
+        DATA.plannerComments=(DATA.plannerComments||[]).filter(function(row){return String(row['Planner Comment ID']||'')!==stableId;});
+        recordPrimaryFailure_('comment',error,saveId,'Comment could not be posted');
+        if(typeof render==='function') render();
+      };
+
+      request_(OP_COMMENT_INSERT,{comment:local},'primary')
+        .then(function(result){
+          markPrimarySuccess_(result);
+          if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'Comment posted');
+          if(typeof render==='function') render();
+          const settled=(DATA.plannerComments||[]).find(function(row){
+            return String(row['Planner Comment ID']||'')===stableId;
+          })||local;
+          backupComment_(settled,'comment');
+        })
+        .catch(rollback);
+    }
+
+    function rejectPrimaryStatus_(label,error,event){
+      if(event&&typeof event.preventDefault==='function') event.preventDefault();
+      recordPrimaryFailure_(label,error,'',label==='comment'?'Comment could not be posted':'Itinerary update could not be saved');
+    }
+
+    saveP2ItineraryInterest_=function(event,itemId){
+      if(!primarySource_()) return fallbackSaveInterest.apply(this,arguments);
+      if(event&&typeof event.preventDefault==='function') event.preventDefault();
+      resolvePrimaryMode_()
+        .then(function(enabled){if(enabled) primarySaveSignup_(event,itemId);})
+        .catch(function(error){rejectPrimaryStatus_('signup',error,event);});
+    };
+
+    removeP2ItineraryInterest_=function(itemId){
+      if(!primarySource_()) return fallbackRemoveInterest.apply(this,arguments);
+      resolvePrimaryMode_()
+        .then(function(enabled){if(enabled) primaryRemoveSignup_(itemId);})
+        .catch(function(error){rejectPrimaryStatus_('signup removal',error);});
+    };
+
+    saveP2PlannerComment_=function(event,type,itemId){
+      if(type!=='Itinerary'||!primarySource_()) return fallbackSaveComment.apply(this,arguments);
+      if(event&&typeof event.preventDefault==='function') event.preventDefault();
+      resolvePrimaryMode_()
+        .then(function(enabled){if(enabled) primarySaveComment_(event,type,itemId);})
+        .catch(function(error){rejectPrimaryStatus_('comment',error,event);});
+    };
+  }
+
+  // Install after the earlier concurrency wrapper so this layer owns only the
+  // final social mutation decision. The previous functions remain the complete
+  // Sheets-first fallback path when the visible read source is Sheets.
+  setTimeout(install_,25);
 })();
 </script>

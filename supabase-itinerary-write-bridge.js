@@ -10,6 +10,7 @@ const publishableKey = String(config.supabasePublishableKey || '').trim();
 
 const REQUEST_TYPE = 'vacation-portal-supabase-itinerary-write-request';
 const RESPONSE_TYPE = 'vacation-portal-supabase-domain-response';
+const OP_STATUS = 'itinerary.primaryWriteStatus';
 const OP_ITEM_UPSERT = 'itinerary.item.upsert';
 const OP_ITEM_DELETE = 'itinerary.item.delete';
 const OP_SIGNUP_UPSERT = 'itinerary.signup.upsert';
@@ -93,7 +94,7 @@ async function currentMembership(activeClient) {
   if (sessionError) throw sessionError;
   const session = sessionData && sessionData.session;
   if (!session || !session.user) {
-    throw codedError('not_signed_in', 'Sign in to mirror Itinerary changes to Supabase.');
+    throw codedError('not_signed_in', 'Sign in to update Itinerary in Supabase.');
   }
 
   const { data, error } = await activeClient
@@ -128,17 +129,42 @@ function normalizeClock(value) {
 }
 
 function stableLegacyId(value, prefix) {
-  const id = String(value || '').trim();
+  const id = String(value || '').trim().toUpperCase();
   if (!id || id.startsWith('LOCAL-')) {
-    throw codedError('unstable_legacy_id', 'Sheets did not return a stable ' + prefix + ' ID for the Supabase mirror.');
+    throw codedError('unstable_legacy_id', 'A stable legacy ID is required.');
+  }
+  const expectedPrefix = String(prefix || '').trim().toUpperCase();
+  if (expectedPrefix) {
+    const pattern = new RegExp('^' + expectedPrefix + '-[A-Z0-9]{10}$');
+    if (!pattern.test(id)) {
+      throw codedError('unstable_legacy_id', 'A stable ' + expectedPrefix + ' ID is required.');
+    }
   }
   return id;
+}
+
+function expectedVersion(row) {
+  const version = Number(row && row.Version || 0);
+  return Number.isFinite(version) && version > 0 ? Math.floor(version) : 0;
+}
+
+function versionConflict(label) {
+  return codedError(
+    'itinerary_version_conflict',
+    String(label || 'Itinerary record') + ' changed on another device. Refresh and review the latest version before saving again.'
+  );
+}
+
+function requireVersion(row, label) {
+  const version = expectedVersion(row);
+  if (!version) throw versionConflict(label);
+  return version;
 }
 
 async function itineraryItemByLegacy(activeClient, membership, legacyId, required = true) {
   const { data, error } = await activeClient
     .from('itinerary_items')
-    .select('id,legacy_id')
+    .select('id,legacy_id,version')
     .eq('trip_id', membership.trip_id)
     .eq('legacy_id', legacyId)
     .is('archived_at', null)
@@ -168,6 +194,23 @@ async function travelerByLegacy(activeClient, membership, legacyId) {
     throw codedError('traveler_not_found', 'The Supabase traveler could not be resolved uniquely.');
   }
   return rows[0];
+}
+
+async function signupByPair(activeClient, membership, itemId, travelerId) {
+  const { data, error } = await activeClient
+    .from('itinerary_signups')
+    .select('id,legacy_id,version')
+    .eq('trip_id', membership.trip_id)
+    .eq('itinerary_item_id', itemId)
+    .eq('traveler_id', travelerId)
+    .is('archived_at', null)
+    .limit(2);
+  if (error) throw error;
+  const rows = Array.isArray(data) ? data : [];
+  if (rows.length > 1) {
+    throw codedError('duplicate_itinerary_signup', 'Supabase has duplicate activity signups for this traveler.');
+  }
+  return rows[0] || null;
 }
 
 async function readItinerary(activeClient, membership) {
@@ -272,9 +315,9 @@ async function readItinerary(activeClient, membership) {
   };
 }
 
-async function upsertItineraryItem(activeClient, membership, input) {
+async function upsertItineraryItem(activeClient, membership, input, strictPrimary) {
   const item = input && input.item || {};
-  const legacyId = stableLegacyId(item['Itinerary ID'], 'Itinerary');
+  const legacyId = stableLegacyId(item['Itinerary ID'], 'PLAN');
   const activity = String(item.Activity || '').trim();
   if (!activity) throw codedError('activity_required', 'An Itinerary activity name is required.');
 
@@ -289,18 +332,26 @@ async function upsertItineraryItem(activeClient, membership, input) {
     assigned_to: String(item['Assigned To'] || ''),
     cost_cents: Math.max(0, Math.round(Number(item.Cost || 0) * 100)),
     cost_per: String(item['Cost Per'] || 'Person') || 'Person',
-    notes: String(item.Notes || '')
+    notes: String(item.Notes || ''),
+    archived_at: null
   };
 
   const existing = await itineraryItemByLegacy(activeClient, membership, legacyId, false);
+  const version = expectedVersion(item);
   if (existing) {
-    const { error } = await activeClient
+    let query = activeClient
       .from('itinerary_items')
       .update(row)
       .eq('id', existing.id)
       .eq('trip_id', membership.trip_id);
+    if (strictPrimary) query = query.eq('version', requireVersion(item, 'Itinerary item'));
+    const { data, error } = await query.select('id');
     if (error) throw error;
+    if (strictPrimary && (!Array.isArray(data) || data.length !== 1)) {
+      throw versionConflict('Itinerary item');
+    }
   } else {
+    if (strictPrimary && version > 0) throw versionConflict('Itinerary item');
     const { error } = await activeClient
       .from('itinerary_items')
       .insert(Object.assign({}, row, { legacy_id: legacyId }));
@@ -308,10 +359,29 @@ async function upsertItineraryItem(activeClient, membership, input) {
   }
 }
 
-async function deleteItineraryItem(activeClient, membership, input) {
-  const legacyId = stableLegacyId(input && input.itineraryId, 'Itinerary');
+async function deleteItineraryItem(activeClient, membership, input, strictPrimary) {
+  const itemInput = input && input.item || {};
+  const legacyId = stableLegacyId(
+    itemInput['Itinerary ID'] || input && input.itineraryId,
+    'PLAN'
+  );
   const item = await itineraryItemByLegacy(activeClient, membership, legacyId, false);
-  if (!item) return;
+  if (!item) {
+    if (strictPrimary) throw versionConflict('Itinerary item');
+    return;
+  }
+
+  let query = activeClient
+    .from('itinerary_items')
+    .delete()
+    .eq('id', item.id)
+    .eq('trip_id', membership.trip_id);
+  if (strictPrimary) query = query.eq('version', requireVersion(itemInput, 'Itinerary item'));
+  const { data, error } = await query.select('id');
+  if (error) throw error;
+  if (strictPrimary && (!Array.isArray(data) || data.length !== 1)) {
+    throw versionConflict('Itinerary item');
+  }
 
   let result = await activeClient
     .from('planner_comments')
@@ -328,20 +398,13 @@ async function deleteItineraryItem(activeClient, membership, input) {
     .eq('planner_type', 'Itinerary')
     .eq('item_legacy_id', legacyId);
   if (result.error) throw result.error;
-
-  result = await activeClient
-    .from('itinerary_items')
-    .delete()
-    .eq('id', item.id)
-    .eq('trip_id', membership.trip_id);
-  if (result.error) throw result.error;
 }
 
-async function upsertItinerarySignup(activeClient, membership, input) {
+async function upsertItinerarySignup(activeClient, membership, input, strictPrimary) {
   const signup = input && input.signup || {};
-  const legacyId = stableLegacyId(signup['Signup ID'], 'signup');
-  const itineraryLegacyId = stableLegacyId(signup['Itinerary ID'], 'Itinerary');
-  const travelerLegacyId = stableLegacyId(signup['Traveler ID'], 'traveler');
+  const legacyId = stableLegacyId(signup['Signup ID'], 'SIGNUP');
+  const itineraryLegacyId = stableLegacyId(signup['Itinerary ID'], 'PLAN');
+  const travelerLegacyId = stableLegacyId(signup['Traveler ID']);
   const item = await itineraryItemByLegacy(activeClient, membership, itineraryLegacyId, true);
   const traveler = await travelerByLegacy(activeClient, membership, travelerLegacyId);
 
@@ -351,8 +414,33 @@ async function upsertItinerarySignup(activeClient, membership, input) {
     traveler_id: traveler.id,
     legacy_id: legacyId,
     planned_date: normalizeDate(signup['Planned Date']) || null,
-    planned_time: normalizeClock(signup['Planned Time']) || null
+    planned_time: normalizeClock(signup['Planned Time']) || null,
+    archived_at: null
   };
+
+  if (strictPrimary) {
+    const existing = await signupByPair(activeClient, membership, item.id, traveler.id);
+    const version = expectedVersion(signup);
+    if (existing) {
+      const { data, error } = await activeClient
+        .from('itinerary_signups')
+        .update(row)
+        .eq('id', existing.id)
+        .eq('trip_id', membership.trip_id)
+        .eq('version', requireVersion(signup, 'Activity signup'))
+        .select('id');
+      if (error) throw error;
+      if (!Array.isArray(data) || data.length !== 1) throw versionConflict('Activity signup');
+    } else {
+      if (version > 0) throw versionConflict('Activity signup');
+      const { error } = await activeClient.from('itinerary_signups').insert(row);
+      if (error) {
+        if (String(error.code || '') === '23505') throw versionConflict('Activity signup');
+        throw error;
+      }
+    }
+    return;
+  }
 
   const { error } = await activeClient
     .from('itinerary_signups')
@@ -360,31 +448,45 @@ async function upsertItinerarySignup(activeClient, membership, input) {
   if (error) throw error;
 }
 
-async function deleteItinerarySignup(activeClient, membership, input) {
-  const itineraryLegacyId = stableLegacyId(input && input.itineraryId, 'Itinerary');
-  const travelerLegacyId = stableLegacyId(input && input.travelerId, 'traveler');
+async function deleteItinerarySignup(activeClient, membership, input, strictPrimary) {
+  const signup = input && input.signup || {};
+  const itineraryLegacyId = stableLegacyId(
+    signup['Itinerary ID'] || input && input.itineraryId,
+    'PLAN'
+  );
+  const travelerLegacyId = stableLegacyId(
+    signup['Traveler ID'] || input && input.travelerId
+  );
   const item = await itineraryItemByLegacy(activeClient, membership, itineraryLegacyId, false);
-  if (!item) return;
+  if (!item) {
+    if (strictPrimary) throw versionConflict('Activity signup');
+    return;
+  }
   const traveler = await travelerByLegacy(activeClient, membership, travelerLegacyId);
 
-  const { error } = await activeClient
+  let query = activeClient
     .from('itinerary_signups')
     .delete()
     .eq('trip_id', membership.trip_id)
     .eq('itinerary_item_id', item.id)
     .eq('traveler_id', traveler.id);
+  if (strictPrimary) query = query.eq('version', requireVersion(signup, 'Activity signup'));
+  const { data, error } = await query.select('id');
   if (error) throw error;
+  if (strictPrimary && (!Array.isArray(data) || data.length !== 1)) {
+    throw versionConflict('Activity signup');
+  }
 }
 
 async function insertItineraryComment(activeClient, membership, input) {
   const comment = input && input.comment || {};
   if (String(comment['Planner Type'] || '') !== 'Itinerary') {
-    throw codedError('invalid_planner_type', 'Only Itinerary comments are supported by this mirror.');
+    throw codedError('invalid_planner_type', 'Only Itinerary comments are supported by this bridge.');
   }
 
-  const legacyId = stableLegacyId(comment['Planner Comment ID'], 'comment');
-  const itineraryLegacyId = stableLegacyId(comment['Item ID'], 'Itinerary');
-  const travelerLegacyId = stableLegacyId(comment['Traveler ID'], 'traveler');
+  const legacyId = stableLegacyId(comment['Planner Comment ID'], 'PCOM');
+  const itineraryLegacyId = stableLegacyId(comment['Item ID'], 'PLAN');
+  const travelerLegacyId = stableLegacyId(comment['Traveler ID']);
   const item = await itineraryItemByLegacy(activeClient, membership, itineraryLegacyId, true);
   const traveler = await travelerByLegacy(activeClient, membership, travelerLegacyId);
   const text = String(comment.Comment || '').trim();
@@ -398,7 +500,8 @@ async function insertItineraryComment(activeClient, membership, input) {
     item_legacy_id: itineraryLegacyId,
     traveler_id: traveler.id,
     traveler_name: String(comment['Traveler Name'] || traveler.name || ''),
-    comment: text
+    comment: text,
+    archived_at: null
   };
 
   const { data: existingRows, error: existingError } = await activeClient
@@ -427,23 +530,31 @@ async function insertItineraryComment(activeClient, membership, input) {
 }
 
 async function handleRequest(data) {
+  const operation = String(data && data.operation || '');
+  if (operation === OP_STATUS) {
+    return {
+      primaryWrite: primaryWriteEnabled,
+      shadowWrite: shadowWriteEnabled && !primaryWriteEnabled
+    };
+  }
+
   if (!writeEnabled) {
     throw codedError('feature_disabled', 'Supabase Itinerary writes are disabled by the release flag.');
   }
 
   const activeClient = await getSupabaseClient();
   const membership = await currentMembership(activeClient);
-  const operation = String(data && data.operation || '');
   const input = data && data.data || {};
+  const strictPrimary = primaryWriteEnabled && String(data && data.writeMode || '') === 'primary';
 
   if (operation === OP_ITEM_UPSERT) {
-    await upsertItineraryItem(activeClient, membership, input);
+    await upsertItineraryItem(activeClient, membership, input, strictPrimary);
   } else if (operation === OP_ITEM_DELETE) {
-    await deleteItineraryItem(activeClient, membership, input);
+    await deleteItineraryItem(activeClient, membership, input, strictPrimary);
   } else if (operation === OP_SIGNUP_UPSERT) {
-    await upsertItinerarySignup(activeClient, membership, input);
+    await upsertItinerarySignup(activeClient, membership, input, strictPrimary);
   } else if (operation === OP_SIGNUP_DELETE) {
-    await deleteItinerarySignup(activeClient, membership, input);
+    await deleteItinerarySignup(activeClient, membership, input, strictPrimary);
   } else if (operation === OP_COMMENT_INSERT) {
     await insertItineraryComment(activeClient, membership, input);
   } else {

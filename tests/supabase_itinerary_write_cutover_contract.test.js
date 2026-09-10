@@ -15,37 +15,38 @@ const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf
 const dataHelpers = fs.readFileSync(path.join(root, 'Data.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.20'") &&
+  config.includes("release: 'V4.4.0-alpha2.24'") &&
   config.includes('shadowRead: false') &&
-  config.includes('shadowWrite: true') &&
+  config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
-  config.includes('write: false'),
-  'Itinerary must use Supabase-primary reads while writes remain Sheets-primary with shadow mirroring in alpha2.20.'
+  config.includes('write: true'),
+  'Itinerary must use Supabase-primary reads and writes in alpha2.24.'
 );
 assert(
   config.includes("script.src='./supabase-itinerary-write-bridge.js?v='"),
-  'The PWA must load the release-versioned Itinerary write host bridge.'
+  'The PWA must load the release-versioned Itinerary write bridge.'
 );
 assert(
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-20'),
-  'The installed PWA must fetch the Itinerary write host bridge network-first.'
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-24'),
+  'The installed PWA must fetch the current Itinerary write bridge network-first.'
 );
 assert(
   shell.includes("include('Client_Supabase_Itinerary_Bridge')") &&
   shell.includes("include('Client_Supabase_Itinerary_Write_Bridge')") &&
   shell.indexOf("include('Client_Supabase_Itinerary_Write_Bridge')") > shell.indexOf("include('Client_P3_Planner_Social_Reliability')"),
-  'The evaluated Apps Script shell must install the shadow-write wrappers after the reliable planner/social functions.'
+  'The evaluated Apps Script shell must install Itinerary write routing after reliable planner/social functions.'
 );
 
 for (const operation of [
+  "'itinerary.primaryWriteStatus'",
   "'itinerary.item.upsert'",
   "'itinerary.item.delete'",
   "'itinerary.signup.upsert'",
   "'itinerary.signup.delete'",
   "'itinerary.comment.insert'"
 ]) {
-  assert(host.includes(operation), `Missing allow-listed Itinerary shadow-write operation ${operation}.`);
+  assert(host.includes(operation), `Missing allow-listed Itinerary write operation ${operation}.`);
 }
 assert(
   host.includes("const REQUEST_TYPE = 'vacation-portal-supabase-itinerary-write-request'") &&
@@ -54,78 +55,134 @@ assert(
   host.includes(".from('itinerary_signups')") &&
   host.includes(".from('planner_comments')") &&
   host.includes(".from('travelers')"),
-  'Itinerary shadow writes must execute only in the authenticated top-level Supabase context.'
+  'Itinerary primary writes must execute only in the authenticated top-level Supabase context.'
 );
 assert(
   !host.includes('access_token') && !host.includes('refresh_token'),
   'Supabase session tokens must never be sent into the Apps Script iframe.'
 );
 assert(
+  host.includes("const strictPrimary = primaryWriteEnabled && String(data && data.writeMode || '') === 'primary'") &&
+  host.includes("codedError(\n    'itinerary_version_conflict'") &&
+  host.includes(".eq('version', requireVersion(item, 'Itinerary item'))") &&
+  host.includes(".eq('version', requireVersion(signup, 'Activity signup'))") &&
+  host.includes(".select('id')"),
+  'Existing primary activity/signup mutations must use the Supabase Version read by the client and verify one affected row.'
+);
+assert(
+  host.includes("if (String(error.code || '') === '23505') throw versionConflict('Activity signup')") &&
   host.includes(".upsert(row, { onConflict: 'itinerary_item_id,traveler_id' })"),
-  'Activity signups must stay idempotent by itinerary item and traveler.'
+  'Primary signup creation must fail closed on a duplicate while the Sheets-first rollback mirror remains idempotent.'
+);
+assert(
+  host.includes("stableLegacyId(item['Itinerary ID'], 'PLAN')") &&
+  host.includes("stableLegacyId(signup['Signup ID'], 'SIGNUP')") &&
+  host.includes("stableLegacyId(comment['Planner Comment ID'], 'PCOM')") &&
+  host.includes("stableLegacyId(signup['Traveler ID'])"),
+  'Generated Itinerary IDs must stay stable while existing legacy traveler IDs remain compatible.'
+);
+assert(
+  host.includes("cost_cents: Math.max(0, Math.round(Number(item.Cost || 0) * 100))") &&
+  host.includes("cost_per: String(item['Cost Per'] || 'Person')"),
+  'Primary activity writes must preserve cents and Cost Per semantics.'
 );
 assert(
   host.includes(".eq('planner_type', 'Itinerary')") &&
   host.includes(".eq('item_id', item.id)") &&
   host.includes(".eq('item_legacy_id', legacyId)"),
-  'Deleting an Itinerary item must clear its Supabase planner comments while signup FK cascade handles signups.'
+  'Deleting an Itinerary item must continue clearing linked Supabase comments while signup FK cascade handles signups.'
 );
 assert(
-  host.includes("cost_cents: Math.max(0, Math.round(Number(item.Cost || 0) * 100))") &&
-  host.includes("cost_per: String(item['Cost Per'] || 'Person')"),
-  'Itinerary shadow writes must preserve cents and semantic Cost Per source shapes.'
-);
-assert(
-  host.includes("throw codedError('feature_disabled'") &&
-  host.includes('return readItinerary(activeClient, membership)'),
-  'The host bridge must stay release-gated and return the full Supabase bundle after a mirror mutation.'
+  host.includes('return readItinerary(activeClient, membership)') &&
+  host.includes('primaryWrite: primaryWriteEnabled'),
+  'Every Supabase mutation must return a fresh authoritative bundle and expose its release write mode.'
 );
 
+assert(
+  client.includes('let configuredWriteMode=\'unknown\'') &&
+  client.includes("request_(OP_STATUS,{})") &&
+  client.includes("configuredWriteMode=result&&result.primaryWrite===true?'primary':'legacy'") &&
+  client.includes("DATA.supabaseDomainSources.itinerary==='supabase-primary'"),
+  'The iframe must promote writes only when the host flag is primary and the visible read source is Supabase.'
+);
+assert(
+  client.includes("stableId_('PLAN')") &&
+  client.includes("stableId_('SIGNUP')") &&
+  client.includes("stableId_('PCOM')"),
+  'New primary records must receive stable legacy IDs before the first Supabase mutation.'
+);
+assert(
+  client.includes("request_(OP_ITEM_UPSERT,{item:object},'primary')") &&
+  client.includes("request_(OP_ITEM_DELETE,{item:item},'primary')") &&
+  client.includes("request_(OP_SIGNUP_UPSERT,{signup:local},'primary')") &&
+  client.includes("request_(OP_SIGNUP_DELETE,{signup:existing},'primary')") &&
+  client.includes("request_(OP_COMMENT_INSERT,{comment:local},'primary')"),
+  'All five live Itinerary mutation paths must explicitly request strict primary mode.'
+);
+assert(
+  client.includes('markPrimarySuccess_(result)') &&
+  client.includes("DATA.supabaseDomainSources.itineraryWrite='supabase-primary'") &&
+  client.includes("String(row['Planner Type']||'')!=='Itinerary'") &&
+  client.includes('DATA.plannerComments=nonItineraryComments.concat'),
+  'Primary mutation results must settle visible state from Supabase without deleting Meals comments.'
+);
+assert(
+  client.includes("backupItemSave_(settled,'save')") &&
+  client.includes("backupItemDelete_(id,'delete')") &&
+  client.includes("backupSignupSave_(settled,expectedSheetsUpdatedAt,'signup')") &&
+  client.includes("backupSignupDelete_(existing,expectedSheetsUpdatedAt,'signup removal')") &&
+  client.includes("backupComment_(settled,'comment')"),
+  'Successful primary mutations must start a non-blocking Sheets rollback backup for every Itinerary write path.'
+);
+assert(
+  client.includes('.saveItinerary(payload)') &&
+  client.includes(".deletePlannerItem('Itinerary',String(id||''))") &&
+  client.includes('.saveItineraryInterest({') &&
+  client.includes('.removeItineraryInterest({') &&
+  client.includes('.savePlannerComment({'),
+  'The backup layer must reuse the existing validated Sheets mutation endpoints.'
+);
+assert(
+  client.includes("signupId:String(signup&&signup['Signup ID']||'')") &&
+  client.includes("commentId:String(comment&&comment['Planner Comment ID']||'')"),
+  'Sheets backup creation must preserve the primary Supabase signup/comment legacy IDs.'
+);
+assert(
+  client.includes("'supabase-primary+sheets-backup-match'") &&
+  client.includes("'supabase-primary+sheets-backup-mismatch'") &&
+  client.includes("'supabase-primary+sheets-backup-unavailable'") &&
+  client.includes('passed — Sheets backup matches.'),
+  'Primary-write diagnostics must distinguish matching, mismatched, and unavailable Sheets backups without undoing Supabase success.'
+);
+assert(
+  client.includes('mirrorShadow_(OP_ITEM_UPSERT') &&
+  client.includes('mirrorShadow_(OP_SIGNUP_UPSERT') &&
+  client.includes('mirrorShadow_(OP_COMMENT_INSERT') &&
+  client.includes("if(primaryWriteEnabled_()) return primarySavePlanner_") &&
+  client.includes('return shadowSavePlanner_'),
+  'The validated Sheets-first + Supabase mirror path must remain available when the runtime is on Sheets fallback.'
+);
 assert(
   client.includes('const legacySavePlannerForm=savePlannerForm') &&
   client.includes('const legacyDeletePlannerItem=deletePlannerItem_') &&
   client.includes('const legacySaveInterest=saveP2ItineraryInterest_') &&
   client.includes('const legacyRemoveInterest=removeP2ItineraryInterest_') &&
   client.includes('const legacySaveComment=saveP2PlannerComment_'),
-  'The shadow-write layer must wrap, not remove, the validated Sheets planner paths.'
+  'Primary write routing must wrap rather than remove the validated legacy functions.'
 );
 assert(
-  client.includes("if(name!=='Itinerary')") &&
-  client.includes('legacySavePlannerForm.apply(this,arguments)') &&
-  client.includes('legacyDeletePlannerItem.apply(this,arguments)') &&
-  client.includes("if(type!=='Itinerary')") &&
-  client.includes('legacySaveComment.apply(this,arguments)'),
-  'Non-Itinerary planner behavior must remain untouched by this migration slice.'
+  client.includes("if(name!=='Itinerary') return legacySavePlannerForm.apply(this,arguments)") &&
+  client.includes("if(type!=='Itinerary') return legacySaveComment.apply(this,arguments)"),
+  'Non-Itinerary planner behavior must remain untouched.'
 );
+
 assert(
-  client.includes("mirror_(OP_ITEM_UPSERT,{item:saved},'save')") &&
-  client.includes("mirror_(OP_ITEM_DELETE,{itineraryId:String(id||'')},'delete')") &&
-  client.includes("mirror_(OP_SIGNUP_UPSERT,{signup:saved},'signup')") &&
-  client.includes("mirror_(OP_SIGNUP_DELETE,{itineraryId:itemId,travelerId:travelerId},'signup removal')") &&
-  client.includes("mirror_(OP_COMMENT_INSERT,{comment:saved},'comment')"),
-  'Every live Itinerary mutation path must mirror only after Sheets succeeds.'
-);
-assert(
-  client.includes('Sheets change was kept.') &&
-  client.includes('check passed — data matches Sheets.') &&
-  client.includes('shadow_write_mismatch'),
-  'Shadow-write diagnostics must explicitly preserve Sheets authority on Supabase mismatch or failure.'
-);
-assert(
-  client.includes("DATA.itinerarySignups=(DATA.itinerarySignups||[]).filter") &&
-  client.includes("String(row['Planner Type']||'')==='Itinerary'") &&
-  client.includes("String(row['Item ID']||'')===String(id||'')"),
-  'Optimistic Itinerary deletion must mirror the Sheets dependent signup/comment cleanup before equivalence comparison.'
-);
-assert(
-  plannerCommon.includes("'Itinerary': {sheet: 'Itinerary', idHeader: 'Itinerary ID'}") &&
-  plannerCommon.includes("clearPlannerSocialForItem_(definition.sheet, id)"),
-  'Sheets must remain authoritative for Itinerary delete and dependent social cleanup.'
-);
-assert(
-  plannerCommon.includes('sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([row])') &&
-  !plannerCommon.includes('sheet.getRange(sheet.getLastRow() + 1, 1, headers.length).setValues([row])'),
-  'New planner records must write one row across all header columns, not headers.length rows in one column.'
+  plannerSocial.includes('function plannerSocialRequestedId_(value, prefix)') &&
+  plannerSocial.includes("plannerSocialRequestedId_(values.signupId, 'SIGNUP')") &&
+  plannerSocial.includes("requestedSignupId || uid_('SIGNUP')") &&
+  plannerSocial.includes("plannerSocialRequestedId_(values.commentId, 'PCOM')") &&
+  plannerSocial.includes("requestedCommentId || uid_('PCOM')"),
+  'Authorized Sheets backup endpoints must accept validated primary IDs while preserving legacy ID generation when no ID is supplied.'
 );
 assert(
   plannerSocial.includes('function saveItineraryInterest(values)') &&
@@ -134,18 +191,24 @@ assert(
   plannerSocial.includes("deleteById_('Itinerary Signups', 'Signup ID', signup['Signup ID'])") &&
   plannerSocial.includes('function savePlannerComment(values)') &&
   plannerSocial.includes("appendObject_('Planner Comments', record)"),
-  'Join, leave, and comment Sheets mutations must stay on the validated append/delete helpers.'
+  'Join, leave, and comment Sheets backups must stay on validated one-row append/delete helpers.'
+);
+assert(
+  plannerCommon.includes("'Itinerary': {sheet: 'Itinerary', idHeader: 'Itinerary ID'}") &&
+  plannerCommon.includes("clearPlannerSocialForItem_(definition.sheet, id)") &&
+  plannerCommon.includes('sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([row])') &&
+  !plannerCommon.includes('sheet.getRange(sheet.getLastRow() + 1, 1, headers.length).setValues([row])'),
+  'The Sheets rollback path must retain dependent cleanup and the fixed one-row planner append shape.'
 );
 assert(
   dataHelpers.includes('function appendObject_(sheetName, object)') &&
   dataHelpers.includes("sheet.appendRow(headers.map(header => object[header] !== undefined ? object[header] : ''));"),
-  'Social inserts must append exactly one spreadsheet row instead of constructing an ambiguous getRange overload.'
+  'Social backups must append exactly one spreadsheet row.'
 );
 assert(
   plannerSocial.includes("if (['Itinerary', 'Meals'].indexOf(plannerType) < 0)") &&
-  plannerSocial.includes("const sheetName = plannerType === 'Meals' ? 'Meals' : 'Itinerary'") &&
-  plannerSocial.includes("const idHeader = plannerType === 'Meals' ? 'Meal ID' : 'Itinerary ID'"),
-  'Planner comments must continue supporting both Itinerary and Meals without cross-domain authorization drift.'
+  plannerSocial.includes("const sheetName = plannerType === 'Meals' ? 'Meals' : 'Itinerary'"),
+  'Planner comments must continue supporting Meals without cross-domain behavior drift.'
 );
 
-console.log('PASS Supabase Itinerary primary read / Sheets-primary shadow-write cutover contract');
+console.log('PASS Supabase Itinerary primary-write / Sheets-backup cutover contract');

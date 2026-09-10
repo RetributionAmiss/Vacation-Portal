@@ -65,6 +65,17 @@ function plannerSocialTime_(value) {
   return String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
 }
 
+function plannerSocialRequestedId_(value, prefix) {
+  const id = String(value || '').trim().toUpperCase();
+  if (!id) return '';
+  const expectedPrefix = String(prefix || '').trim().toUpperCase();
+  const pattern = new RegExp('^' + expectedPrefix + '-[A-Z0-9]{10}$');
+  if (!pattern.test(id)) {
+    throw new Error('The planner backup ID is not valid.');
+  }
+  return id;
+}
+
 function plannerSocialItineraryItem_(itineraryId) {
   const id = String(itineraryId || '').trim();
   if (!id) throw new Error('Choose an activity first.');
@@ -86,6 +97,7 @@ function saveItineraryInterest(values) {
   const itineraryId = String(values.itineraryId || '').trim();
   const plannedDate = plannerSocialDate_(values.plannedDate);
   const plannedTime = plannerSocialTime_(values.plannedTime);
+  const requestedSignupId = plannerSocialRequestedId_(values.signupId, 'SIGNUP');
   const requestId = normalizeMutationRequestId_(values.requestId);
   const scope = 'itinerary-signup-' + itineraryId + '-' + travelerId;
 
@@ -115,7 +127,7 @@ function saveItineraryInterest(values) {
 
     const signupId = existing
       ? String(existing['Signup ID'] || '')
-      : uid_('SIGNUP');
+      : (requestedSignupId || uid_('SIGNUP'));
 
     const record = {
       'Signup ID': signupId,
@@ -210,6 +222,7 @@ function savePlannerComment(values) {
   const plannerType = String(values.plannerType || '').trim();
   const itemId = String(values.itemId || '').trim();
   const comment = String(values.comment || '').trim().slice(0, 800);
+  const requestedCommentId = plannerSocialRequestedId_(values.commentId, 'PCOM');
 
   if (['Itinerary', 'Meals'].indexOf(plannerType) < 0) {
     throw new Error('Comments are not available for that planning section.');
@@ -240,7 +253,7 @@ function savePlannerComment(values) {
     if (!itemExists) throw new Error('That planner item could not be found.');
 
     const record = {
-      'Planner Comment ID': uid_('PCOM'),
+      'Planner Comment ID': requestedCommentId || uid_('PCOM'),
       'Planner Type': plannerType,
       'Item ID': itemId,
       'Traveler ID': travelerId,

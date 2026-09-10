@@ -12,10 +12,10 @@ window.VACATION_PORTAL_CONFIG = {
   supabaseUrl: 'https://rlmsojrxmrfawvdsodkk.supabase.co',
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
-  // Domain cutovers are release-level flags. Travel Plans and Packing are now
-  // Supabase-primary with non-blocking Sheets backups. Itinerary now reads from
-  // Supabase first while Sheets remains authoritative for writes; successful
-  // Sheets mutations continue mirroring into Supabase for equivalence checks.
+  // Travel Plans, Packing, and Itinerary use Supabase as primary read/write
+  // sources. For Itinerary the browser now settles Supabase first; Apps Script
+  // / Sheets is refreshed afterward as rollback backup and is promoted only
+  // when a primary Supabase read fails for the current runtime.
   supabaseDomains: {
     travelPlans: {
       shadowRead: false,
@@ -31,16 +31,16 @@ window.VACATION_PORTAL_CONFIG = {
     },
     itinerary: {
       shadowRead: false,
-      shadowWrite: true,
+      shadowWrite: false,
       read: true,
-      write: false
+      write: true
     }
   },
 
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.20'
+  release: 'V4.4.0-alpha2.24'
 };
 
 (function loadVacationSupabaseAuth_(){
@@ -118,6 +118,19 @@ window.VACATION_PORTAL_CONFIG = {
     document.head.appendChild(script);
   }catch(error){
     console.warn('Supabase Itinerary write bridge could not be loaded.',error);
+  }
+})();
+
+(function loadVacationSupabaseItineraryCommentBridge_(){
+  try{
+    const script=document.createElement('script');
+    script.type='module';
+    script.src='./supabase-itinerary-comment-bridge.js?v='+encodeURIComponent(
+      String(window.VACATION_PORTAL_CONFIG.release||'')
+    );
+    document.head.appendChild(script);
+  }catch(error){
+    console.warn('Supabase Itinerary comment bridge could not be loaded.',error);
   }
 })();
 
