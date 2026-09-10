@@ -104,8 +104,8 @@ jobs:
           set -euo pipefail
           deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
           printf '%s\n' "$deployments"
-          if ! grep -Fq "$PREVIEW_DEPLOYMENT_ID @200" <<<"$deployments"; then
-            echo "::error::Isolated preview deployment is not at expected pre-deploy version 200."
+          if ! grep -Fq "$PREVIEW_DEPLOYMENT_ID @201" <<<"$deployments"; then
+            echo "::error::Isolated preview deployment is not at expected pre-deploy version 201."
             exit 1
           fi
           if ! grep -Fq "$PRODUCTION_DEPLOYMENT_ID @199" <<<"$deployments"; then
@@ -137,15 +137,15 @@ jobs:
           set -euo pipefail
           deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
           printf '%s\n' "$deployments"
-          if ! grep -Fq "$PREVIEW_DEPLOYMENT_ID @201" <<<"$deployments"; then
-            echo "::error::Preview deployment did not advance to expected version 201."
+          if ! grep -Fq "$PREVIEW_DEPLOYMENT_ID @202" <<<"$deployments"; then
+            echo "::error::Preview deployment did not advance to expected version 202."
             exit 1
           fi
           if ! grep -Fq "$PRODUCTION_DEPLOYMENT_ID @199" <<<"$deployments"; then
             echo "::error::Production deployment changed during preview deployment."
             exit 1
           fi
-          echo "Verified preview @201 and production still @199."
+          echo "Verified preview @202 and production still @199."
 
       - name: Smoke test preview web app
         shell: bash
@@ -174,7 +174,7 @@ jobs:
         run: |
           echo "### Apps Script alpha2.22 preview ready" >> "$GITHUB_STEP_SUMMARY"
           echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Isolated preview deployment: \`${PREVIEW_DEPLOYMENT_ID}\` @201" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Isolated preview deployment: \`${PREVIEW_DEPLOYMENT_ID}\` @202" >> "$GITHUB_STEP_SUMMARY"
           echo "- Preview Apps Script URL: ${PREVIEW_URL}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Production deployment \`${PRODUCTION_DEPLOYMENT_ID}\` remains @199 and was not updated." >> "$GITHUB_STEP_SUMMARY"
           echo "- Preview shell is V4.4.0-alpha2.22 and loads the Itinerary comment lifecycle bridge." >> "$GITHUB_STEP_SUMMARY"
