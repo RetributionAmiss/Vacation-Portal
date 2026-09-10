@@ -1,9 +1,73 @@
 <style>
 .p2-comment.has-remove{grid-template-columns:minmax(85px,auto) 1fr auto;align-items:start}
 .p2-comment-remove{align-self:start;padding:4px 8px;font-size:.72rem;line-height:1.1}
+
+/* Keep the comment composer intentionally quieter than the planner forms. */
+.p2-comment-modal form{display:grid;gap:14px;margin-top:14px}
+.p2-comment-modal label{display:grid;gap:7px}
+.p2-comment-modal label>span{font-size:.78rem;font-weight:800;letter-spacing:.02em;opacity:.78}
+.p2-comment-modal textarea{
+  width:100%;
+  min-height:92px;
+  max-height:150px;
+  padding:11px 12px;
+  resize:vertical;
+  border:1px solid rgba(226,187,94,.30);
+  border-radius:12px;
+  outline:none;
+  color:inherit;
+  background:rgba(255,255,255,.025);
+  box-shadow:none;
+  font:inherit;
+  font-size:16px;
+  line-height:1.45;
+  transition:border-color .15s ease,box-shadow .15s ease,background .15s ease;
+}
+.p2-comment-modal textarea:focus{
+  border-color:rgba(226,187,94,.72);
+  background:rgba(255,255,255,.045);
+  box-shadow:0 0 0 3px rgba(226,187,94,.10);
+}
+.p2-comment-confirm{max-width:430px}
+.p2-comment-confirm .p2-comment-confirm-copy{margin:8px 0 0;line-height:1.5}
+.p2-comment-confirm .p2-comment-confirm-preview{
+  margin:14px 0 0;
+  padding:10px 12px;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:11px;
+  background:rgba(255,255,255,.03);
+  font-size:.88rem;
+  line-height:1.45;
+  opacity:.88;
+}
+.p2-comment-confirm .planner-delete{margin-right:auto}
+
 @media(max-width:520px){
   .p2-comment.has-remove{grid-template-columns:1fr auto;gap:4px 8px}
   .p2-comment.has-remove>span{grid-column:1/-1}
+}
+
+/* Mobile keyboards shrink the visual viewport without reliably repositioning
+ * the Apps Script iframe. Give this one modal a visual-viewport-aware layout. */
+@media(max-width:700px){
+  #modal.p2-comment-composer-open{
+    align-items:flex-start;
+    overflow-y:auto;
+    padding:10px max(10px,env(safe-area-inset-right)) 10px max(10px,env(safe-area-inset-left));
+  }
+  #modal.p2-comment-composer-open .modal-panel{
+    width:min(100%,620px);
+    max-height:var(--p2-comment-vv-height,calc(100dvh - 20px));
+    margin-top:max(6px,env(safe-area-inset-top));
+    overflow-y:auto;
+    overscroll-behavior:contain;
+  }
+  .p2-comment-modal textarea{
+    min-height:84px;
+    max-height:116px;
+    resize:none;
+  }
+  .p2-comment-modal .form-actions{position:static}
 }
 </style>
 <script>
@@ -21,16 +85,24 @@
   const pending={};
   const inheritedEnsureSocial=p2PlannerEnsureSocialData_;
   const inheritedCommentSection=p2PlannerCommentSection_;
+  const inheritedOpenComment=typeof openP2PlannerComment_==='function'?openP2PlannerComment_:null;
+  const inheritedCloseModal=typeof closeModal==='function'?closeModal:null;
   let freshnessTimer=0;
   let lastPrimarySocialStamp=0;
   let membershipRequestInFlight=false;
   let membershipCheckedAt=0;
+  let pendingDelete=null;
+  let mobileComposerTimers=[];
 
   function primaryRuntime_(){
     return Boolean(
       DATA&&DATA.supabaseDomainSources&&
       DATA.supabaseDomainSources.itinerary==='supabase-primary'
     );
+  }
+
+  function plannerType_(row){
+    return String(row&&row['Planner Type']||'');
   }
 
   function membershipRole_(){
@@ -92,10 +164,8 @@
     });
   }
 
-  // IMPORTANT: the Supabase domain bridges share one response event type.
-  // Only consume responses whose request IDs were created by this lifecycle
-  // layer. Alpha2.22 reacted to every successful domain response and could
-  // continuously rerender Itinerary while other bridges were settling.
+  // The Supabase bridges share one response channel. Never consume or render
+  // a response unless this layer owns its request ID.
   window.addEventListener('message',function(event){
     const data=event&&event.data||{};
     if(data.type!==RESPONSE_TYPE) return;
@@ -115,7 +185,7 @@
   });
 
   function ensureMembership_(){
-    if(!primaryRuntime_()||membershipRequestInFlight) return;
+    if(membershipRequestInFlight) return;
     if(membershipCheckedAt&&Date.now()-membershipCheckedAt<MEMBERSHIP_TTL_MS) return;
 
     membershipRequestInFlight=true;
@@ -123,10 +193,10 @@
       .then(function(result){
         membershipCheckedAt=Date.now();
         const changed=rememberMembership_(result);
-        if(changed&&currentView==='itinerary') render();
+        if(changed&&['itinerary','meals'].indexOf(currentView)>=0) render();
       })
       .catch(function(error){
-        console.warn('Supabase Itinerary comment membership check was unavailable.',error);
+        console.warn('Supabase planner-comment membership check was unavailable.',error);
       })
       .then(function(){membershipRequestInFlight=false;},function(){membershipRequestInFlight=false;});
   }
@@ -139,7 +209,10 @@
   }
 
   function scheduleFreshnessRender_(){
-    if(currentView!=='itinerary') return;
+    if(currentView!=='itinerary'){
+      if(currentView==='meals') ensureMembership_();
+      return;
+    }
 
     const currentStamp=Number(
       typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_
@@ -187,16 +260,100 @@
     return result;
   };
 
+  function clearComposerTimers_(){
+    mobileComposerTimers.forEach(function(timer){clearTimeout(timer);});
+    mobileComposerTimers=[];
+  }
+
+  function centerCommentComposer_(){
+    const modal=document.getElementById('modal');
+    const textarea=document.getElementById('p2PlannerCommentText');
+    if(!modal||modal.classList.contains('hidden')||!textarea) return;
+
+    const viewport=window.visualViewport;
+    if(viewport&&viewport.height){
+      modal.style.setProperty('--p2-comment-vv-height',Math.max(240,Math.floor(viewport.height-18))+'px');
+    }
+
+    try{
+      textarea.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
+    }catch(error){
+      try{textarea.scrollIntoView(false);}catch(ignored){}
+    }
+  }
+
+  function enhanceCommentComposer_(){
+    const modal=document.getElementById('modal');
+    const textarea=document.getElementById('p2PlannerCommentText');
+    if(!modal||!textarea) return;
+
+    modal.classList.add('p2-comment-composer-open');
+    textarea.setAttribute('enterkeyhint','send');
+    textarea.setAttribute('autocapitalize','sentences');
+
+    if(textarea.dataset.mobileComposerBound!=='1'){
+      textarea.dataset.mobileComposerBound='1';
+      textarea.addEventListener('focus',function(){
+        clearComposerTimers_();
+        [0,120,320,560].forEach(function(delay){
+          mobileComposerTimers.push(setTimeout(centerCommentComposer_,delay));
+        });
+      });
+    }
+
+    // openModal() already focuses the first field. Re-center after the mobile
+    // keyboard has actually changed the visual viewport.
+    clearComposerTimers_();
+    [40,180,420].forEach(function(delay){
+      mobileComposerTimers.push(setTimeout(centerCommentComposer_,delay));
+    });
+  }
+
+  if(inheritedOpenComment){
+    openP2PlannerComment_=function(){
+      const result=inheritedOpenComment.apply(this,arguments);
+      setTimeout(enhanceCommentComposer_,0);
+      return result;
+    };
+  }
+
+  if(inheritedCloseModal){
+    closeModal=function(){
+      clearComposerTimers_();
+      const modal=document.getElementById('modal');
+      if(modal){
+        modal.classList.remove('p2-comment-composer-open');
+        modal.style.removeProperty('--p2-comment-vv-height');
+      }
+      return inheritedCloseModal.apply(this,arguments);
+    };
+  }
+
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize',function(){
+      const modal=document.getElementById('modal');
+      if(modal&&modal.classList.contains('p2-comment-composer-open')) centerCommentComposer_();
+    });
+    window.visualViewport.addEventListener('scroll',function(){
+      const modal=document.getElementById('modal');
+      if(modal&&modal.classList.contains('p2-comment-composer-open')) centerCommentComposer_();
+    });
+  }
+
   function canRemove_(row){
     const id=String(row&&row['Planner Comment ID']||'');
-    if(!/^PCOM-[A-Z0-9]{10}$/i.test(id)) return false;
+    const type=plannerType_(row);
+    if(!id) return false;
+    if(type==='Itinerary'&&!/^PCOM-[A-Z0-9]{10}$/i.test(id)) return false;
+    if(['Itinerary','Meals'].indexOf(type)<0) return false;
     if(String(row&&row['Traveler ID']||'')===String(currentTravelerId||'')) return true;
-    return primaryRuntime_()&&membershipRole_()==='organizer';
+    return membershipRole_()==='organizer';
   }
 
   p2PlannerCommentSection_=function(type,itemId,label){
-    if(type!=='Itinerary') return inheritedCommentSection.apply(this,arguments);
+    if(['Itinerary','Meals'].indexOf(type)<0) return inheritedCommentSection.apply(this,arguments);
 
+    ensureMembership_();
     const comments=p2PlannerComments_(type,itemId);
     const visible=comments.slice(-3);
     return `<div class="p2-comment-section">
@@ -208,7 +365,7 @@
           return `<div class="p2-comment ${removable?'has-remove':''}">
             <strong>${esc(row.travelerName||row['Traveler Name']||'Traveler')}</strong>
             <span>${esc(row.Comment||'')}</span>
-            ${removable?`<button type="button" class="ghost tiny p2-comment-remove" onclick="deleteP2PlannerComment_('Itinerary','${escAttr(id)}')">Remove</button>`:''}
+            ${removable?`<button type="button" class="ghost tiny p2-comment-remove" onclick="deleteP2PlannerComment_('${escAttr(type)}','${escAttr(id)}')">Remove</button>`:''}
           </div>`;
         }).join('')}
       </div>`:`<p class="p2-empty-mini">No comments yet.</p>`}
@@ -216,10 +373,10 @@
     </div>`;
   };
 
-  function findComment_(commentId){
+  function findComment_(type,commentId){
     return ((DATA&&DATA.plannerComments)||[]).find(function(row){
       return String(row['Planner Comment ID']||'')===String(commentId||'')&&
-        String(row['Planner Type']||'')==='Itinerary';
+        String(row['Planner Type']||'')===String(type||'');
     })||null;
   }
 
@@ -227,17 +384,25 @@
     return (rows||[]).map(function(row){return Object.assign({},row);});
   }
 
-  function removeLocal_(commentId){
+  function removeLocal_(type,commentId){
     if(DATA&&Array.isArray(DATA.plannerComments)){
       DATA.plannerComments=DATA.plannerComments.filter(function(row){
-        return !(String(row['Planner Comment ID']||'')===String(commentId||'')&&String(row['Planner Type']||'')==='Itinerary');
+        return !(
+          String(row['Planner Comment ID']||'')===String(commentId||'')&&
+          String(row['Planner Type']||'')===String(type||'')
+        );
       });
     }
     if(
-      DATA&&DATA.supabaseItineraryShadow&&
+      type==='Itinerary'&&DATA&&DATA.supabaseItineraryShadow&&
       Array.isArray(DATA.supabaseItineraryShadow.plannerComments)
     ){
       DATA.supabaseItineraryShadow.plannerComments=DATA.supabaseItineraryShadow.plannerComments.filter(function(row){
+        return String(row['Planner Comment ID']||'')!==String(commentId||'');
+      });
+    }
+    if(DATA&&DATA.itinerarySheetsBackup&&Array.isArray(DATA.itinerarySheetsBackup.plannerComments)){
+      DATA.itinerarySheetsBackup.plannerComments=DATA.itinerarySheetsBackup.plannerComments.filter(function(row){
         return String(row['Planner Comment ID']||'')!==String(commentId||'');
       });
     }
@@ -254,7 +419,7 @@
   function sheetsPayload_(row){
     const base={
       commentId:String(row['Planner Comment ID']||''),
-      plannerType:'Itinerary',
+      plannerType:plannerType_(row),
       travelerId:String(currentTravelerId||''),
       deviceId:String(PWA_DEVICE_ID_||'')
     };
@@ -334,6 +499,7 @@
       .then(function(result){
         settlePrimaryComments_(result);
         render();
+        // Supabase has committed. Sheets is now strictly a non-blocking backup.
         deleteFromSheets_(row,function(){
           if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'Comment removed');
           toast('Supabase Itinerary comment removal passed — Sheets backup matches.');
@@ -350,16 +516,23 @@
       });
   }
 
-  function fallbackDelete_(row,previousData,previousShadow){
+  function sheetsDelete_(row,previousData,previousShadow){
+    const type=plannerType_(row);
     deleteFromSheets_(row,function(){
       if(typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_){
         p2PlannerSocialState_.lastLoaded=Date.now();
       }
       render();
-      toast('Comment removed.');
-      request_(OP_COMMENT_DELETE,{comment:row},'shadow').catch(function(error){
-        console.warn('Supabase Itinerary comment delete mirror was unavailable.',error);
-      });
+      toast(type==='Meals'?'Meal comment removed.':'Comment removed.');
+
+      // Itinerary fallback mode keeps its validated Supabase shadow mirror.
+      // Meals comments are still Sheets-authoritative until their own Supabase
+      // planner-comment migration is completed, so do not invent a shadow row.
+      if(type==='Itinerary'){
+        request_(OP_COMMENT_DELETE,{comment:row},'shadow').catch(function(error){
+          console.warn('Supabase Itinerary comment delete mirror was unavailable.',error);
+        });
+      }
     },function(error){
       restoreLocal_(previousData,previousShadow);
       render();
@@ -367,30 +540,59 @@
     });
   }
 
+  function executeDelete_(row){
+    const type=plannerType_(row);
+    const commentId=String(row['Planner Comment ID']||'');
+    const previousData=cloneComments_((DATA&&DATA.plannerComments)||[]);
+    const previousShadow=(
+      type==='Itinerary'&&DATA&&DATA.supabaseItineraryShadow&&
+      Array.isArray(DATA.supabaseItineraryShadow.plannerComments)
+    )?cloneComments_(DATA.supabaseItineraryShadow.plannerComments):null;
+
+    removeLocal_(type,commentId);
+    render();
+
+    if(type==='Itinerary'&&primaryRuntime_()){
+      primaryDelete_(row,previousData,previousShadow);
+    }else{
+      sheetsDelete_(row,previousData,previousShadow);
+    }
+  }
+
+  window.confirmP2PlannerCommentDelete_=function(){
+    const pendingRow=pendingDelete&&pendingDelete.row;
+    pendingDelete=null;
+    if(typeof closeModal==='function') closeModal();
+    if(pendingRow) executeDelete_(pendingRow);
+  };
+
   window.deleteP2PlannerComment_=function(type,commentId){
-    if(type!=='Itinerary') return;
-    const row=findComment_(commentId);
+    if(['Itinerary','Meals'].indexOf(String(type||''))<0) return;
+    const row=findComment_(type,commentId);
     if(!row) return;
     if(!canRemove_(row)){
       toast('You can only remove your own comments unless you are signed in as the organizer.',true);
       return;
     }
-    if(!window.confirm('Remove this comment?')) return;
 
-    const previousData=cloneComments_((DATA&&DATA.plannerComments)||[]);
-    const previousShadow=(DATA&&DATA.supabaseItineraryShadow&&Array.isArray(DATA.supabaseItineraryShadow.plannerComments))
-      ?cloneComments_(DATA.supabaseItineraryShadow.plannerComments)
-      :null;
-    removeLocal_(commentId);
-    render();
-
-    if(primaryRuntime_()){
-      primaryDelete_(row,previousData,previousShadow);
-    }else{
-      fallbackDelete_(row,previousData,previousShadow);
-    }
+    pendingDelete={row:Object.assign({},row)};
+    const label=type==='Meals'?'meal comment':'trip comment';
+    const preview=String(row.Comment||'').trim();
+    openModal(`<div class="p2-comment-confirm">
+      <p class="eyebrow">REMOVE COMMENT</p>
+      <h2>Remove this ${esc(label)}?</h2>
+      <p class="p2-comment-confirm-copy muted">This will remove the comment from the conversation.</p>
+      ${preview?`<div class="p2-comment-confirm-preview">${esc(preview)}</div>`:''}
+      <div class="form-actions">
+        <button type="button" class="ghost" onclick="pendingP2PlannerCommentDelete_=null;closeModal()">Cancel</button>
+        <button type="button" class="planner-delete" onclick="confirmP2PlannerCommentDelete_()">Remove comment</button>
+      </div>
+    </div>`);
   };
 
+  // Make cancel/close harmless even if a pending confirmation existed.
+  window.pendingP2PlannerCommentDelete_=null;
   scheduleFreshnessRender_();
+  ensureMembership_();
 })();
 </script>
