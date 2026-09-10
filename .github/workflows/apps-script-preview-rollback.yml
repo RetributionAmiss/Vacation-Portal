@@ -1,0 +1,82 @@
+name: Apps Script Preview Rollback
+
+on:
+  push:
+    branches:
+      - test/supabase-itinerary-primary-write-preview
+    paths:
+      - .github/workflows/apps-script-preview-rollback.yml
+
+permissions:
+  contents: read
+
+jobs:
+  rollback-preview:
+    runs-on: ubuntu-latest
+    env:
+      APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PREVIEW_DEPLOYMENT_ID: AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg
+      PRODUCTION_DEPLOYMENT_ID: AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configure clasp
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$APPS_SCRIPT_ID" && -n "$CLASPRC_JSON" ]]
+          [[ "$PREVIEW_DEPLOYMENT_ID" != "$PRODUCTION_DEPLOYMENT_ID" ]]
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          node <<'NODE'
+          const fs=require('fs');
+          JSON.parse(fs.readFileSync(`${process.env.HOME}/.clasprc.json`,'utf8'));
+          fs.writeFileSync('.clasp.json',JSON.stringify({scriptId:process.env.APPS_SCRIPT_ID,rootDir:'.'},null,2)+'\n');
+          NODE
+      - name: Verify current deployment state
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+          printf '%s\n' "$deployments"
+          grep -Fq "$PREVIEW_DEPLOYMENT_ID @202" <<<"$deployments" || { echo "::error::Preview is not currently @202; refusing rollback."; exit 1; }
+          grep -Fq "$PRODUCTION_DEPLOYMENT_ID @199" <<<"$deployments" || { echo "::error::Production is not @199; refusing rollback."; exit 1; }
+      - name: Repoint isolated preview to existing version 201
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes @google/clasp@3.4.0 deploy -i "$PREVIEW_DEPLOYMENT_ID" -V 201 -d "Rollback broken alpha2.22 preview to known-good @201"
+      - name: Verify rollback and production isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+            if grep -Fq "$PREVIEW_DEPLOYMENT_ID @201" <<<"$deployments" && grep -Fq "$PRODUCTION_DEPLOYMENT_ID @199" <<<"$deployments"; then
+              printf '%s\n' "$deployments"
+              echo "Verified preview rollback to @201; production remains @199."
+              exit 0
+            fi
+            sleep 5
+          done
+          printf '%s\n' "$deployments"
+          echo "::error::Rollback verification did not converge."
+          exit 1
+      - name: Smoke test rolled-back preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://script.google.com/macros/s/${PREVIEW_DEPLOYMENT_ID}/exec?rollbackSmoke=${GITHUB_SHA}"
+          for attempt in $(seq 1 12); do
+            body="$(curl -L -sS --max-time 20 "$url" || true)"
+            if grep -Fq 'Family Vacation Portal' <<<"$body" && grep -Fq 'loadingScreen' <<<"$body"; then
+              echo "Rolled-back preview returned the expected portal shell."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Rolled-back preview smoke test failed."
+          exit 1
