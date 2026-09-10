@@ -1,0 +1,75 @@
+name: Apps Script Alpha2.23 Inspect
+
+on:
+  push:
+    branches:
+      - test/supabase-itinerary-alpha2-23-preview
+    paths:
+      - .github/workflows/apps-script-alpha2-23-inspect.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PREVIEW_DEPLOYMENT_ID: AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg
+      PRODUCTION_DEPLOYMENT_ID: AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configure clasp and verify deployment metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          node <<'NODE'
+          const fs=require('fs');
+          fs.writeFileSync('.clasp.json',JSON.stringify({scriptId:process.env.APPS_SCRIPT_ID,rootDir:'.'},null,2)+'\n');
+          NODE
+          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+          preview_line="$(grep -F "$PREVIEW_DEPLOYMENT_ID" <<<"$deployments" || true)"
+          production_line="$(grep -F "$PRODUCTION_DEPLOYMENT_ID" <<<"$deployments" || true)"
+          echo "$preview_line"
+          echo "$production_line"
+          grep -Fq '@203' <<<"$preview_line"
+          grep -Fq '@199' <<<"$production_line"
+
+      - name: Inspect served preview body
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://script.google.com/macros/s/${PREVIEW_DEPLOYMENT_ID}/exec?inspection=${GITHUB_SHA}"
+          curl -L -sS --max-time 30 -D /tmp/headers.txt -o /tmp/body.html "$url"
+          echo "BODY_BYTES=$(wc -c </tmp/body.html)"
+          echo '--- final response headers ---'
+          tail -40 /tmp/headers.txt
+          echo '--- marker report ---'
+          markers=(
+            'Family Vacation Portal'
+            'loadingScreen'
+            "const OP_COMMENT_STATUS='itinerary.comment.status'"
+            'const waiter=pending[id]'
+            'if(!waiter) return;'
+            'scheduleFreshnessRender_'
+            'deleteP2PlannerComment_'
+            "include('Client_Supabase_Itinerary_Comment_Lifecycle')"
+          )
+          for marker in "${markers[@]}"; do
+            if grep -Fq "$marker" /tmp/body.html; then
+              echo "PASS | $marker"
+            else
+              echo "MISS | $marker"
+            fi
+          done
+          echo '--- lifecycle-related snippets ---'
+          grep -n -E 'ItineraryCommentLifecycle|OP_COMMENT|pending\[id\]|deleteP2PlannerComment|scheduleFreshness' /tmp/body.html | head -80 || true
+          echo '--- body prefix ---'
+          head -c 1200 /tmp/body.html | tr '\n' ' '
+          echo
