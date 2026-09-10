@@ -1,0 +1,158 @@
+name: Apps Script Alpha2.23 Preview
+
+on:
+  push:
+    branches:
+      - test/supabase-itinerary-alpha2-23-preview
+    paths:
+      - .github/workflows/apps-script-alpha2-23-preview.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: apps-script-itinerary-alpha2-23-preview
+      cancel-in-progress: false
+    env:
+      APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PREVIEW_DEPLOYMENT_ID: AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg
+      PRODUCTION_DEPLOYMENT_ID: AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA
+    steps:
+      - name: Check out alpha2.23 preview
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify isolated alpha2.23 static configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs');
+          const config=fs.readFileSync('config.js','utf8');
+          const preview=process.env.PREVIEW_DEPLOYMENT_ID;
+          const production=process.env.PRODUCTION_DEPLOYMENT_ID;
+          if(!config.includes("release: 'V4.4.0-alpha2.23'")) throw new Error('Preview is not alpha2.23.');
+          if(!config.includes(`https://script.google.com/macros/s/${preview}/exec`)) throw new Error('Preview shell is not using the isolated Apps Script backend.');
+          if(config.includes(`https://script.google.com/macros/s/${production}/exec`)) throw new Error('Preview shell points at production.');
+          if(!config.includes("script.src='./supabase-itinerary-comment-bridge.js?v='")) throw new Error('Comment bridge loader is missing.');
+          NODE
+
+      - name: Run repaired Itinerary contracts
+        run: |
+          node --check supabase-itinerary-bridge.js
+          node --check supabase-itinerary-write-bridge.js
+          node --check supabase-itinerary-comment-bridge.js
+          node tests/supabase_itinerary_read_cutover_contract.test.js
+          node tests/supabase_itinerary_write_cutover_contract.test.js
+          node tests/supabase_itinerary_concurrency_contract.test.js
+          node tests/supabase_itinerary_comment_lifecycle_contract.test.js
+
+      - name: Configure clasp
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APPS_SCRIPT_ID"
+          test -n "$CLASPRC_JSON"
+          test "$PREVIEW_DEPLOYMENT_ID" != "$PRODUCTION_DEPLOYMENT_ID"
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          node <<'NODE'
+          const fs=require('fs');
+          JSON.parse(fs.readFileSync(`${process.env.HOME}/.clasprc.json`,'utf8'));
+          fs.writeFileSync('.clasp.json',JSON.stringify({scriptId:process.env.APPS_SCRIPT_ID,rootDir:'.'},null,2)+'\n');
+          NODE
+
+      - name: Guard version capacity and deployment isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          versions="$(npx --yes @google/clasp@3.4.0 versions)"
+          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+          count="$(grep -Ec '^[0-9]+ - ' <<<"$versions" || true)"
+          highest="$(awk '/^[0-9]+ - /{print $1}' <<<"$versions" | sort -n | tail -1)"
+          echo "Stored Apps Script versions: $count; highest: $highest"
+          [[ "$count" -lt 200 ]] || { echo '::error::Apps Script version capacity is full.'; exit 1; }
+          [[ "$highest" == '202' ]] || { echo "::error::Expected highest stored version 202 before alpha2.23 preview, found $highest."; exit 1; }
+          preview_line="$(grep -F "$PREVIEW_DEPLOYMENT_ID" <<<"$deployments" || true)"
+          production_line="$(grep -F "$PRODUCTION_DEPLOYMENT_ID" <<<"$deployments" || true)"
+          echo "$preview_line"
+          echo "$production_line"
+          grep -Fq '@201' <<<"$preview_line" || { echo '::error::Preview is not on known-good @201 before deployment.'; exit 1; }
+          grep -Fq '@199' <<<"$production_line" || { echo '::error::Production is not pinned to @199.'; exit 1; }
+
+      - name: Verify clasp push scope
+        run: npx --yes @google/clasp@3.4.0 status
+
+      - name: Push exact alpha2.23 preview source to Apps Script HEAD
+        run: npx --yes @google/clasp@3.4.0 push --force
+
+      - name: Create alpha2.23 version on isolated preview deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(npx --yes @google/clasp@3.4.0 deploy -i "$PREVIEW_DEPLOYMENT_ID" -d "Itinerary alpha2.23 scoped comment lifecycle ${GITHUB_SHA:0:12}")"
+          printf '%s\n' "$output"
+
+      - name: Wait for preview @203 and guard production @199
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 15); do
+            deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+            preview_line="$(grep -F "$PREVIEW_DEPLOYMENT_ID" <<<"$deployments" || true)"
+            production_line="$(grep -F "$PRODUCTION_DEPLOYMENT_ID" <<<"$deployments" || true)"
+            if grep -Fq '@203' <<<"$preview_line" && grep -Fq '@199' <<<"$production_line"; then
+              echo "$preview_line"
+              echo "$production_line"
+              exit 0
+            fi
+            echo "Waiting for deployment metadata ($attempt/15)..."
+            sleep 5
+          done
+          echo "$deployments"
+          echo '::error::Could not verify preview @203 with production still @199.'
+          exit 1
+
+      - name: Smoke test alpha2.23 shell and repaired lifecycle markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          preview_url="https://script.google.com/macros/s/${PREVIEW_DEPLOYMENT_ID}/exec"
+          smoke_url="${preview_url}?deploymentSmoke=${GITHUB_SHA}"
+          for attempt in $(seq 1 15); do
+            body_file="$(mktemp)"
+            curl -L -sS --max-time 20 -o "$body_file" "$smoke_url" || true
+            if grep -Fq 'Family Vacation Portal' "$body_file" && \
+               grep -Fq 'loadingScreen' "$body_file" && \
+               grep -Fq "const OP_COMMENT_STATUS='itinerary.comment.status'" "$body_file" && \
+               grep -Fq 'const waiter=pending[id]' "$body_file" && \
+               grep -Fq 'if(!waiter) return;' "$body_file" && \
+               grep -Fq 'scheduleFreshnessRender_' "$body_file" && \
+               grep -Fq 'deleteP2PlannerComment_' "$body_file"; then
+              echo 'Preview /exec returned alpha2.23 with scoped comment lifecycle markers.'
+              rm -f "$body_file"
+              exit 0
+            fi
+            rm -f "$body_file"
+            echo "Preview shell has not converged yet ($attempt/15)..."
+            sleep 5
+          done
+          echo '::error::Preview /exec did not expose the repaired alpha2.23 lifecycle shell.'
+          exit 1
+
+      - name: Record preview summary
+        shell: bash
+        run: |
+          echo '### Alpha2.23 Itinerary comment preview' >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '- Isolated preview deployment: @203' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Production deployment remains @199' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Manual browser verification remains required before merge' >> "$GITHUB_STEP_SUMMARY"
