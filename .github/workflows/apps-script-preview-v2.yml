@@ -71,6 +71,16 @@ jobs:
       - name: Verify clasp authentication and push scope
         run: npx --yes @google/clasp@3.4.0 status
 
+      - name: Inspect Apps Script version inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          versions="$(npx --yes @google/clasp@3.4.0 versions)"
+          printf '%s\n' "$versions"
+          count="$(grep -Ec '^[0-9]+ - ' <<<"$versions" || true)"
+          echo "Apps Script version inventory count: $count"
+          echo "VERSION_COUNT=$count" >> "$GITHUB_ENV"
+
       - name: Push corrected preview code to Apps Script HEAD
         run: npx --yes @google/clasp@3.4.0 push --force
 
@@ -122,4 +132,5 @@ jobs:
           echo "### Corrected Itinerary primary-write preview" >> "$GITHUB_STEP_SUMMARY"
           echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Preview deployment: \`${PREVIEW_DEPLOYMENT_ID}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Apps Script versions before deploy: \`${VERSION_COUNT}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Production deployment remains version 199." >> "$GITHUB_STEP_SUMMARY"
