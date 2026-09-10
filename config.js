@@ -41,7 +41,7 @@ window.VACATION_PORTAL_CONFIG = {
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.21'
+  release: 'V4.4.0-alpha2.22'
 };
 
 (function loadVacationSupabaseAuth_(){
@@ -119,6 +119,19 @@ window.VACATION_PORTAL_CONFIG = {
     document.head.appendChild(script);
   }catch(error){
     console.warn('Supabase Itinerary write bridge could not be loaded.',error);
+  }
+})();
+
+(function loadVacationSupabaseItineraryCommentBridge_(){
+  try{
+    const script=document.createElement('script');
+    script.type='module';
+    script.src='./supabase-itinerary-comment-bridge.js?v='+encodeURIComponent(
+      String(window.VACATION_PORTAL_CONFIG.release||'')
+    );
+    document.head.appendChild(script);
+  }catch(error){
+    console.warn('Supabase Itinerary comment bridge could not be loaded.',error);
   }
 })();
 
