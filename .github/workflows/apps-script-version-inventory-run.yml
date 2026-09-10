@@ -1,0 +1,59 @@
+name: Apps Script Version Inventory Run
+
+on:
+  push:
+    branches:
+      - feature/supabase-itinerary-primary-write
+    paths:
+      - .github/workflows/apps-script-version-inventory-run.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    env:
+      APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PREVIEW_DEPLOYMENT_ID: AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg
+      PRODUCTION_DEPLOYMENT_ID: AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configure clasp
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APPS_SCRIPT_ID"
+          test -n "$CLASPRC_JSON"
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          node <<'NODE'
+          const fs=require('fs');
+          JSON.parse(fs.readFileSync(`${process.env.HOME}/.clasprc.json`,'utf8'));
+          fs.writeFileSync('.clasp.json',JSON.stringify({scriptId:process.env.APPS_SCRIPT_ID,rootDir:'.'},null,2)+'\n');
+          NODE
+      - name: Inventory versions and deployments
+        shell: bash
+        run: |
+          set -euo pipefail
+          versions="$(npx --yes @google/clasp@3.4.0 versions)"
+          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+          printf '%s\n' "$versions"
+          printf '%s\n' "$deployments"
+          count="$(grep -Ec '^[0-9]+ - ' <<<"$versions" || true)"
+          echo "VERSION_COUNT=$count"
+          grep -F "$PREVIEW_DEPLOYMENT_ID" <<<"$deployments"
+          grep -F "$PRODUCTION_DEPLOYMENT_ID" <<<"$deployments"
+          for candidate in 3 4 5 6 7 8 9 10 11 12 13 14; do
+            if grep -Eq "@${candidate}([[:space:]]|$)" <<<"$deployments"; then
+              echo "CANDIDATE_${candidate}=DEPLOYED"
+            elif grep -Eq "^${candidate} - " <<<"$versions"; then
+              echo "CANDIDATE_${candidate}=SAFE_UNDEPLOYED"
+            else
+              echo "CANDIDATE_${candidate}=ABSENT"
+            fi
+          done
