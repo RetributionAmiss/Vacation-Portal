@@ -1,8 +1,12 @@
 <script>
-/* Guarded Itinerary read cutover. Sheets is loaded first as the rollback source,
- * then an authenticated Supabase response becomes the visible Itinerary source
- * when the release flag marks it primary. Sheets remains authoritative for all
- * Itinerary mutations and is restored explicitly if a primary read is unavailable. */
+/* Guarded Itinerary read cutover.
+ *
+ * In primary mode Supabase is read first and becomes visible without waiting
+ * for Apps Script / Sheets. Sheets social data is refreshed quietly afterward
+ * only as rollback/back-up data and to retain non-Itinerary comments such as
+ * Meals. A full Sheets hydration is activated only when the primary Supabase
+ * read fails for the current runtime.
+ */
 (function installSupabaseItineraryBridge_(){
   if(window.__vacationSupabaseItineraryBridgeInstalled) return;
   if(typeof p2PlannerEnsureSocialData_!=='function') return;
@@ -13,13 +17,16 @@
   const OP_READ='itinerary.read';
   const REQUEST_TIMEOUT_MS=5500;
   const READ_TTL_MS=15000;
+  const SHEETS_BACKUP_TTL_MS=30000;
   const pending={};
   const legacyEnsure=p2PlannerEnsureSocialData_;
   let readInFlight=false;
   let lastReadAt=0;
   let statusAnnounced=false;
   let primaryStatusAnnounced=false;
-  let sheetsReadinessInFlight=false;
+  let sheetsFallbackInFlight=false;
+  let sheetsBackupInFlight=false;
+  let lastSheetsBackupAt=0;
 
   function requestId_(){
     return 'supa-itin-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
@@ -152,16 +159,12 @@
       const b=rightById[id];
       if(!a||!b){
         differenceCount++;
-        if(!first){
-          first={id:id,reason:!b?'missing in Supabase':'missing in Sheets'};
-        }
+        if(!first) first={id:id,reason:!b?'missing in Supabase':'missing in Sheets'};
         return;
       }
       if(JSON.stringify(a)!==JSON.stringify(b)){
         differenceCount++;
-        if(!first){
-          first={id:id,reason:'field '+firstChangedField_(a,b)};
-        }
+        if(!first) first={id:id,reason:'field '+firstChangedField_(a,b)};
       }
     });
 
@@ -201,6 +204,14 @@
     };
   }
 
+  function rememberMembership_(result){
+    if(!DATA||!result||!result.membership) return;
+    DATA.supabaseItineraryMembership={
+      role:String(result.membership.role||'traveler'),
+      travelerLinked:Boolean(result.membership.travelerLinked)
+    };
+  }
+
   function recordResult_(result){
     const sheetItinerary=itinerary_((DATA&&DATA.itinerary)||[]);
     const sheetSignups=signups_((DATA&&DATA.itinerarySignups)||[]);
@@ -227,27 +238,66 @@
     ];
 
     storeSupabaseSnapshot_(result);
+    rememberMembership_(result);
     DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
     DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
     DATA.supabaseDomainSources.itinerary=matches
       ?'sheets+supabase-itinerary-shadow-match'
       :'sheets+supabase-itinerary-shadow-mismatch';
-    if(matches){
-      delete DATA.supabaseDomainDiagnostics.itinerary;
-    }else{
-      DATA.supabaseDomainDiagnostics.itinerary={
-        code:'shadow_mismatch',
-        sections:diffs
-      };
-    }
+    if(matches) delete DATA.supabaseDomainDiagnostics.itinerary;
+    else DATA.supabaseDomainDiagnostics.itinerary={code:'shadow_mismatch',sections:diffs};
 
     if(statusAnnounced||currentView!=='itinerary'||typeof toast!=='function') return;
     statusAnnounced=true;
-    if(matches){
-      toast('Supabase Itinerary check passed — data matches Sheets.');
-    }else{
-      toast(mismatchMessage_(diffs),true);
-    }
+    if(matches) toast('Supabase Itinerary check passed — data matches Sheets.');
+    else toast(mismatchMessage_(diffs),true);
+  }
+
+  function mergeSheetsBackup_(result){
+    if(!DATA||!result) return;
+    const currentItineraryComments=((DATA.plannerComments)||[]).filter(function(row){
+      return String(row['Planner Type']||'')==='Itinerary';
+    });
+    const sheetsOtherComments=((result.plannerComments)||[]).filter(function(row){
+      return String(row['Planner Type']||'')!=='Itinerary';
+    });
+
+    DATA.itinerarySheetsBackup={
+      itinerarySignups:(result.itinerarySignups||[]).map(function(row){return Object.assign({},row);}),
+      plannerComments:(result.plannerComments||[]).map(function(row){return Object.assign({},row);}),
+      capturedAt:String(result.serverTime||new Date().toISOString())
+    };
+
+    // Never let a background Sheets read overwrite Supabase-authoritative
+    // Itinerary signups/comments. Only the still-Sheets-backed planner comment
+    // sections (currently Meals) are merged into visible state.
+    DATA.plannerComments=sheetsOtherComments.concat(currentItineraryComments);
+
+    try{
+      if(typeof window.p2SupabaseItineraryAcceptSheetsBackup_==='function'){
+        window.p2SupabaseItineraryAcceptSheetsBackup_(DATA.itinerarySheetsBackup);
+      }
+    }catch(error){}
+  }
+
+  function refreshSheetsSocialBackup_(force){
+    if(!window.google||!google.script||!google.script.run) return;
+    if(sheetsBackupInFlight) return;
+    if(!force&&lastSheetsBackupAt&&Date.now()-lastSheetsBackupAt<SHEETS_BACKUP_TTL_MS) return;
+
+    sheetsBackupInFlight=true;
+    lastSheetsBackupAt=Date.now();
+    google.script.run
+      .withSuccessHandler(function(result){
+        mergeSheetsBackup_(result||{});
+        if(currentView==='meals') render();
+        sheetsBackupInFlight=false;
+      })
+      .withFailureHandler(function(error){
+        console.warn('Sheets rollback social snapshot could not be refreshed.',error);
+        sheetsBackupInFlight=false;
+      })
+      .getPlannerSocialData();
   }
 
   function recordPrimaryResult_(result){
@@ -262,6 +312,7 @@
     DATA.itinerarySignups=(result&&result.itinerarySignups)||[];
     DATA.plannerComments=nonItineraryComments.concat(supabaseComments);
     storeSupabaseSnapshot_(result);
+    rememberMembership_(result);
 
     DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
     DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
@@ -280,9 +331,14 @@
     }
 
     if(currentView==='itinerary') render();
+
+    // This is deliberately after the Supabase settle and never replaces
+    // visible Itinerary rows. Apps Script is now rollback/background only.
+    refreshSheetsSocialBackup_(false);
   }
 
   function recordFailure_(error){
+    if(!DATA) return;
     DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
     DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
     const code=String(error&&error.code||'bridge_error');
@@ -329,8 +385,6 @@
     if(currentView==='itinerary'&&typeof toast==='function'){
       toast('Supabase Itinerary read was unavailable ('+code+'). Using Sheets fallback.',true);
     }
-
-    requestSheetsFallback_();
   }
 
   function sheetsItineraryReady_(attempt,callback){
@@ -343,8 +397,7 @@
     if(
       attempt===0&&
       typeof loadDeferredPortalData_==='function'&&
-      typeof portalDeferredLoadBusy_!=='undefined'&&
-      !portalDeferredLoadBusy_
+      (typeof portalDeferredLoadBusy_==='undefined'||!portalDeferredLoadBusy_)
     ){
       try{loadDeferredPortalData_();}catch(error){}
     }
@@ -355,33 +408,25 @@
       callback(error);
       return;
     }
-
     setTimeout(function(){sheetsItineraryReady_(attempt+1,callback);},100);
   }
 
-  function socialReady_(attempt,callback){
-    attempt=Number(attempt||0);
-    if(
-      p2PlannerSocialState_&&
-      p2PlannerSocialState_.loaded===true&&
-      p2PlannerSocialState_.loading!==true&&
-      DATA&&
-      Array.isArray(DATA.itinerarySignups)&&
-      Array.isArray(DATA.plannerComments)
-    ){
-      callback(null);
-      return;
-    }
-    if(attempt>=75){
-      const error=new Error('Authoritative Sheets Itinerary social fallback data did not finish loading in time.');
-      error.code='sheets_social_not_ready';
-      callback(error);
-      return;
-    }
-    setTimeout(function(){socialReady_(attempt+1,callback);},100);
+  function activateSheetsFallback_(context,args){
+    if(sheetsFallbackInFlight) return;
+    sheetsFallbackInFlight=true;
+    requestSheetsFallback_();
+
+    sheetsItineraryReady_(0,function(sheetError){
+      sheetsFallbackInFlight=false;
+      if(sheetError){
+        recordFailure_(sheetError);
+        return;
+      }
+      legacyEnsure.apply(context,args||[]);
+    });
   }
 
-  function itineraryRead_(){
+  function itineraryRead_(context,args){
     if(readInFlight) return;
     if(lastReadAt&&Date.now()-lastReadAt<READ_TTL_MS) return;
     readInFlight=true;
@@ -397,6 +442,7 @@
       .catch(function(error){
         if(error&&error.primary===true){
           recordPrimaryFailure_(error);
+          activateSheetsFallback_(context,args);
           return;
         }
         recordFailure_(error);
@@ -427,30 +473,29 @@
     const context=this;
     const args=arguments;
 
-    if(currentView!=='itinerary'){
-      return legacyEnsure.apply(context,args);
-    }
-
-    if(sheetsReadinessInFlight) return;
-    sheetsReadinessInFlight=true;
-
-    sheetsItineraryReady_(0,function(sheetError){
-      if(sheetError){
-        sheetsReadinessInFlight=false;
-        recordFailure_(sheetError);
-        return;
+    if(currentView==='itinerary'){
+      const source=String(DATA&&DATA.supabaseDomainSources&&DATA.supabaseDomainSources.itinerary||'');
+      if(
+        source==='supabase-primary-fallback-sheets'&&
+        lastReadAt&&Date.now()-lastReadAt<READ_TTL_MS
+      ){
+        return legacyEnsure.apply(context,args);
       }
 
-      legacyEnsure.apply(context,args);
-      socialReady_(0,function(socialError){
-        sheetsReadinessInFlight=false;
-        if(socialError){
-          recordFailure_(socialError);
-          return;
-        }
-        itineraryRead_();
-      });
-    });
+      // Primary path: do not hydrate Sheets first. This prevents Apps Script
+      // and Supabase from alternately replacing the same visible records.
+      itineraryRead_(context,args);
+      return;
+    }
+
+    if(currentView==='meals'){
+      // Meals comments are still Sheets-backed in this slice. Refresh only
+      // that non-Itinerary comment data without overwriting Supabase Itinerary.
+      refreshSheetsSocialBackup_(false);
+      return;
+    }
+
+    return legacyEnsure.apply(context,args);
   };
 })();
 </script>
