@@ -13,8 +13,8 @@ const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.21'"),
-  'Itinerary primary-write release must bump the installed PWA cache key.'
+  config.includes("release: 'V4.4.0-alpha2.22'"),
+  'Itinerary comment-lifecycle release must bump the installed PWA cache key.'
 );
 assert(
   config.includes('itinerary:') &&
@@ -22,7 +22,7 @@ assert(
   config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
   config.includes('write: true'),
-  'Itinerary must use Supabase-primary reads and writes in alpha2.21.'
+  'Itinerary must use Supabase-primary reads and writes in alpha2.22.'
 );
 assert(
   config.includes('travelPlans:') && config.includes('packingItems:') &&
@@ -114,8 +114,9 @@ assert(
 assert(
   shell.includes("include('Client_Supabase_Itinerary_Bridge')") &&
   shell.includes("include('Client_Supabase_Itinerary_Write_Bridge')") &&
-  shell.includes("include('Client_Supabase_Itinerary_Concurrency_Bridge')"),
-  'The evaluated Apps Script shell must include all Itinerary cutover layers.'
+  shell.includes("include('Client_Supabase_Itinerary_Concurrency_Bridge')") &&
+  shell.includes("include('Client_Supabase_Itinerary_Comment_Lifecycle')"),
+  'The evaluated Apps Script shell must include all Itinerary cutover and comment-lifecycle layers.'
 );
 assert(
   plannerSocial.includes('function getPlannerSocialData()') &&
@@ -124,11 +125,12 @@ assert(
   'Sheets social loading must remain intact as rollback data and backup-token source.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-21') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-22') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-bridge.js')") &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
+  serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-comment-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The installed PWA must refresh both Itinerary bridges during guarded primary-write testing.'
+  'The installed PWA must refresh all Itinerary bridges during guarded primary-write testing.'
 );
 
 console.log('PASS Supabase Itinerary primary read/write guarded cutover read contract');
