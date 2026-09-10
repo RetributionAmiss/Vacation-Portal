@@ -12,11 +12,10 @@ window.VACATION_PORTAL_CONFIG = {
   supabaseUrl: 'https://rlmsojrxmrfawvdsodkk.supabase.co',
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
-  // Domain cutovers are release-level flags. Travel Plans, Packing, and now
-  // Itinerary use Supabase as the primary read/write source. Itinerary keeps
-  // its validated Sheets path available as a non-blocking rollback backup and
-  // automatically falls back to the Sheets-first path when Supabase reads are
-  // unavailable for the current runtime.
+  // Travel Plans, Packing, and Itinerary use Supabase as primary read/write
+  // sources. For Itinerary the browser now settles Supabase first; Apps Script
+  // / Sheets is refreshed afterward as rollback backup and is promoted only
+  // when a primary Supabase read fails for the current runtime.
   supabaseDomains: {
     travelPlans: {
       shadowRead: false,
@@ -41,7 +40,7 @@ window.VACATION_PORTAL_CONFIG = {
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.23'
+  release: 'V4.4.0-alpha2.24'
 };
 
 (function loadVacationSupabaseAuth_(){
