@@ -13,8 +13,8 @@ const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.22'"),
-  'Itinerary comment-lifecycle release must bump the installed PWA cache key.'
+  config.includes("release: 'V4.4.0-alpha2.23'"),
+  'Itinerary comment-lifecycle repair release must bump the installed PWA cache key.'
 );
 assert(
   config.includes('itinerary:') &&
@@ -22,7 +22,7 @@ assert(
   config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
   config.includes('write: true'),
-  'Itinerary must use Supabase-primary reads and writes in alpha2.22.'
+  'Itinerary must use Supabase-primary reads and writes in alpha2.23.'
 );
 assert(
   config.includes('travelPlans:') && config.includes('packingItems:') &&
@@ -125,7 +125,7 @@ assert(
   'Sheets social loading must remain intact as rollback data and backup-token source.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-22') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-23') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-bridge.js')") &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-comment-bridge.js')") &&
