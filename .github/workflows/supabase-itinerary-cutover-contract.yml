@@ -30,9 +30,13 @@ jobs:
         run: node --check supabase-itinerary-bridge.js
       - name: Validate Itinerary write host bridge syntax
         run: node --check supabase-itinerary-write-bridge.js
+      - name: Validate Itinerary comment host bridge syntax
+        run: node --check supabase-itinerary-comment-bridge.js
       - name: Run guarded Itinerary read cutover contract
         run: node tests/supabase_itinerary_read_cutover_contract.test.js
       - name: Run guarded Itinerary write cutover contract
         run: node tests/supabase_itinerary_write_cutover_contract.test.js
       - name: Run dual-source signup concurrency contract
         run: node tests/supabase_itinerary_concurrency_contract.test.js
+      - name: Run Itinerary comment lifecycle contract
+        run: node tests/supabase_itinerary_comment_lifecycle_contract.test.js
