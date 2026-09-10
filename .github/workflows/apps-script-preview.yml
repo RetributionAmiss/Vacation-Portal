@@ -1,22 +1,17 @@
-name: Apps Script Preview
+name: Apps Script Preview Verification
 
 on:
   push:
     branches:
       - test/supabase-itinerary-primary-write-preview
-    paths-ignore:
-      - config.js
 
 permissions:
   contents: read
 
 jobs:
-  deploy-preview:
-    name: Deploy Apps Script preview
+  verify-preview:
+    name: Verify Apps Script preview
     runs-on: ubuntu-latest
-    concurrency:
-      group: apps-script-itinerary-preview
-      cancel-in-progress: false
     env:
       APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
       CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
@@ -31,23 +26,28 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Verify deployment credentials and isolation
+      - name: Configure clasp authentication
         shell: bash
         run: |
-          if [[ -z "$APPS_SCRIPT_ID" ]]; then
-            echo "::error::Missing repository secret APPS_SCRIPT_ID."
-            exit 1
-          fi
-          if [[ -z "$CLASPRC_JSON" ]]; then
-            echo "::error::Missing repository secret CLASPRC_JSON."
+          if [[ -z "$APPS_SCRIPT_ID" || -z "$CLASPRC_JSON" ]]; then
+            echo "::error::Apps Script verification credentials are not configured."
             exit 1
           fi
           if [[ "$PREVIEW_DEPLOYMENT_ID" == "$PRODUCTION_DEPLOYMENT_ID" ]]; then
-            echo "::error::Preview deployment must never equal the production deployment."
+            echo "::error::Preview and production deployment IDs must differ."
             exit 1
           fi
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          node <<'NODE'
+          const fs = require('fs');
+          fs.writeFileSync('.clasp.json', JSON.stringify({
+            scriptId: process.env.APPS_SCRIPT_ID,
+            rootDir: '.'
+          }, null, 2) + '\n');
+          NODE
 
-      - name: Verify alpha2.22 preview shell configuration
+      - name: Verify alpha2.22 static preview configuration
         shell: bash
         run: |
           node <<'NODE'
@@ -55,127 +55,60 @@ jobs:
           const config = fs.readFileSync('config.js', 'utf8');
           const previewId = process.env.PREVIEW_DEPLOYMENT_ID;
           const productionId = process.env.PRODUCTION_DEPLOYMENT_ID;
-          if (!config.includes(`https://script.google.com/macros/s/${previewId}/exec`)) {
-            throw new Error('Preview config.js does not point to the isolated versioned /exec deployment.');
-          }
-          if (config.includes(`https://script.google.com/macros/s/${productionId}/exec`)) {
-            throw new Error('Preview config.js must not point to the production /exec deployment.');
-          }
-          if (!config.includes("release: 'V4.4.0-alpha2.22'")) {
-            throw new Error('Preview config.js is not the alpha2.22 release.');
-          }
-          if (!config.includes("script.src='./supabase-itinerary-comment-bridge.js?v='")) {
-            throw new Error('Preview shell is missing the Itinerary comment lifecycle host bridge.');
-          }
+          if (!config.includes(`https://script.google.com/macros/s/${previewId}/exec`)) throw new Error('Preview config does not use the isolated backend.');
+          if (config.includes(`https://script.google.com/macros/s/${productionId}/exec`)) throw new Error('Preview config points at production.');
+          if (!config.includes("release: 'V4.4.0-alpha2.22'")) throw new Error('Preview release is not alpha2.22.');
+          if (!config.includes('supabase-itinerary-comment-bridge.js')) throw new Error('Comment host bridge is missing.');
           NODE
 
-      - name: Configure clasp project and authentication
-        shell: bash
-        run: |
-          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
-          chmod 600 "$HOME/.clasprc.json"
-          node <<'NODE'
-          const fs = require('fs');
-          const authPath = `${process.env.HOME}/.clasprc.json`;
-          JSON.parse(fs.readFileSync(authPath, 'utf8'));
-          fs.writeFileSync(
-            '.clasp.json',
-            JSON.stringify({ scriptId: process.env.APPS_SCRIPT_ID, rootDir: '.' }, null, 2) + '\n'
-          );
-          NODE
-
-      - name: Verify web app manifest
-        shell: bash
-        run: |
-          node <<'NODE'
-          const fs = require('fs');
-          const manifest = JSON.parse(fs.readFileSync('appsscript.json', 'utf8'));
-          if (!manifest.webapp) throw new Error('appsscript.json is missing webapp configuration.');
-          if (manifest.webapp.access !== 'ANYONE_ANONYMOUS') throw new Error('Preview web app access must match production.');
-          if (manifest.webapp.executeAs !== 'USER_DEPLOYING') throw new Error('Preview web app must execute as deploying account.');
-          NODE
-
-      - name: Verify clasp authentication and push scope
-        run: npx --yes @google/clasp@3.4.0 status
-
-      - name: Verify production guard before deployment
+      - name: Wait for deployment metadata to show preview @202
         shell: bash
         run: |
           set -euo pipefail
-          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
-          printf '%s\n' "$deployments"
-          if ! grep -Fq "$PREVIEW_DEPLOYMENT_ID @201" <<<"$deployments"; then
-            echo "::error::Isolated preview deployment is not at expected pre-deploy version 201."
-            exit 1
-          fi
-          if ! grep -Fq "$PRODUCTION_DEPLOYMENT_ID @199" <<<"$deployments"; then
-            echo "::error::Production deployment is not still pinned to expected version 199."
-            exit 1
-          fi
+          for attempt in $(seq 1 12); do
+            deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+            if grep -Fq "$PREVIEW_DEPLOYMENT_ID @202" <<<"$deployments" && \
+               grep -Fq "$PRODUCTION_DEPLOYMENT_ID @199" <<<"$deployments"; then
+              echo "$deployments"
+              echo "Verified preview @202 and production @199."
+              exit 0
+            fi
+            echo "Deployment metadata has not converged yet (${attempt}/12)."
+            sleep 5
+          done
+          echo "$deployments"
+          echo "::error::Could not verify preview @202 with production still @199."
+          exit 1
 
-      - name: Push alpha2.22 preview to Apps Script HEAD
-        run: npx --yes @google/clasp@3.4.0 push --force
-
-      - name: Update isolated preview deployment
-        id: deploy
+      - name: Smoke test alpha2.22 preview web app
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$PREVIEW_DEPLOYMENT_ID" == "$PRODUCTION_DEPLOYMENT_ID" ]]; then
-            echo "::error::Refusing to update production from preview workflow."
-            exit 1
-          fi
-          output="$(npx --yes @google/clasp@3.4.0 deploy -i "$PREVIEW_DEPLOYMENT_ID" -d "Itinerary alpha2.22 comment lifecycle preview ${GITHUB_SHA:0:12}")"
-          printf '%s\n' "$output"
           preview_url="https://script.google.com/macros/s/${PREVIEW_DEPLOYMENT_ID}/exec"
-          echo "PREVIEW_URL=$preview_url" >> "$GITHUB_ENV"
-          echo "Preview Apps Script URL: $preview_url"
-
-      - name: Verify preview version and production isolation
-        shell: bash
-        run: |
-          set -euo pipefail
-          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
-          printf '%s\n' "$deployments"
-          if ! grep -Fq "$PREVIEW_DEPLOYMENT_ID @202" <<<"$deployments"; then
-            echo "::error::Preview deployment did not advance to expected version 202."
-            exit 1
-          fi
-          if ! grep -Fq "$PRODUCTION_DEPLOYMENT_ID @199" <<<"$deployments"; then
-            echo "::error::Production deployment changed during preview deployment."
-            exit 1
-          fi
-          echo "Verified preview @202 and production still @199."
-
-      - name: Smoke test preview web app
-        shell: bash
-        run: |
-          smoke_url="${PREVIEW_URL}?deploymentSmoke=${GITHUB_SHA}"
+          smoke_url="${preview_url}?deploymentSmoke=${GITHUB_SHA}"
           for attempt in $(seq 1 12); do
             body_file="$(mktemp)"
-            meta="$(curl -L -sS --max-time 20 -o "$body_file" -w '%{http_code}|%{url_effective}|%{content_type}' "$smoke_url" || true)"
-            body="$(cat "$body_file")"
-            if grep -Fq 'Family Vacation Portal' <<<"$body" && \
-               grep -Fq 'loadingScreen' <<<"$body" && \
-               grep -Fq 'Opening the family portal' <<<"$body"; then
-              echo "Preview web app returned the expected portal shell."
+            curl -L -sS --max-time 20 -o "$body_file" "$smoke_url" || true
+            if grep -Fq 'Family Vacation Portal' "$body_file" && \
+               grep -Fq 'loadingScreen' "$body_file" && \
+               grep -Fq 'deleteP2PlannerComment_' "$body_file" && \
+               grep -Fq 'Supabase Itinerary comment removal passed' "$body_file"; then
+              echo "Preview /exec returned the alpha2.22 portal shell with comment lifecycle code."
               rm -f "$body_file"
               exit 0
             fi
-            echo "Smoke test attempt ${attempt}/12 did not return the portal shell. ${meta}"
             rm -f "$body_file"
+            echo "Preview shell has not converged yet (${attempt}/12)."
             sleep 5
           done
-          echo "::error::Preview Apps Script /exec URL did not return the Family Vacation Portal shell."
+          echo "::error::Preview /exec did not expose the alpha2.22 comment lifecycle shell."
           exit 1
 
-      - name: Record preview summary
+      - name: Record verification summary
         shell: bash
         run: |
-          echo "### Apps Script alpha2.22 preview ready" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Isolated preview deployment: \`${PREVIEW_DEPLOYMENT_ID}\` @202" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Preview Apps Script URL: ${PREVIEW_URL}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Production deployment \`${PRODUCTION_DEPLOYMENT_ID}\` remains @199 and was not updated." >> "$GITHUB_STEP_SUMMARY"
-          echo "- Preview shell is V4.4.0-alpha2.22 and loads the Itinerary comment lifecycle bridge." >> "$GITHUB_STEP_SUMMARY"
-          echo "- Preview /exec smoke test passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "### Alpha2.22 preview verified" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Apps Script preview deployment is @202." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Production deployment remains @199." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Preview /exec contains the comment lifecycle UI/delete code." >> "$GITHUB_STEP_SUMMARY"
+          echo "- This workflow performs verification only and creates no Apps Script version." >> "$GITHUB_STEP_SUMMARY"
