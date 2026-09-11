@@ -1,0 +1,173 @@
+name: Apps Script Alpha2.26 Meals Preview
+
+on:
+  push:
+    branches:
+      - test/supabase-meals-alpha2-26-preview
+    paths:
+      - .github/workflows/apps-script-alpha2-26-meals-preview.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: apps-script-meals-alpha2-26-preview
+      cancel-in-progress: false
+    env:
+      APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      PREVIEW_DEPLOYMENT_ID: AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg
+      PRODUCTION_DEPLOYMENT_ID: AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA
+      EXPECTED_PREVIEW_VERSION: '206'
+      EXPECTED_PRODUCTION_VERSION: '207'
+    steps:
+      - name: Check out alpha2.26 preview
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify alpha2.26 source configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs');
+          const config=fs.readFileSync('config.js','utf8');
+          const production=process.env.PRODUCTION_DEPLOYMENT_ID;
+          if(!config.includes("release: 'V4.4.0-alpha2.26'")) throw new Error('Preview source is not alpha2.26.');
+          if(!config.includes(`https://script.google.com/macros/s/${production}/exec`)) throw new Error('Feature source no longer retains the production portal URL.');
+          if(!config.includes('meals: {')) throw new Error('Meals primary flags are missing.');
+          if(!config.includes("script.src='./supabase-meals-bridge.js?v='")) throw new Error('Meals host bridge loader is missing.');
+          NODE
+
+      - name: Run Meals and accepted regression contracts
+        run: |
+          set -euo pipefail
+          node --check supabase-meals-bridge.js
+          node --check supabase-planner-comments-bridge.js
+          node --check supabase-itinerary-bridge.js
+          node --check supabase-itinerary-write-bridge.js
+          node --check supabase-itinerary-comment-bridge.js
+          node tests/supabase_meals_cutover_contract.test.js
+          node tests/supabase_meals_rollback_idempotency_contract.test.js
+          node tests/supabase_planner_comments_cutover_contract.test.js
+          node tests/supabase_itinerary_read_cutover_contract.test.js
+          node tests/supabase_itinerary_write_cutover_contract.test.js
+          node tests/supabase_itinerary_concurrency_contract.test.js
+          node tests/supabase_itinerary_comment_lifecycle_contract.test.js
+
+      - name: Configure clasp
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APPS_SCRIPT_ID"
+          test -n "$CLASPRC_JSON"
+          test "$PREVIEW_DEPLOYMENT_ID" != "$PRODUCTION_DEPLOYMENT_ID"
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          node <<'NODE'
+          const fs=require('fs');
+          JSON.parse(fs.readFileSync(`${process.env.HOME}/.clasprc.json`,'utf8'));
+          fs.writeFileSync('.clasp.json',JSON.stringify({scriptId:process.env.APPS_SCRIPT_ID,rootDir:'.'},null,2)+'\n');
+          NODE
+
+      - name: Guard version capacity and deployment isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          versions="$(npx --yes @google/clasp@3.4.0 versions)"
+          deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+          count="$(grep -Ec '^[0-9]+ - ' <<<"$versions" || true)"
+          highest="$(awk '/^[0-9]+ - /{print $1}' <<<"$versions" | sort -n | tail -1)"
+          echo "Stored Apps Script versions: $count; highest before preview: $highest"
+          [[ "$count" -lt 200 ]] || { echo '::error::Apps Script version capacity is full.'; exit 1; }
+          [[ -n "$highest" ]] || { echo '::error::Could not resolve current Apps Script version inventory.'; exit 1; }
+
+          preview_line="$(grep -F "$PREVIEW_DEPLOYMENT_ID" <<<"$deployments" || true)"
+          production_line="$(grep -F "$PRODUCTION_DEPLOYMENT_ID" <<<"$deployments" || true)"
+          echo "$preview_line"
+          echo "$production_line"
+          grep -Fq "@${EXPECTED_PREVIEW_VERSION}" <<<"$preview_line" || { echo "::error::Preview is not on expected @${EXPECTED_PREVIEW_VERSION}."; exit 1; }
+          grep -Fq "@${EXPECTED_PRODUCTION_VERSION}" <<<"$production_line" || { echo "::error::Production is not on expected @${EXPECTED_PRODUCTION_VERSION}."; exit 1; }
+          echo "BEFORE_HIGHEST=$highest" >> "$GITHUB_ENV"
+
+      - name: Verify clasp push scope
+        run: npx --yes @google/clasp@3.4.0 status
+
+      - name: Push exact alpha2.26 source to Apps Script HEAD
+        run: npx --yes @google/clasp@3.4.0 push --force
+
+      - name: Create alpha2.26 version on isolated preview deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(npx --yes @google/clasp@3.4.0 deploy -i "$PREVIEW_DEPLOYMENT_ID" -d "Meals alpha2.26 Supabase primary ${GITHUB_SHA:0:12}")"
+          printf '%s\n' "$output"
+          new_version="$(sed -n 's/.*@\([0-9][0-9]*\).*/\1/p' <<<"$output" | tail -1)"
+          [[ -n "$new_version" ]] || { echo '::error::Could not parse new preview version from clasp deploy output.'; exit 1; }
+          (( new_version > BEFORE_HIGHEST )) || { echo "::error::New preview version $new_version is not newer than prior highest $BEFORE_HIGHEST."; exit 1; }
+          echo "NEW_PREVIEW_VERSION=$new_version" >> "$GITHUB_ENV"
+
+      - name: Wait for new preview version and guard production
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 15); do
+            deployments="$(npx --yes @google/clasp@3.4.0 deployments)"
+            preview_line="$(grep -F "$PREVIEW_DEPLOYMENT_ID" <<<"$deployments" || true)"
+            production_line="$(grep -F "$PRODUCTION_DEPLOYMENT_ID" <<<"$deployments" || true)"
+            if grep -Fq "@${NEW_PREVIEW_VERSION}" <<<"$preview_line" && grep -Fq "@${EXPECTED_PRODUCTION_VERSION}" <<<"$production_line"; then
+              echo "$preview_line"
+              echo "$production_line"
+              exit 0
+            fi
+            echo "Waiting for deployment metadata ($attempt/15)..."
+            sleep 5
+          done
+          echo "$deployments"
+          echo "::error::Could not verify preview @${NEW_PREVIEW_VERSION} with production still @${EXPECTED_PRODUCTION_VERSION}."
+          exit 1
+
+      - name: Smoke test alpha2.26 served Meals authority markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          preview_url="https://script.google.com/macros/s/${PREVIEW_DEPLOYMENT_ID}/exec"
+          smoke_url="${preview_url}?deploymentSmoke=${GITHUB_SHA}"
+          for attempt in $(seq 1 15); do
+            body_file="$(mktemp)"
+            curl -L -sS --max-time 20 -o "$body_file" "$smoke_url" || true
+            if grep -Fq 'Family Vacation Portal' "$body_file" && \
+               grep -Fq 'Supabase Meals primary read passed' "$body_file" && \
+               grep -Fq 'supabaseMealsShadow' "$body_file" && \
+               grep -Fq 'supabase-primary-fallback-sheets' "$body_file" && \
+               grep -Fq 'saveMealBackup' "$body_file" && \
+               grep -Fq 'Removing Meal from Supabase' "$body_file"; then
+              echo "Preview /exec returned alpha2.26 Meals authority markers at @${NEW_PREVIEW_VERSION}."
+              rm -f "$body_file"
+              exit 0
+            fi
+            rm -f "$body_file"
+            echo "Preview shell has not converged yet ($attempt/15)..."
+            sleep 5
+          done
+          echo '::error::Preview /exec did not expose expected alpha2.26 Meals authority markers.'
+          exit 1
+
+      - name: Record preview summary
+        shell: bash
+        run: |
+          echo '### Alpha2.26 Supabase-primary Meals preview' >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Isolated preview deployment: @${NEW_PREVIEW_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Production deployment remains @${EXPECTED_PRODUCTION_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo '- Meals records read/write/delete settle from Supabase before Sheets rollback work' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Version concurrency and rollback idempotency regression contracts passed before deploy' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Manual browser verification remains required before PR #65 can merge' >> "$GITHUB_STEP_SUMMARY"
