@@ -1,0 +1,33 @@
+<script>
+/* Keep Supabase-authoritative Meal comments visible even if another planner
+ * background task refreshes the shared Sheets social snapshot while the Meal
+ * read is still inside its TTL. This wrapper owns no writes and does not alter
+ * the accepted Itinerary authority path. */
+(function installSupabasePlannerCommentsSnapshotGuard_(){
+  if(window.__vacationSupabasePlannerCommentsSnapshotGuardInstalled) return;
+  if(typeof p2PlannerEnsureSocialData_!=='function') return;
+  window.__vacationSupabasePlannerCommentsSnapshotGuardInstalled=true;
+
+  const inheritedEnsure=p2PlannerEnsureSocialData_;
+
+  function restorePrimaryMealComments_(){
+    if(!DATA||currentView!=='meals') return;
+    const source=String(DATA.supabaseDomainSources&&DATA.supabaseDomainSources.plannerComments||'');
+    if(source!=='supabase-primary') return;
+    const shadow=DATA.supabasePlannerCommentsShadow;
+    if(!shadow||!Array.isArray(shadow.Meals)) return;
+
+    const nonMeals=(DATA.plannerComments||[]).filter(function(row){
+      return String(row&&row['Planner Type']||'')!=='Meals';
+    });
+    DATA.plannerComments=nonMeals.concat(
+      shadow.Meals.map(function(row){return Object.assign({},row);})
+    );
+  }
+
+  p2PlannerEnsureSocialData_=function(){
+    restorePrimaryMealComments_();
+    return inheritedEnsure.apply(this,arguments);
+  };
+})();
+</script>
