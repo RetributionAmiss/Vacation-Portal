@@ -19,13 +19,16 @@ assert.doesNotThrow(
   'Comment lifecycle bridge must remain valid browser JavaScript.'
 );
 
+const releaseMatch = config.match(/release:\s*'V4\.4\.0-alpha2\.(\d+)'/);
+assert(releaseMatch, 'A V4.4.0-alpha2.x release marker is required.');
+const releaseNumber = Number(releaseMatch[1]);
 assert(
-  config.includes("release: 'V4.4.0-alpha2.27'") &&
+  releaseNumber >= 27 &&
   config.includes("script.src='./supabase-itinerary-comment-bridge.js?v='"),
-  'alpha2.27 must keep loading the release-versioned Supabase Itinerary comment bridge.'
+  'alpha2.27 and later releases must keep loading the release-versioned Supabase Itinerary comment bridge.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-27') &&
+  serviceWorker.includes(`family-vacation-pwa-v4-4-0-alpha2-${releaseNumber}`) &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-comment-bridge.js')"),
   'The installed PWA must keep the Itinerary comment bridge network-first.'
 );
