@@ -22,18 +22,21 @@ assert.doesNotThrow(() => new Function(clientJs[1]), 'Grocery client bridge must
 const hostForSyntax = host.replace(/^import[^\n]*\n/, '');
 assert.doesNotThrow(() => new Function(hostForSyntax), 'Grocery host bridge must remain valid browser module JavaScript after removing its import line.');
 
+const releaseMatch = config.match(/release:\s*'V4\.4\.0-alpha2\.(\d+)'/);
+assert(releaseMatch, 'A V4.4.0-alpha2.x release marker is required.');
+const releaseNumber = Number(releaseMatch[1]);
 assert(
-  config.includes("release: 'V4.4.0-alpha2.27'") &&
+  releaseNumber >= 27 &&
   config.includes('groceryItems: {') &&
   config.includes('shadowRead: false') &&
   config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
   config.includes('write: true'),
-  'alpha2.27 must enable Supabase-primary Grocery List reads and writes.'
+  'alpha2.27 and later releases must preserve Supabase-primary Grocery List reads and writes.'
 );
 assert(
   config.includes("script.src='./supabase-groceries-bridge.js?v='") &&
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-27') &&
+  serviceWorker.includes(`family-vacation-pwa-v4-4-0-alpha2-${releaseNumber}`) &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-groceries-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
   'The release-versioned Grocery host bridge must be network-first in the installed PWA.'
