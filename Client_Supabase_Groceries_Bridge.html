@@ -1,0 +1,442 @@
+<script>
+/* Supabase-primary Grocery List cutover.
+ * Healthy Grocery loads/writes settle from Supabase first. Apps Script / Sheets
+ * remains a nonblocking rollback copy. Existing shared-traveler Grocery behavior
+ * is preserved; this bridge does not infer organizer authority from client state.
+ */
+(function installSupabaseGroceriesBridge_(){
+  if(window.__vacationSupabaseGroceriesBridgeInstalled) return;
+  if(typeof renderP2Groceries_!=='function'||typeof savePlannerForm!=='function'||typeof deletePlannerItem_!=='function') return;
+  if(typeof plannerObjectFromForm_!=='function'||typeof quickSetGroceryBringing_!=='function'||typeof quickSetP2GroceryPurchased_!=='function') return;
+  window.__vacationSupabaseGroceriesBridgeInstalled=true;
+
+  const REQUEST_TYPE='vacation-portal-supabase-groceries-request';
+  const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
+  const OP_READ='groceries.read';
+  const OP_UPSERT='groceries.upsert';
+  const OP_DELETE='groceries.delete';
+  const REQUEST_TIMEOUT_MS=6500;
+  const READ_TTL_MS=15000;
+  const SHEETS_BACKUP_TTL_MS=30000;
+  const pending={};
+  const inheritedRenderGroceries=renderP2Groceries_;
+  const inheritedSavePlannerForm=savePlannerForm;
+  const inheritedDeletePlannerItem=deletePlannerItem_;
+  const inheritedQuickSetBringing=quickSetGroceryBringing_;
+  const inheritedQuickSetPurchased=quickSetP2GroceryPurchased_;
+  let readInFlight=false;
+  let lastReadAt=0;
+  let sheetsBackupInFlight=false;
+  let lastSheetsBackupAt=0;
+  let readStatusAnnounced=false;
+
+  function requestId_(){
+    return 'supa-grocery-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  }
+
+  function stableGroceryId_(){
+    const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let suffix='';
+    try{
+      if(window.crypto&&window.crypto.getRandomValues){
+        const bytes=new Uint8Array(10);
+        window.crypto.getRandomValues(bytes);
+        for(let i=0;i<bytes.length;i++) suffix+=alphabet[bytes[i]%alphabet.length];
+      }
+    }catch(error){}
+    while(suffix.length<10) suffix+=alphabet[Math.floor(Math.random()*alphabet.length)];
+    return 'GROCERY-'+suffix.slice(0,10);
+  }
+
+  function hostTargets_(){
+    const targets=[];
+    try{if(window.parent&&window.parent!==window) targets.push(window.parent);}catch(error){}
+    try{if(window.top&&window.top!==window&&targets.indexOf(window.top)===-1) targets.push(window.top);}catch(error){}
+    return targets;
+  }
+
+  function request_(operation,data,writeMode){
+    return new Promise(function(resolve,reject){
+      const targets=hostTargets_();
+      if(!targets.length){
+        const error=new Error('Supabase Grocery bridge is unavailable.');
+        error.code='bridge_no_host';
+        reject(error);
+        return;
+      }
+
+      const id=requestId_();
+      const timer=setTimeout(function(){
+        delete pending[id];
+        const error=new Error('Supabase Grocery bridge timed out.');
+        error.code='bridge_timeout';
+        reject(error);
+      },REQUEST_TIMEOUT_MS);
+
+      pending[id]={
+        resolve:function(value){clearTimeout(timer);resolve(value);},
+        reject:function(error){clearTimeout(timer);reject(error);}
+      };
+
+      const payload={type:REQUEST_TYPE,requestId:id,operation:String(operation||''),data:data||{}};
+      if(writeMode) payload.writeMode=String(writeMode);
+      targets.forEach(function(target){try{target.postMessage(payload,'*');}catch(error){}});
+    });
+  }
+
+  window.addEventListener('message',function(event){
+    const data=event&&event.data||{};
+    if(data.type!==RESPONSE_TYPE) return;
+    if(event.source!==window.parent&&event.source!==window.top) return;
+    const id=String(data.requestId||'');
+    const waiter=pending[id];
+    if(!waiter) return;
+    delete pending[id];
+
+    if(data.ok){
+      waiter.resolve(data.data||{});
+      return;
+    }
+    const error=new Error(data.error&&data.error.message?String(data.error.message):'Supabase Grocery request failed.');
+    error.code=String(data.error&&data.error.code||'bridge_error');
+    waiter.reject(error);
+  });
+
+  function source_(){
+    return String(DATA&&DATA.supabaseDomainSources&&DATA.supabaseDomainSources.groceryItems||'');
+  }
+
+  function primarySource_(){
+    return source_()==='supabase-primary';
+  }
+
+  function cloneRows_(rows){
+    return (rows||[]).map(function(row){return Object.assign({},row);});
+  }
+
+  function normalizedYesNo_(value){
+    return String(value||'').trim().toLowerCase()==='yes'?'Yes':'No';
+  }
+
+  function comparableGrocery_(row){
+    return row?{
+      id:String(row['Grocery ID']||''),
+      storeSection:String(row['Store Section']||'').trim(),
+      category:String(row.Category||'').trim(),
+      item:String(row.Item||'').trim(),
+      quantity:String(row.Quantity||'').trim(),
+      bringing:normalizedYesNo_(row.Bringing),
+      broughtBy:String(row['Brought By']||'').trim(),
+      assignedTo:String(row['Assigned To']||'').trim(),
+      purchased:normalizedYesNo_(row.Purchased),
+      notes:String(row.Notes||'')
+    }:null;
+  }
+
+  function sameGrocery_(a,b){
+    return JSON.stringify(comparableGrocery_(a))===JSON.stringify(comparableGrocery_(b));
+  }
+
+  function rememberMembership_(result){
+    if(!DATA||!result||!result.membership) return;
+    DATA.supabaseGroceriesMembership={
+      role:String(result.membership.role||'traveler'),
+      travelerLinked:Boolean(result.membership.travelerLinked)
+    };
+  }
+
+  function settleGroceries_(result){
+    if(!DATA) return;
+    const groceries=cloneRows_((result&&result.groceries)||[]);
+    DATA.groceries=groceries;
+    DATA.supabaseGroceriesShadow=cloneRows_(groceries);
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.groceryItems='supabase-primary';
+    delete DATA.supabaseDomainDiagnostics.groceryItems;
+    rememberMembership_(result);
+  }
+
+  function reapplyPrimarySnapshot_(){
+    if(!DATA||!primarySource_()||!Array.isArray(DATA.supabaseGroceriesShadow)) return;
+    DATA.groceries=cloneRows_(DATA.supabaseGroceriesShadow);
+  }
+
+  function setOptimisticRows_(rows){
+    if(!DATA) return;
+    DATA.groceries=cloneRows_(rows);
+    DATA.supabaseGroceriesShadow=cloneRows_(rows);
+  }
+
+  function storeSheetsBackup_(result){
+    if(!DATA) return;
+    DATA.groceriesSheetsBackup={
+      groceries:cloneRows_((result&&result.groceries)||[]),
+      capturedAt:String(result&&result.serverTime||new Date().toISOString())
+    };
+  }
+
+  function refreshSheetsBackup_(force){
+    if(!window.google||!google.script||!google.script.run) return;
+    if(sheetsBackupInFlight) return;
+    if(!force&&lastSheetsBackupAt&&Date.now()-lastSheetsBackupAt<SHEETS_BACKUP_TTL_MS) return;
+    sheetsBackupInFlight=true;
+    lastSheetsBackupAt=Date.now();
+    google.script.run
+      .withSuccessHandler(function(result){storeSheetsBackup_(result||{});sheetsBackupInFlight=false;})
+      .withFailureHandler(function(error){console.warn('Sheets Grocery rollback snapshot could not be refreshed.',error);sheetsBackupInFlight=false;})
+      .getGroceriesBackup();
+  }
+
+  function recordPrimaryFailure_(error){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.groceryItems='supabase-primary-fallback-sheets';
+    DATA.supabaseDomainDiagnostics.groceryItems={
+      code:String(error&&error.code||'bridge_error'),
+      message:String(error&&error.message||'Supabase Grocery primary read failed.')
+    };
+    if(currentView==='groceries'&&typeof toast==='function'){
+      toast('Supabase Grocery read was unavailable ('+String(error&&error.code||'bridge_error')+'). Using Sheets fallback.',true);
+    }
+  }
+
+  function requestSheetsFallback_(){
+    try{
+      if(typeof loadDeferredPortalData_==='function'&&(typeof portalDeferredLoadBusy_==='undefined'||!portalDeferredLoadBusy_)){
+        loadDeferredPortalData_();
+      }
+    }catch(error){}
+  }
+
+  function startPrimaryRead_(){
+    if(readInFlight) return;
+    if(lastReadAt&&Date.now()-lastReadAt<READ_TTL_MS) return;
+    readInFlight=true;
+    lastReadAt=Date.now();
+    request_(OP_READ,{})
+      .then(function(result){
+        if(!result||result.primary!==true){
+          const error=new Error('Supabase Grocery List is not configured as primary.');
+          error.code='primary_disabled';
+          throw error;
+        }
+        settleGroceries_(result);
+        if(!readStatusAnnounced&&currentView==='groceries'&&typeof toast==='function'){
+          readStatusAnnounced=true;
+          toast('Supabase Grocery primary read passed — loaded from Supabase.');
+        }
+        if(currentView==='groceries') render();
+        refreshSheetsBackup_(false);
+      })
+      .catch(function(error){
+        recordPrimaryFailure_(error);
+        requestSheetsFallback_();
+        if(currentView==='groceries') render();
+      })
+      .then(function(){readInFlight=false;},function(){readInFlight=false;});
+  }
+
+  function loadingView_(){
+    return '<section class="view p2-planner-view"><div class="panel p2-planner-panel"><div class="p2-empty-card"><strong>Loading groceries from Supabase…</strong><span>Checking the shared shopping list.</span></div></div></section>';
+  }
+
+  renderP2Groceries_=function(){
+    const source=source_();
+    if(source==='supabase-primary'){
+      reapplyPrimarySnapshot_();
+      return inheritedRenderGroceries.apply(this,arguments);
+    }
+    if(source==='supabase-primary-fallback-sheets'){
+      requestSheetsFallback_();
+      if(DATA&&DATA.deferredLoaded===true) return inheritedRenderGroceries.apply(this,arguments);
+      return loadingView_();
+    }
+    startPrimaryRead_();
+    return loadingView_();
+  };
+
+  function recordBackupResult_(label,matches){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.groceryItemsWrite=matches?'supabase-primary+sheets-backup-match':'supabase-primary+sheets-backup-mismatch';
+    if(matches){
+      delete DATA.supabaseDomainDiagnostics.groceryItemsBackup;
+      if(typeof toast==='function') toast('Supabase Grocery '+label+' passed — Sheets backup matches.');
+      return;
+    }
+    DATA.supabaseDomainDiagnostics.groceryItemsBackup={
+      code:'backup_mismatch',
+      operation:label,
+      message:'The Sheets rollback copy does not match the primary Supabase Grocery mutation.'
+    };
+    if(typeof toast==='function') toast('Supabase Grocery '+label+' passed, but Sheets backup differs.',true);
+  }
+
+  function recordBackupFailure_(label,error){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.groceryItemsWrite='supabase-primary+sheets-backup-unavailable';
+    DATA.supabaseDomainDiagnostics.groceryItemsBackup={
+      code:String(error&&error.code||'sheets_backup_error'),
+      operation:label,
+      message:String(error&&error.message||'Sheets Grocery backup failed.')
+    };
+    if(typeof toast==='function') toast('Supabase Grocery '+label+' passed. Sheets backup sync was unavailable.',true);
+  }
+
+  function backupSave_(grocery){
+    const payload=Object.assign({},grocery,{requestId:requestId_()});
+    google.script.run
+      .withSuccessHandler(function(saved){
+        recordBackupResult_('save',sameGrocery_(grocery,saved));
+        refreshSheetsBackup_(true);
+      })
+      .withFailureHandler(function(error){recordBackupFailure_('save',error);})
+      .saveGrocery(payload);
+  }
+
+  function verifySheetsDelete_(groceryId,onSuccess,onFailure){
+    google.script.run
+      .withSuccessHandler(function(result){
+        const exists=((result&&result.groceries)||[]).some(function(row){
+          return String(row['Grocery ID']||'')===String(groceryId||'');
+        });
+        if(exists){onFailure(new Error('Sheets backup still contains the removed Grocery item.'));return;}
+        storeSheetsBackup_(result||{});
+        onSuccess();
+      })
+      .withFailureHandler(onFailure)
+      .getGroceriesBackup();
+  }
+
+  function backupDelete_(groceryId){
+    google.script.run
+      .withSuccessHandler(function(){
+        verifySheetsDelete_(groceryId,function(){recordBackupResult_('removal',true);},function(error){recordBackupFailure_('removal',error);});
+      })
+      .withFailureHandler(function(error){
+        // A retry can legitimately find the row already absent. Verify the
+        // rollback copy before reporting a failure so delete remains idempotent.
+        verifySheetsDelete_(groceryId,function(){recordBackupResult_('removal',true);},function(){recordBackupFailure_('removal',error);});
+      })
+      .deletePlannerItem('Grocery List',String(groceryId||''));
+  }
+
+  function primarySave_(event){
+    event.preventDefault();
+    const grocery=plannerObjectFromForm_('Grocery List');
+    const rows=(DATA&&DATA.groceries)||[];
+    const existingId=String(grocery['Grocery ID']||'');
+    const previous=cloneRows_(rows);
+    const existing=existingId?rows.find(function(row){return String(row['Grocery ID']||'')===existingId;}):null;
+    if(!existingId) grocery['Grocery ID']=stableGroceryId_();
+    if(existing&&Number(existing.Version||0)>0) grocery.Version=Number(existing.Version);
+
+    optimisticPlannerRecord_('Grocery List',grocery);
+    setOptimisticRows_(DATA.groceries||[]);
+    closeModal();
+    render();
+    if(typeof toast==='function') toast('Grocery item saved to Supabase. Updating the rollback copy in the background…');
+
+    request_(OP_UPSERT,{grocery:grocery},'primary')
+      .then(function(result){
+        settleGroceries_(result);
+        const saved=(DATA.groceries||[]).find(function(row){return String(row['Grocery ID']||'')===String(grocery['Grocery ID']||'');})||grocery;
+        if(currentView==='groceries') render();
+        backupSave_(saved);
+      })
+      .catch(function(error){
+        setOptimisticRows_(previous);
+        if(currentView==='groceries') render();
+        toast(error&&error.message?error.message:String(error),true);
+      });
+  }
+
+  savePlannerForm=function(event,name){
+    if(String(name||'')!=='Grocery List') return inheritedSavePlannerForm.apply(this,arguments);
+    if(source_()==='supabase-primary-fallback-sheets') return inheritedSavePlannerForm.apply(this,arguments);
+    return primarySave_(event);
+  };
+
+  function primaryDelete_(id){
+    const rows=(DATA&&DATA.groceries)||[];
+    const existing=rows.find(function(row){return String(row['Grocery ID']||'')===String(id||'');});
+    if(!existing){toast('Grocery item could not be found.',true);return;}
+    const previous=cloneRows_(rows);
+    const input=Object.assign({},existing);
+    setOptimisticRows_(rows.filter(function(row){return String(row['Grocery ID']||'')!==String(id||'');}));
+    closeModal();
+    render();
+    if(typeof toast==='function') toast('Removing Grocery item from Supabase…');
+
+    request_(OP_DELETE,{grocery:input},'primary')
+      .then(function(result){
+        settleGroceries_(result);
+        if(currentView==='groceries') render();
+        backupDelete_(id);
+      })
+      .catch(function(error){
+        setOptimisticRows_(previous);
+        if(currentView==='groceries') render();
+        toast(error&&error.message?error.message:String(error),true);
+      });
+  }
+
+  deletePlannerItem_=function(name,id){
+    if(String(name||'')!=='Grocery List') return inheritedDeletePlannerItem.apply(this,arguments);
+    if(source_()==='supabase-primary-fallback-sheets') return inheritedDeletePlannerItem.apply(this,arguments);
+    return primaryDelete_(id);
+  };
+
+  function primaryQuickSave_(id,mutator,successText){
+    if(!primarySource_()){
+      startPrimaryRead_();
+      if(typeof toast==='function') toast('Grocery List is still loading from Supabase.',true);
+      return;
+    }
+    const rows=(DATA&&DATA.groceries)||[];
+    const index=rows.findIndex(function(row){return String(row['Grocery ID']||'')===String(id||'');});
+    if(index<0) return;
+    const previous=cloneRows_(rows);
+    const updated=Object.assign({},rows[index]);
+    mutator(updated);
+    const next=cloneRows_(rows);
+    next[index]=updated;
+    setOptimisticRows_(next);
+    if(currentView==='groceries') render();
+
+    request_(OP_UPSERT,{grocery:updated},'primary')
+      .then(function(result){
+        settleGroceries_(result);
+        const saved=(DATA.groceries||[]).find(function(row){return String(row['Grocery ID']||'')===String(id||'');})||updated;
+        if(currentView==='groceries') render();
+        if(typeof toast==='function'&&successText) toast(successText+' Saving the rollback copy…');
+        backupSave_(saved);
+      })
+      .catch(function(error){
+        setOptimisticRows_(previous);
+        if(currentView==='groceries') render();
+        toast(error&&error.message?error.message:String(error),true);
+      });
+  }
+
+  quickSetGroceryBringing_=function(id,bringing){
+    if(source_()==='supabase-primary-fallback-sheets') return inheritedQuickSetBringing.apply(this,arguments);
+    return primaryQuickSave_(id,function(updated){
+      updated.Bringing=bringing?'Yes':'No';
+      if(!bringing) updated['Brought By']='';
+    },bringing?'Marked as coming from home.':'Moved back to the shopping list.');
+  };
+
+  quickSetP2GroceryPurchased_=function(id,purchased){
+    if(source_()==='supabase-primary-fallback-sheets') return inheritedQuickSetPurchased.apply(this,arguments);
+    return primaryQuickSave_(id,function(updated){
+      updated.Purchased=purchased?'Yes':'No';
+    },purchased?'Marked purchased.':'Returned to the shopping list.');
+  };
+})();
+</script>
