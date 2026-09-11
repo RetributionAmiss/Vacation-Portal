@@ -3,6 +3,7 @@
   const REQUEST_TYPE='vacation-portal-supabase-rentals-request';
   const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
   const OP_READ='finalizedRental.read';
+  const PREVIEW_DIAGNOSTIC_TYPE='vacation-portal-preview-finalized-rental-shadow-diagnostic';
   const pending={};
   let lastFingerprint='';
   let requestSequence=0;
@@ -52,6 +53,20 @@
     return mismatches;
   }
 
+  function publishPreviewDiagnostic_(diagnostic){
+    // Preview-only branch relay. Deliberately sends no rental values or mismatch
+    // contents; it exists only so the isolated top-level harness can show the
+    // manual acceptance status without requiring browser DevTools.
+    try{
+      window.top.postMessage({
+        type:PREVIEW_DIAGNOSTIC_TYPE,
+        status:String(diagnostic&&diagnostic.status||'unavailable'),
+        legacyId:String(diagnostic&&diagnostic.legacyId||''),
+        mismatchCount:Number(diagnostic&&diagnostic.mismatchCount||0)
+      },'*');
+    }catch(error){}
+  }
+
   function requestShadow_(cabin){
     const legacyId=String(cabin&&cabin['Cabin ID']||'').trim();
     if(!legacyId) return;
@@ -75,6 +90,7 @@
       DATA.supabaseFinalizedRentalShadow={
         status:'unavailable',legacyId:legacyId,error:String(error&&error.message||error||'bridge_post_failed')
       };
+      publishPreviewDiagnostic_(DATA.supabaseFinalizedRentalShadow);
     }
   }
 
@@ -96,6 +112,7 @@
         errorCode:String(data.error&&data.error.code||'shadow_read_failed'),
         error:String(data.error&&data.error.message||'Supabase finalized-rental shadow read failed.')
       };
+      publishPreviewDiagnostic_(DATA.supabaseFinalizedRentalShadow);
       console.warn('Supabase finalized-rental shadow unavailable.',DATA.supabaseFinalizedRentalShadow);
       return;
     }
@@ -111,6 +128,7 @@
       mismatches:mismatches,
       checkedAt:new Date().toISOString()
     };
+    publishPreviewDiagnostic_(DATA.supabaseFinalizedRentalShadow);
 
     if(mismatches.length){
       console.warn('Supabase finalized-rental shadow mismatch.',DATA.supabaseFinalizedRentalShadow);
