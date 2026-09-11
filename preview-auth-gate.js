@@ -1,5 +1,12 @@
 const PREVIEW_GATE_ID='vacationPreviewSupabaseAuthGate';
 const PREVIEW_STATUS_ID='vacationPreviewSupabaseAuthStatus';
+const PREVIEW_FRAME_ID='previewPortalFrame';
+let lastReady=false;
+
+function targetWindow_(){
+  const frame=document.getElementById(PREVIEW_FRAME_ID);
+  return frame&&frame.contentWindow?frame.contentWindow:window;
+}
 
 function previewGateStyles_(){
   if(document.getElementById('vacationPreviewSupabaseAuthGateStyles')) return;
@@ -48,18 +55,46 @@ function ensurePreviewGate_(){
       </div>
     </section>`;
   document.body.appendChild(gate);
-  gate.querySelector('#previewOpenAccount').addEventListener('click',()=>{
-    const account=document.getElementById('supabaseAccountButton');
-    if(account) account.click();
-  });
+  gate.querySelector('#previewOpenAccount').addEventListener('click',()=>openTargetAccount_());
   gate.querySelector('#previewRecheckAuth').addEventListener('click',()=>checkPreviewAuth_(true));
   return gate;
+}
+
+function targetAuthOverlayOpen_(){
+  try{
+    const target=targetWindow_();
+    const overlay=target.document.getElementById('supabaseAuthOverlay');
+    return Boolean(overlay&&!overlay.hidden);
+  }catch(error){
+    return false;
+  }
+}
+
+function openTargetAccount_(){
+  const gate=ensurePreviewGate_();
+  try{
+    const target=targetWindow_();
+    const account=target.document.getElementById('supabaseAccountButton');
+    if(account){
+      gate.hidden=true;
+      account.click();
+      return true;
+    }
+  }catch(error){}
+  const status=document.getElementById(PREVIEW_STATUS_ID);
+  status.textContent='The account control is still loading. Try again in a moment.';
+  status.className='preview-auth-warn';
+  gate.hidden=false;
+  return false;
 }
 
 async function waitForSupabase_(timeoutMs=12000){
   const started=Date.now();
   while(Date.now()-started<timeoutMs){
-    if(window.VacationSupabase&&window.VacationSupabase.auth) return window.VacationSupabase;
+    try{
+      const target=targetWindow_();
+      if(target.VacationSupabase&&target.VacationSupabase.auth) return target.VacationSupabase;
+    }catch(error){}
     await new Promise(resolve=>setTimeout(resolve,150));
   }
   return null;
@@ -70,6 +105,7 @@ async function checkPreviewAuth_(interactive=false){
   const status=document.getElementById(PREVIEW_STATUS_ID);
   const client=await waitForSupabase_();
   if(!client){
+    lastReady=false;
     status.textContent='Supabase auth did not initialize. Do not run the checklist yet.';
     status.className='preview-auth-warn';
     gate.hidden=false;
@@ -79,13 +115,11 @@ async function checkPreviewAuth_(interactive=false){
     const result=await client.auth.getSession();
     const session=result&&result.data?result.data.session:null;
     if(!session||!session.user){
-      status.textContent='Signed out. Sign in, then recheck before testing Meals.';
+      lastReady=false;
+      status.textContent='Signed out. Sign in before testing Meals.';
       status.className='preview-auth-warn';
-      gate.hidden=false;
-      if(interactive){
-        const account=document.getElementById('supabaseAccountButton');
-        if(account) account.click();
-      }
+      if(!targetAuthOverlayOpen_()) gate.hidden=false;
+      if(interactive) openTargetAccount_();
       return false;
     }
     const membership=await client
@@ -94,27 +128,34 @@ async function checkPreviewAuth_(interactive=false){
       .eq('auth_user_id',session.user.id)
       .eq('active',true);
     if(membership.error||!(membership.data||[]).length){
+      lastReady=false;
       status.textContent='Signed in, but no active trip membership resolved. Do not run the checklist yet.';
       status.className='preview-auth-warn';
-      gate.hidden=false;
+      if(!targetAuthOverlayOpen_()) gate.hidden=false;
       return false;
     }
     status.textContent='Supabase session + active trip membership confirmed. Preview is ready for primary-path testing.';
     status.className='preview-auth-ok';
-    setTimeout(()=>{gate.hidden=true;},900);
+    if(!lastReady) setTimeout(()=>{gate.hidden=true;},700);
+    else gate.hidden=true;
+    lastReady=true;
     return true;
   }catch(error){
+    lastReady=false;
     status.textContent='Supabase session check failed. Do not run the checklist yet.';
     status.className='preview-auth-warn';
-    gate.hidden=false;
+    if(!targetAuthOverlayOpen_()) gate.hidden=false;
     return false;
   }
 }
 
-if(document.readyState==='loading'){
-  document.addEventListener('DOMContentLoaded',()=>checkPreviewAuth_(false),{once:true});
-}else{
+function startPreviewAuthWatch_(){
   checkPreviewAuth_(false);
+  setInterval(()=>checkPreviewAuth_(false),1500);
 }
 
-window.addEventListener('focus',()=>checkPreviewAuth_(false));
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',startPreviewAuthWatch_,{once:true});
+}else{
+  startPreviewAuthWatch_();
+}
