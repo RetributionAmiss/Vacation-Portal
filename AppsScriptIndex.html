@@ -52,48 +52,22 @@
       border-color:#2a3141!important;
       box-shadow:0 12px 30px rgba(0,0,0,.24)!important
     }
-    #modalContent .traveler-device-panel .eyebrow{
-      color:#d8b565!important;
-      background:transparent!important
-    }
+    #modalContent .traveler-device-panel .eyebrow{color:#d8b565!important;background:transparent!important}
     #modalContent .traveler-device-panel h3,
     #modalContent .traveler-device-panel .traveler-device-status,
-    #modalContent .traveler-device-panel .traveler-device-status>span:not(.status-dot){
-      color:#f7f5ef!important
-    }
+    #modalContent .traveler-device-panel .traveler-device-status>span:not(.status-dot){color:#f7f5ef!important}
     #modalContent .traveler-device-panel>p,
     #modalContent .traveler-device-panel>small,
-    #modalContent .traveler-device-panel .traveler-device-actions{
-      background:transparent!important
-    }
+    #modalContent .traveler-device-panel .traveler-device-actions{background:transparent!important}
     #modalContent .traveler-device-panel .muted,
-    #modalContent .traveler-device-panel small{
-      color:#9fa7b5!important
-    }
-    #modalContent .traveler-device-panel .muted strong{
-      color:#f1d892!important
-    }
-    #modalContent .traveler-device-panel .traveler-device-status{
-      background:#151b2a!important;
-      border-color:#2a3141!important
-    }
-    #modalContent .traveler-device-panel .status-dot{
-      background:#d8b565!important
-    }
+    #modalContent .traveler-device-panel small{color:#9fa7b5!important}
+    #modalContent .traveler-device-panel .muted strong{color:#f1d892!important}
+    #modalContent .traveler-device-panel .traveler-device-status{background:#151b2a!important;border-color:#2a3141!important}
+    #modalContent .traveler-device-panel .status-dot{background:#d8b565!important}
     #modalContent .traveler-device-panel .traveler-device-status.connected .status-dot,
-    #modalContent .traveler-device-panel .traveler-device-status.enabled .status-dot{
-      background:#62d394!important
-    }
-    #modalContent .traveler-device-panel .traveler-device-actions .ghost{
-      background:#151b2a!important;
-      color:#f1d892!important;
-      border-color:#2a3141!important
-    }
-    #modalContent .traveler-device-panel .traveler-device-actions button:not(.ghost){
-      background:linear-gradient(135deg,#f1d892,#c89e4f)!important;
-      color:#080c16!important;
-      border-color:rgba(216,181,101,.58)!important
-    }
+    #modalContent .traveler-device-panel .traveler-device-status.enabled .status-dot{background:#62d394!important}
+    #modalContent .traveler-device-panel .traveler-device-actions .ghost{background:#151b2a!important;color:#f1d892!important;border-color:#2a3141!important}
+    #modalContent .traveler-device-panel .traveler-device-actions button:not(.ghost){background:linear-gradient(135deg,#f1d892,#c89e4f)!important;color:#080c16!important;border-color:rgba(216,181,101,.58)!important}
   </style>
 </head>
 <body>
@@ -106,16 +80,9 @@
 
   <div id="app" class="app hidden">
     <header class="topbar">
-      <div>
-        <p class="eyebrow">FAMILY TRIP PLANNER</p>
-        <h1 id="tripTitle">Smoky Mountain Family Vacation</h1>
-        <p id="tripMeta" class="muted"></p>
-      </div>
+      <div><p class="eyebrow">FAMILY TRIP PLANNER</p><h1 id="tripTitle">Smoky Mountain Family Vacation</h1><p id="tripMeta" class="muted"></p></div>
       <div class="topbar-actions">
-        <label class="traveler-picker">
-          <span>Planning as <small id="deviceProfileHint" class="device-profile-hint">· saved on this device</small></span>
-          <select id="currentTraveler" onchange="changeTraveler()"></select>
-        </label>
+        <label class="traveler-picker"><span>Planning as <small id="deviceProfileHint" class="device-profile-hint">· saved on this device</small></span><select id="currentTraveler" onchange="changeTraveler()"></select></label>
         <button id="returnToSavedTravelerButton" class="ghost temporary-traveler-return hidden" type="button" onclick="returnToSavedTraveler_()">Return to saved traveler</button>
         <button class="ghost" onclick="openCurrentTravelerInfo_()">Traveler Info</button>
         <button id="diagnosticsButton" class="ghost hidden" onclick="openDiagnostics()">Diagnostics</button>
@@ -124,42 +91,16 @@
     </header>
 
     <nav id="mainNav" class="main-nav">
-      <button data-view="dashboard" class="active">Dashboard</button>
-      <button data-view="rentals">Rentals</button>
-      <button data-view="travelers">Travelers</button>
-      <button data-view="rooms">Room Planner</button>
-      <button data-view="budget">Budget</button>
-      <button data-view="payments">Payments</button>
-      <button data-view="meals">Meals</button>
-      <button data-view="groceries">Grocery List</button>
-      <button data-view="itinerary">Itinerary</button>
-      <button data-view="settings">Trip Settings</button>
+      <button data-view="dashboard" class="active">Dashboard</button><button data-view="rentals">Rentals</button><button data-view="travelers">Travelers</button><button data-view="rooms">Room Planner</button><button data-view="budget">Budget</button><button data-view="payments">Payments</button><button data-view="meals">Meals</button><button data-view="groceries">Grocery List</button><button data-view="itinerary">Itinerary</button><button data-view="settings">Trip Settings</button>
     </nav>
 
-    <div id="fastStartStatus" class="fast-start-status hidden" aria-live="polite">
-      <span class="progress-spinner" aria-hidden="true"></span>
-      <span>Updating trip data…</span>
-    </div>
-
-    <div class="mobile-simple-nav" aria-label="Mobile navigation">
-      <button type="button" class="mobile-dashboard-button" onclick="navigate('dashboard')"><span>🏠</span><span>Dashboard</span></button>
-      <button type="button" class="mobile-more-button" onclick="openMobileSectionMenu_()"><span>☰</span><span>More</span></button>
-    </div>
+    <div id="fastStartStatus" class="fast-start-status hidden" aria-live="polite"><span class="progress-spinner" aria-hidden="true"></span><span>Updating trip data…</span></div>
+    <div class="mobile-simple-nav" aria-label="Mobile navigation"><button type="button" class="mobile-dashboard-button" onclick="navigate('dashboard')"><span>🏠</span><span>Dashboard</span></button><button type="button" class="mobile-more-button" onclick="openMobileSectionMenu_()"><span>☰</span><span>More</span></button></div>
     <main id="viewRoot"></main>
   </div>
 
-  <div id="modal" class="modal hidden" aria-hidden="true">
-    <div class="modal-backdrop" onclick="closeModal()"></div>
-    <section class="modal-panel">
-      <button class="modal-close" onclick="closeModal()">×</button>
-      <div id="modalContent"></div>
-    </section>
-  </div>
-
-  <div id="backgroundSaveStatus" class="background-save-status hidden" aria-live="polite">
-    <span class="progress-spinner" aria-hidden="true"></span>
-    <span>Saving changes in the background…</span>
-  </div>
+  <div id="modal" class="modal hidden" aria-hidden="true"><div class="modal-backdrop" onclick="closeModal()"></div><section class="modal-panel"><button class="modal-close" onclick="closeModal()">×</button><div id="modalContent"></div></section></div>
+  <div id="backgroundSaveStatus" class="background-save-status hidden" aria-live="polite"><span class="progress-spinner" aria-hidden="true"></span><span>Saving changes in the background…</span></div>
   <div id="liveNotifications" class="live-notifications" aria-live="polite"></div>
   <div id="toast" class="toast hidden"></div>
   <script>
@@ -171,16 +112,12 @@
         const directDeviceKey='vacationDirectWebDeviceIdV1';
         let directDeviceId=String(localStorage.getItem(directDeviceKey)||'').trim();
         if(!directDeviceId){
-          const randomPart=(window.crypto&&window.crypto.randomUUID)
-            ? window.crypto.randomUUID().replace(/-/g,'')
-            : (Date.now().toString(36)+Math.random().toString(36).slice(2));
+          const randomPart=(window.crypto&&window.crypto.randomUUID)?window.crypto.randomUUID().replace(/-/g,''):(Date.now().toString(36)+Math.random().toString(36).slice(2));
           directDeviceId='WEB-'+randomPart;
           localStorage.setItem(directDeviceKey,directDeviceId);
         }
         window.PWA_DEVICE_ID=directDeviceId;
-      }catch(error){
-        window.PWA_DEVICE_ID='WEB-'+Date.now().toString(36)+Math.random().toString(36).slice(2);
-      }
+      }catch(error){window.PWA_DEVICE_ID='WEB-'+Date.now().toString(36)+Math.random().toString(36).slice(2);}
     }
   </script>
   <?!= include('Client_Bootstrap'); ?>
@@ -241,6 +178,7 @@
   <?!= include('Client_Supabase_Itinerary_Comment_Lifecycle'); ?>
   <?!= include('Client_Supabase_Planner_Comments_Bridge'); ?>
   <?!= include('Client_Supabase_Planner_Comments_Snapshot_Guard'); ?>
+  <?!= include('Client_Supabase_Meals_Bridge'); ?>
   <?!= include('Client_P3_Startup_Performance'); ?>
   <?!= include('Client_Privacy_Snapshot_Migration'); ?>
   <?!= include('Client_Privacy_Integration'); ?>
