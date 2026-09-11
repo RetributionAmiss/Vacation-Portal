@@ -1,0 +1,531 @@
+<script>
+/* Supabase-primary planner comments follow-up.
+ *
+ * This layer intentionally takes ownership only of Meals comments. The proven
+ * Itinerary comment path remains unchanged. Healthy Meals reads/writes settle
+ * from Supabase first; Apps Script / Sheets is refreshed afterward only as a
+ * rollback copy. Sheets becomes visible only when the Supabase Meals comment
+ * read has failed for the current runtime.
+ */
+(function installSupabasePlannerCommentsBridge_(){
+  if(window.__vacationSupabasePlannerCommentsBridgeInstalled) return;
+  if(typeof p2PlannerEnsureSocialData_!=='function'||typeof saveP2PlannerComment_!=='function') return;
+  if(typeof deleteP2PlannerComment_!=='function') return;
+  window.__vacationSupabasePlannerCommentsBridgeInstalled=true;
+
+  const REQUEST_TYPE='vacation-portal-supabase-planner-comments-request';
+  const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
+  const OP_STATUS='plannerComments.status';
+  const OP_READ='plannerComments.read';
+  const OP_UPSERT='plannerComments.upsert';
+  const OP_DELETE='plannerComments.delete';
+  const REQUEST_TIMEOUT_MS=6500;
+  const READ_TTL_MS=15000;
+  const SHEETS_BACKUP_TTL_MS=30000;
+  const pending={};
+  const inheritedEnsure=p2PlannerEnsureSocialData_;
+  const inheritedSave=saveP2PlannerComment_;
+  const inheritedDelete=deleteP2PlannerComment_;
+  let readInFlight=false;
+  let lastReadAt=0;
+  let sheetsBackupInFlight=false;
+  let lastSheetsBackupAt=0;
+  let readStatusAnnounced=false;
+  let pendingMealDelete=null;
+
+  function requestId_(){
+    return 'supa-comments-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  }
+
+  function stableCommentId_(){
+    const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let suffix='';
+    try{
+      if(window.crypto&&window.crypto.getRandomValues){
+        const bytes=new Uint8Array(10);
+        window.crypto.getRandomValues(bytes);
+        for(let i=0;i<bytes.length;i++) suffix+=alphabet[bytes[i]%alphabet.length];
+      }
+    }catch(error){}
+    while(suffix.length<10){
+      suffix+=alphabet[Math.floor(Math.random()*alphabet.length)];
+    }
+    return 'PCOM-'+suffix.slice(0,10);
+  }
+
+  function hostTargets_(){
+    const targets=[];
+    try{if(window.parent&&window.parent!==window) targets.push(window.parent);}catch(error){}
+    try{if(window.top&&window.top!==window&&targets.indexOf(window.top)===-1) targets.push(window.top);}catch(error){}
+    return targets;
+  }
+
+  function request_(operation,data,writeMode){
+    return new Promise(function(resolve,reject){
+      const targets=hostTargets_();
+      if(!targets.length){
+        const error=new Error('Supabase planner comments bridge is unavailable.');
+        error.code='bridge_no_host';
+        reject(error);
+        return;
+      }
+
+      const id=requestId_();
+      const timer=setTimeout(function(){
+        delete pending[id];
+        const error=new Error('Supabase planner comments bridge timed out.');
+        error.code='bridge_timeout';
+        reject(error);
+      },REQUEST_TIMEOUT_MS);
+
+      pending[id]={
+        resolve:function(value){clearTimeout(timer);resolve(value);},
+        reject:function(error){clearTimeout(timer);reject(error);}
+      };
+
+      const payload={
+        type:REQUEST_TYPE,
+        requestId:id,
+        operation:String(operation||''),
+        data:data||{}
+      };
+      if(writeMode) payload.writeMode=String(writeMode);
+      targets.forEach(function(target){try{target.postMessage(payload,'*');}catch(error){}});
+    });
+  }
+
+  window.addEventListener('message',function(event){
+    const data=event&&event.data||{};
+    if(data.type!==RESPONSE_TYPE) return;
+    if(event.source!==window.parent&&event.source!==window.top) return;
+    const id=String(data.requestId||'');
+    const waiter=pending[id];
+    if(!waiter) return;
+
+    delete pending[id];
+    if(data.ok){
+      waiter.resolve(data.data||{});
+      return;
+    }
+    const error=new Error(data.error&&data.error.message?String(data.error.message):'Supabase planner comment request failed.');
+    error.code=String(data.error&&data.error.code||'bridge_error');
+    waiter.reject(error);
+  });
+
+  function source_(){
+    return String(DATA&&DATA.supabaseDomainSources&&DATA.supabaseDomainSources.plannerComments||'');
+  }
+
+  function primarySource_(){
+    return source_()==='supabase-primary';
+  }
+
+  function cloneComments_(rows){
+    return (rows||[]).map(function(row){return Object.assign({},row);});
+  }
+
+  function mealComments_(rows){
+    return (rows||[]).filter(function(row){
+      return String(row&&row['Planner Type']||'')==='Meals';
+    });
+  }
+
+  function comparableComment_(row){
+    return row?{
+      id:String(row['Planner Comment ID']||''),
+      type:String(row['Planner Type']||''),
+      itemId:String(row['Item ID']||''),
+      travelerId:String(row['Traveler ID']||''),
+      travelerName:String(row['Traveler Name']||row.travelerName||''),
+      comment:String(row.Comment||'')
+    }:null;
+  }
+
+  function sameComment_(a,b){
+    return JSON.stringify(comparableComment_(a))===JSON.stringify(comparableComment_(b));
+  }
+
+  function rememberMembership_(result){
+    if(!DATA||!result||!result.membership) return;
+    DATA.supabasePlannerCommentMembership={
+      role:String(result.membership.role||'traveler'),
+      travelerLinked:Boolean(result.membership.travelerLinked)
+    };
+  }
+
+  function settleMeals_(result){
+    if(!DATA) return;
+    const nonMeals=((DATA.plannerComments)||[]).filter(function(row){
+      return String(row&&row['Planner Type']||'')!=='Meals';
+    });
+    const meals=mealComments_((result&&result.plannerComments)||[]);
+    DATA.plannerComments=nonMeals.concat(meals);
+    DATA.supabasePlannerCommentsShadow=DATA.supabasePlannerCommentsShadow||{};
+    DATA.supabasePlannerCommentsShadow.Meals=cloneComments_(meals);
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.plannerComments='supabase-primary';
+    delete DATA.supabaseDomainDiagnostics.plannerComments;
+    rememberMembership_(result);
+
+    if(typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_){
+      p2PlannerSocialState_.loaded=true;
+      p2PlannerSocialState_.loading=false;
+      p2PlannerSocialState_.lastLoaded=Date.now();
+    }
+  }
+
+  function storeSheetsBackup_(result){
+    if(!DATA) return;
+    DATA.plannerCommentsSheetsBackup={
+      Meals:cloneComments_(mealComments_((result&&result.plannerComments)||[])),
+      capturedAt:String(result&&result.serverTime||new Date().toISOString())
+    };
+  }
+
+  function refreshSheetsBackup_(force){
+    if(!window.google||!google.script||!google.script.run) return;
+    if(sheetsBackupInFlight) return;
+    if(!force&&lastSheetsBackupAt&&Date.now()-lastSheetsBackupAt<SHEETS_BACKUP_TTL_MS) return;
+
+    sheetsBackupInFlight=true;
+    lastSheetsBackupAt=Date.now();
+    google.script.run
+      .withSuccessHandler(function(result){
+        storeSheetsBackup_(result||{});
+        sheetsBackupInFlight=false;
+      })
+      .withFailureHandler(function(error){
+        console.warn('Sheets planner-comment rollback snapshot could not be refreshed.',error);
+        sheetsBackupInFlight=false;
+      })
+      .getPlannerSocialData();
+  }
+
+  function activateSheetsFallback_(context,args,error){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.plannerComments='supabase-primary-fallback-sheets';
+    DATA.supabaseDomainDiagnostics.plannerComments={
+      code:String(error&&error.code||'bridge_error'),
+      message:String(error&&error.message||'Supabase Meals comments read failed.')
+    };
+
+    if(typeof p2PlannerSocialState_!=='undefined'&&p2PlannerSocialState_){
+      p2PlannerSocialState_.loaded=false;
+      p2PlannerSocialState_.loading=false;
+      p2PlannerSocialState_.lastLoaded=0;
+    }
+
+    inheritedEnsure.apply(context,args||[]);
+    if(currentView==='meals'&&typeof toast==='function'){
+      toast('Supabase Meal comments were unavailable. Using Sheets fallback.',true);
+    }
+  }
+
+  function mealsRead_(context,args){
+    if(readInFlight) return;
+    if(lastReadAt&&Date.now()-lastReadAt<READ_TTL_MS) return;
+    readInFlight=true;
+    lastReadAt=Date.now();
+
+    request_(OP_READ,{plannerType:'Meals'})
+      .then(function(result){
+        if(result&&result.primary===true){
+          settleMeals_(result);
+          if(currentView==='meals') render();
+          if(!readStatusAnnounced&&currentView==='meals'&&typeof toast==='function'){
+            readStatusAnnounced=true;
+            toast('Supabase Meal comments primary read passed — loaded from Supabase.');
+          }
+          // Supabase is visible and authoritative before this backup read begins.
+          refreshSheetsBackup_(false);
+          return;
+        }
+        const error=new Error('Supabase Meal comments are not configured as primary.');
+        error.code='primary_disabled';
+        activateSheetsFallback_(context,args,error);
+      })
+      .catch(function(error){activateSheetsFallback_(context,args,error);})
+      .then(function(){readInFlight=false;},function(){readInFlight=false;});
+  }
+
+  p2PlannerEnsureSocialData_=function(){
+    const context=this;
+    const args=arguments;
+    if(currentView==='meals'){
+      const source=source_();
+      if(
+        source==='supabase-primary-fallback-sheets'&&
+        lastReadAt&&Date.now()-lastReadAt<READ_TTL_MS
+      ){
+        return inheritedEnsure.apply(context,args);
+      }
+      mealsRead_(context,args);
+      return;
+    }
+    return inheritedEnsure.apply(context,args);
+  };
+
+  function recordBackupResult_(label,matches){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.plannerCommentsWrite=matches
+      ?'supabase-primary+sheets-backup-match'
+      :'supabase-primary+sheets-backup-mismatch';
+    if(matches){
+      delete DATA.supabaseDomainDiagnostics.plannerCommentsBackup;
+      if(typeof toast==='function') toast('Supabase Meal comment '+label+' passed — Sheets backup matches.');
+      return;
+    }
+    DATA.supabaseDomainDiagnostics.plannerCommentsBackup={
+      code:'backup_mismatch',
+      operation:label,
+      message:'The Sheets backup does not match the primary Supabase Meal comment mutation.'
+    };
+    if(typeof toast==='function') toast('Supabase Meal comment '+label+' passed, but Sheets backup differs.',true);
+  }
+
+  function recordBackupFailure_(label,error){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.plannerCommentsWrite='supabase-primary+sheets-backup-unavailable';
+    DATA.supabaseDomainDiagnostics.plannerCommentsBackup={
+      code:String(error&&error.code||'sheets_backup_error'),
+      operation:label,
+      message:String(error&&error.message||'Sheets planner-comment backup failed.')
+    };
+    if(typeof toast==='function'){
+      toast('Supabase Meal comment '+label+' passed. Sheets backup sync was unavailable.',true);
+    }
+  }
+
+  function withDevice_(success,failure){
+    if(typeof p3PlannerSocialEnsureDevice_!=='function'){
+      const error=new Error('Sheets backup device bridge is unavailable.');
+      error.code='sheets_bridge_unavailable';
+      failure(error);
+      return;
+    }
+    p3PlannerSocialEnsureDevice_(success,failure);
+  }
+
+  function backupSave_(row){
+    withDevice_(function(deviceId){
+      google.script.run
+        .withSuccessHandler(function(saved){
+          recordBackupResult_('save',sameComment_(row,saved));
+          refreshSheetsBackup_(true);
+        })
+        .withFailureHandler(function(error){recordBackupFailure_('save',error);})
+        .savePlannerComment({
+          deviceId:String(deviceId||''),
+          travelerId:String(row&&row['Traveler ID']||''),
+          plannerType:'Meals',
+          itemId:String(row&&row['Item ID']||''),
+          commentId:String(row&&row['Planner Comment ID']||''),
+          comment:String(row&&row.Comment||''),
+          requestId:String(row&&row['Planner Comment ID']||'')
+        });
+    },function(error){recordBackupFailure_('save',error);});
+  }
+
+  function backupDeletePayload_(row){
+    const base={
+      commentId:String(row&&row['Planner Comment ID']||''),
+      plannerType:'Meals',
+      travelerId:String(currentTravelerId||''),
+      deviceId:String(PWA_DEVICE_ID_||'')
+    };
+    return typeof organizerAuthorizationValues_==='function'
+      ?organizerAuthorizationValues_(base)
+      :base;
+  }
+
+  function verifySheetsDelete_(commentId,onSuccess,onFailure){
+    google.script.run
+      .withSuccessHandler(function(result){
+        const exists=mealComments_((result&&result.plannerComments)||[]).some(function(row){
+          return String(row['Planner Comment ID']||'')===String(commentId||'');
+        });
+        if(exists){
+          onFailure(new Error('Sheets backup still contains the removed Meal comment.'));
+          return;
+        }
+        storeSheetsBackup_(result||{});
+        onSuccess();
+      })
+      .withFailureHandler(onFailure)
+      .getPlannerSocialData();
+  }
+
+  function backupDelete_(row){
+    const own=String(row&&row['Traveler ID']||'')===String(currentTravelerId||'');
+    const invoke=function(){
+      google.script.run
+        .withSuccessHandler(function(){
+          verifySheetsDelete_(row['Planner Comment ID'],function(){
+            recordBackupResult_('removal',true);
+          },function(error){recordBackupFailure_('removal',error);});
+        })
+        .withFailureHandler(function(error){recordBackupFailure_('removal',error);})
+        .deletePlannerComment(backupDeletePayload_(row));
+    };
+
+    if(own){
+      withDevice_(function(){invoke();},function(error){recordBackupFailure_('removal',error);});
+      return;
+    }
+
+    if(typeof withOrganizerAuthorization_!=='function'){
+      recordBackupFailure_('removal',new Error('Organizer authorization is unavailable for the Sheets rollback copy.'));
+      return;
+    }
+    withOrganizerAuthorization_(invoke);
+  }
+
+  function primarySaveMeal_(event,type,itemId){
+    event.preventDefault();
+    const comment=String(val('p2PlannerCommentText')||'').trim();
+    if(!comment) return;
+    const traveler=currentTraveler();
+    if(!traveler||!currentTravelerId){toast('Choose your saved traveler profile first.',true);return;}
+
+    const stableId=stableCommentId_();
+    const previous=cloneComments_((DATA&&DATA.plannerComments)||[]);
+    const local={
+      'Planner Comment ID':stableId,
+      'Planner Type':'Meals',
+      'Item ID':String(itemId||''),
+      'Traveler ID':String(currentTravelerId||''),
+      'Traveler Name':String(traveler.Name||''),
+      travelerName:String(traveler.Name||''),
+      Comment:comment,
+      'Created At':new Date().toISOString(),
+      'Version':0
+    };
+
+    if(!DATA.plannerComments) DATA.plannerComments=[];
+    DATA.plannerComments.push(local);
+    closeModal();
+    render();
+    const saveId=typeof beginBackgroundSave_==='function'
+      ?beginBackgroundSave_('Planner comment','planner-comment:'+stableId)
+      :'';
+
+    request_(OP_UPSERT,{plannerType:'Meals',comment:local},'primary')
+      .then(function(result){
+        settleMeals_(result);
+        const settled=mealComments_(DATA.plannerComments).find(function(row){
+          return String(row['Planner Comment ID']||'')===stableId;
+        })||local;
+        if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'Comment posted');
+        render();
+        // Do not touch Apps Script until the Supabase write has committed.
+        backupSave_(settled);
+      })
+      .catch(function(error){
+        DATA.plannerComments=previous;
+        if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Comment could not be posted');
+        else toast(error&&error.message?error.message:String(error),true);
+        render();
+      });
+  }
+
+  saveP2PlannerComment_=function(event,type,itemId){
+    if(String(type||'')!=='Meals') return inheritedSave.apply(this,arguments);
+    if(source_()==='supabase-primary-fallback-sheets') return inheritedSave.apply(this,arguments);
+    return primarySaveMeal_(event,type,itemId);
+  };
+
+  function membershipRole_(){
+    return String(
+      DATA&&DATA.supabasePlannerCommentMembership&&DATA.supabasePlannerCommentMembership.role||
+      DATA&&DATA.supabaseItineraryMembership&&DATA.supabaseItineraryMembership.role||
+      'traveler'
+    );
+  }
+
+  function canRemoveMeal_(row){
+    const id=String(row&&row['Planner Comment ID']||'');
+    if(!/^PCOM-[A-Z0-9]{10}$/i.test(id)) return false;
+    if(String(row&&row['Traveler ID']||'')===String(currentTravelerId||'')) return true;
+    return membershipRole_()==='organizer';
+  }
+
+  function findMealComment_(commentId){
+    return mealComments_((DATA&&DATA.plannerComments)||[]).find(function(row){
+      return String(row['Planner Comment ID']||'')===String(commentId||'');
+    })||null;
+  }
+
+  function primaryDeleteMeal_(row){
+    const previous=cloneComments_((DATA&&DATA.plannerComments)||[]);
+    DATA.plannerComments=(DATA.plannerComments||[]).filter(function(item){
+      return !(
+        String(item['Planner Type']||'')==='Meals'&&
+        String(item['Planner Comment ID']||'')===String(row['Planner Comment ID']||'')
+      );
+    });
+    render();
+
+    const saveId=typeof beginBackgroundSave_==='function'
+      ?beginBackgroundSave_('Planner comment','planner-comment-delete:'+String(row['Planner Comment ID']||''))
+      :'';
+
+    request_(OP_DELETE,{plannerType:'Meals',comment:row},'primary')
+      .then(function(result){
+        settleMeals_(result);
+        if(saveId&&typeof completeBackgroundSave_==='function') completeBackgroundSave_(saveId,'Comment removed');
+        render();
+        // Supabase has committed; now update the rollback copy.
+        backupDelete_(row);
+      })
+      .catch(function(error){
+        DATA.plannerComments=previous;
+        if(saveId&&typeof failBackgroundSave_==='function') failBackgroundSave_(saveId,error,'Comment could not be removed');
+        else toast(error&&error.message?error.message:String(error),true);
+        render();
+      });
+  }
+
+  window.confirmP2PlannerMealCommentDelete_=function(){
+    const row=pendingMealDelete;
+    pendingMealDelete=null;
+    closeModal();
+    if(row) primaryDeleteMeal_(row);
+  };
+
+  deleteP2PlannerComment_=function(type,commentId){
+    if(String(type||'')!=='Meals') return inheritedDelete.apply(this,arguments);
+    if(source_()==='supabase-primary-fallback-sheets') return inheritedDelete.apply(this,arguments);
+
+    const row=findMealComment_(commentId);
+    if(!row) return;
+    if(!canRemoveMeal_(row)){
+      toast('You can only remove your own comments unless you are signed in as the organizer.',true);
+      return;
+    }
+
+    pendingMealDelete=Object.assign({},row);
+    const preview=String(row.Comment||'').trim();
+    openModal(`<div class="p2-comment-confirm">
+      <p class="eyebrow">REMOVE COMMENT</p>
+      <h2>Remove this meal comment?</h2>
+      <p class="p2-comment-confirm-copy muted">This will remove the comment from the conversation.</p>
+      ${preview?`<div class="p2-comment-confirm-preview">${esc(preview)}</div>`:''}
+      <div class="form-actions">
+        <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        <button type="button" class="planner-delete" onclick="confirmP2PlannerMealCommentDelete_()">Remove comment</button>
+      </div>
+    </div>`);
+  };
+
+  // Warm the domain only when Meals is actually visible; other planner views
+  // continue through their existing, already-verified authority paths.
+  if(currentView==='meals') mealsRead_(this,[]);
+})();
+</script>
