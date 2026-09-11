@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#121827">
+  <title>Alpha2.26 Supabase Meals Preview</title>
+  <style>
+    html,body{width:100%;height:100%;margin:0;background:#0d1320;color:#f7f5ef;font-family:Arial,sans-serif}
+    body{display:grid;place-items:center;padding:24px;box-sizing:border-box}
+    .loading{max-width:560px;text-align:center;line-height:1.5;color:#c7cfda}
+  </style>
+</head>
+<body>
+  <div class="loading">Loading the alpha2.26 Meals preview…</div>
+  <script>
+    (async function(){
+      try{
+        const response=await fetch('./index.html',{cache:'no-store'});
+        if(!response.ok) throw new Error('Could not load preview shell ('+response.status+').');
+        let html=await response.text();
+        const configTag='<scr'+'ipt src="./config.js?v=V4.4.0-alpha2"></scr'+'ipt>';
+        const previewBackend='https://script.google.com/macros/s/AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg/exec';
+        const override='<scr'+'ipt>window.VACATION_PORTAL_CONFIG=window.VACATION_PORTAL_CONFIG||{};window.VACATION_PORTAL_CONFIG.portalUrl='+JSON.stringify(previewBackend)+';</scr'+'ipt>';
+        const gate='<scr'+'ipt type="module" src="./preview-auth-gate.js?v=alpha2.26-top-level"></scr'+'ipt>';
+        if(!html.includes(configTag)) throw new Error('Preview shell config loader was not found.');
+        if(!html.includes('</body>')) throw new Error('Preview shell is missing </body>.');
+        html=html.replace(configTag,configTag+override);
+        html=html.replace('</body>',gate+'\n</body>');
+        document.open();
+        document.write(html);
+        document.close();
+      }catch(error){
+        document.body.innerHTML='<div class="loading"><strong>Preview could not start.</strong><br>'+String(error&&error.message?error.message:error)+'</div>';
+      }
+    })();
+  </script>
+</body>
+</html>
