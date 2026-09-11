@@ -21,20 +21,20 @@ for (const [label, html] of [['planner comments bridge', client], ['planner comm
 }
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.26'") &&
+  config.includes("release: 'V4.4.0-alpha2.27'") &&
   config.includes('plannerComments: {') &&
   config.includes('shadowRead: false') &&
   config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
   config.includes('write: true'),
-  'alpha2.26 must enable Supabase-primary planner-comment reads and writes.'
+  'alpha2.27 must keep Supabase-primary planner-comment reads and writes enabled.'
 );
 assert(
   config.includes("script.src='./supabase-planner-comments-bridge.js?v='"),
   'The PWA must load the shared planner-comments host bridge using the release cache key.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-26') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-27') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-planner-comments-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
   'The installed PWA must refresh the planner-comments bridge network-first.'

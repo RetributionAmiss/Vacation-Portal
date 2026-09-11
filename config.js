@@ -12,9 +12,9 @@ window.VACATION_PORTAL_CONFIG = {
   supabaseUrl: 'https://rlmsojrxmrfawvdsodkk.supabase.co',
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
-  // Travel Plans, Packing, Itinerary, Meals, and planner comments use Supabase
-  // as primary read/write sources. Apps Script / Sheets remains a rollback copy
-  // and is updated only after a successful primary write.
+  // Travel Plans, Packing, Itinerary, Meals, Grocery List, and planner comments
+  // use Supabase as primary read/write sources. Apps Script / Sheets remains a
+  // rollback copy and is updated only after a successful primary write.
   supabaseDomains: {
     travelPlans: {
       shadowRead: false,
@@ -40,6 +40,12 @@ window.VACATION_PORTAL_CONFIG = {
       read: true,
       write: true
     },
+    groceryItems: {
+      shadowRead: false,
+      shadowWrite: false,
+      read: true,
+      write: true
+    },
     plannerComments: {
       shadowRead: false,
       shadowWrite: false,
@@ -51,7 +57,7 @@ window.VACATION_PORTAL_CONFIG = {
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.26'
+  release: 'V4.4.0-alpha2.27'
 };
 
 (function loadVacationSupabaseAuth_(){
@@ -168,6 +174,19 @@ window.VACATION_PORTAL_CONFIG = {
     document.head.appendChild(script);
   }catch(error){
     console.warn('Supabase Meals bridge could not be loaded.',error);
+  }
+})();
+
+(function loadVacationSupabaseGroceriesBridge_(){
+  try{
+    const script=document.createElement('script');
+    script.type='module';
+    script.src='./supabase-groceries-bridge.js?v='+encodeURIComponent(
+      String(window.VACATION_PORTAL_CONFIG.release||'')
+    );
+    document.head.appendChild(script);
+  }catch(error){
+    console.warn('Supabase Grocery bridge could not be loaded.',error);
   }
 })();
 
