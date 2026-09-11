@@ -148,7 +148,7 @@
     <main id="viewRoot"></main>
   </div>
 
-  <div id="modal" class="modal hidden" aria-hidden="true">
+  <div id="modal" class="modal hidden" aria-hidden-hidden="true">
     <div class="modal-backdrop" onclick="closeModal()"></div>
     <section class="modal-panel">
       <button class="modal-close" onclick="closeModal()">×</button>
@@ -240,6 +240,7 @@
   <?!= include('Client_Supabase_Itinerary_Concurrency_Bridge'); ?>
   <?!= include('Client_Supabase_Itinerary_Comment_Lifecycle'); ?>
   <?!= include('Client_Supabase_Planner_Comments_Bridge'); ?>
+  <?!= include('Client_Supabase_Planner_Comments_Snapshot_Guard'); ?>
   <?!= include('Client_P3_Startup_Performance'); ?>
   <?!= include('Client_Privacy_Snapshot_Migration'); ?>
   <?!= include('Client_Privacy_Integration'); ?>
