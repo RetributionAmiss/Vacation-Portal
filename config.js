@@ -12,10 +12,9 @@ window.VACATION_PORTAL_CONFIG = {
   supabaseUrl: 'https://rlmsojrxmrfawvdsodkk.supabase.co',
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
-  // Travel Plans, Packing, and Itinerary use Supabase as primary read/write
-  // sources. For Itinerary the browser now settles Supabase first; Apps Script
-  // / Sheets is refreshed afterward as rollback backup and is promoted only
-  // when a primary Supabase read fails for the current runtime.
+  // Travel Plans, Packing, Itinerary, and planner comments use Supabase as
+  // primary read/write sources. Apps Script / Sheets remains a rollback copy
+  // and is updated only after a successful primary write.
   supabaseDomains: {
     travelPlans: {
       shadowRead: false,
@@ -34,13 +33,19 @@ window.VACATION_PORTAL_CONFIG = {
       shadowWrite: false,
       read: true,
       write: true
+    },
+    plannerComments: {
+      shadowRead: false,
+      shadowWrite: false,
+      read: true,
+      write: true
     }
   },
 
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.24'
+  release: 'V4.4.0-alpha2.25'
 };
 
 (function loadVacationSupabaseAuth_(){
@@ -131,6 +136,19 @@ window.VACATION_PORTAL_CONFIG = {
     document.head.appendChild(script);
   }catch(error){
     console.warn('Supabase Itinerary comment bridge could not be loaded.',error);
+  }
+})();
+
+(function loadVacationSupabasePlannerCommentsBridge_(){
+  try{
+    const script=document.createElement('script');
+    script.type='module';
+    script.src='./supabase-planner-comments-bridge.js?v='+encodeURIComponent(
+      String(window.VACATION_PORTAL_CONFIG.release||'')
+    );
+    document.head.appendChild(script);
+  }catch(error){
+    console.warn('Supabase planner comments bridge could not be loaded.',error);
   }
 })();
 

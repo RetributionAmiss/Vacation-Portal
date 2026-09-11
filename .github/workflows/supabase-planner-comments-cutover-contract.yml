@@ -1,0 +1,37 @@
+name: Supabase Planner Comments Cutover Contract
+
+on:
+  push:
+    branches:
+      - main
+      - feature/supabase-planner-comments-primary
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  planner-comments-cutover-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate planner comments host bridge syntax
+        run: node --check supabase-planner-comments-bridge.js
+      - name: Run planner comments primary cutover contract
+        run: node tests/supabase_planner_comments_cutover_contract.test.js
+      - name: Run accepted Itinerary read regression contract
+        run: node tests/supabase_itinerary_read_cutover_contract.test.js
+      - name: Run accepted Itinerary write regression contract
+        run: node tests/supabase_itinerary_write_cutover_contract.test.js
+      - name: Run accepted Itinerary comment lifecycle contract
+        run: node tests/supabase_itinerary_comment_lifecycle_contract.test.js
+      - name: Run accepted Itinerary concurrency contract
+        run: node tests/supabase_itinerary_concurrency_contract.test.js
