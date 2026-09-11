@@ -18,18 +18,21 @@ assert.doesNotThrow(() => new Function(clientJs[1]), 'Meals client bridge must r
 const hostForSyntax = host.replace(/^import[^\n]*\n/, '');
 assert.doesNotThrow(() => new Function(hostForSyntax), 'Meals host bridge must remain valid browser module JavaScript after removing its import line.');
 
+const releaseMatch = config.match(/release:\s*'V4\.4\.0-alpha2\.(\d+)'/);
+assert(releaseMatch, 'A V4.4.0-alpha2.x release marker is required.');
+const releaseNumber = Number(releaseMatch[1]);
 assert(
-  config.includes("release: 'V4.4.0-alpha2.27'") &&
+  releaseNumber >= 27 &&
   config.includes('meals: {') &&
   config.includes('shadowRead: false') &&
   config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
   config.includes('write: true'),
-  'alpha2.27 must keep Supabase-primary Meals reads and writes enabled.'
+  'alpha2.27 and later releases must preserve Supabase-primary Meals reads and writes.'
 );
 assert(
   config.includes("script.src='./supabase-meals-bridge.js?v='") &&
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-27') &&
+  serviceWorker.includes(`family-vacation-pwa-v4-4-0-alpha2-${releaseNumber}`) &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-meals-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
   'The release-versioned Meals host bridge must remain network-first in the installed PWA.'
