@@ -1,0 +1,425 @@
+<script>
+/* Supabase-primary Meals records cutover.
+ * Healthy Meals loads/writes settle from Supabase first. Apps Script / Sheets is
+ * a nonblocking rollback copy and never replaces visible Supabase Meal rows.
+ */
+(function installSupabaseMealsBridge_(){
+  if(window.__vacationSupabaseMealsBridgeInstalled) return;
+  if(typeof renderP2Meals_!=='function'||typeof savePlannerForm!=='function'||typeof deletePlannerItem_!=='function') return;
+  if(typeof plannerObjectFromForm_!=='function') return;
+  window.__vacationSupabaseMealsBridgeInstalled=true;
+
+  const REQUEST_TYPE='vacation-portal-supabase-meals-request';
+  const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
+  const OP_READ='meals.read';
+  const OP_UPSERT='meals.upsert';
+  const OP_DELETE='meals.delete';
+  const REQUEST_TIMEOUT_MS=6500;
+  const READ_TTL_MS=15000;
+  const SHEETS_BACKUP_TTL_MS=30000;
+  const pending={};
+  const inheritedRenderMeals=renderP2Meals_;
+  const inheritedSavePlannerForm=savePlannerForm;
+  const inheritedDeletePlannerItem=deletePlannerItem_;
+  let readInFlight=false;
+  let lastReadAt=0;
+  let sheetsBackupInFlight=false;
+  let lastSheetsBackupAt=0;
+  let readStatusAnnounced=false;
+
+  function requestId_(){
+    return 'supa-meals-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  }
+
+  function stableMealId_(){
+    const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let suffix='';
+    try{
+      if(window.crypto&&window.crypto.getRandomValues){
+        const bytes=new Uint8Array(10);
+        window.crypto.getRandomValues(bytes);
+        for(let i=0;i<bytes.length;i++) suffix+=alphabet[bytes[i]%alphabet.length];
+      }
+    }catch(error){}
+    while(suffix.length<10) suffix+=alphabet[Math.floor(Math.random()*alphabet.length)];
+    return 'MEAL-'+suffix.slice(0,10);
+  }
+
+  function hostTargets_(){
+    const targets=[];
+    try{if(window.parent&&window.parent!==window) targets.push(window.parent);}catch(error){}
+    try{if(window.top&&window.top!==window&&targets.indexOf(window.top)===-1) targets.push(window.top);}catch(error){}
+    return targets;
+  }
+
+  function request_(operation,data,writeMode){
+    return new Promise(function(resolve,reject){
+      const targets=hostTargets_();
+      if(!targets.length){
+        const error=new Error('Supabase Meals bridge is unavailable.');
+        error.code='bridge_no_host';
+        reject(error);
+        return;
+      }
+
+      const id=requestId_();
+      const timer=setTimeout(function(){
+        delete pending[id];
+        const error=new Error('Supabase Meals bridge timed out.');
+        error.code='bridge_timeout';
+        reject(error);
+      },REQUEST_TIMEOUT_MS);
+
+      pending[id]={
+        resolve:function(value){clearTimeout(timer);resolve(value);},
+        reject:function(error){clearTimeout(timer);reject(error);}
+      };
+
+      const payload={type:REQUEST_TYPE,requestId:id,operation:String(operation||''),data:data||{}};
+      if(writeMode) payload.writeMode=String(writeMode);
+      targets.forEach(function(target){try{target.postMessage(payload,'*');}catch(error){}});
+    });
+  }
+
+  window.addEventListener('message',function(event){
+    const data=event&&event.data||{};
+    if(data.type!==RESPONSE_TYPE) return;
+    if(event.source!==window.parent&&event.source!==window.top) return;
+    const id=String(data.requestId||'');
+    const waiter=pending[id];
+    if(!waiter) return;
+    delete pending[id];
+
+    if(data.ok){
+      waiter.resolve(data.data||{});
+      return;
+    }
+    const error=new Error(data.error&&data.error.message?String(data.error.message):'Supabase Meals request failed.');
+    error.code=String(data.error&&data.error.code||'bridge_error');
+    waiter.reject(error);
+  });
+
+  function source_(){
+    return String(DATA&&DATA.supabaseDomainSources&&DATA.supabaseDomainSources.meals||'');
+  }
+
+  function primarySource_(){
+    return source_()==='supabase-primary';
+  }
+
+  function cloneRows_(rows){
+    return (rows||[]).map(function(row){return Object.assign({},row);});
+  }
+
+  function comparableMeal_(row){
+    return row?{
+      id:String(row['Meal ID']||''),
+      date:String(row.Date||'').slice(0,10),
+      meal:String(row.Meal||'').trim(),
+      menu:String(row.Menu||''),
+      assignedTo:String(row['Assigned To']||''),
+      cleanUp:String(row['Clean Up']||''),
+      notes:String(row.Notes||'')
+    }:null;
+  }
+
+  function sameMeal_(a,b){
+    return JSON.stringify(comparableMeal_(a))===JSON.stringify(comparableMeal_(b));
+  }
+
+  function rememberMembership_(result){
+    if(!DATA||!result||!result.membership) return;
+    DATA.supabaseMealsMembership={
+      role:String(result.membership.role||'traveler'),
+      travelerLinked:Boolean(result.membership.travelerLinked)
+    };
+  }
+
+  function settleMeals_(result){
+    if(!DATA) return;
+    const meals=cloneRows_((result&&result.meals)||[]);
+    DATA.meals=meals;
+    DATA.supabaseMealsShadow=cloneRows_(meals);
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.meals='supabase-primary';
+    delete DATA.supabaseDomainDiagnostics.meals;
+    rememberMembership_(result);
+  }
+
+  function reapplyPrimarySnapshot_(){
+    if(!DATA||!primarySource_()||!Array.isArray(DATA.supabaseMealsShadow)) return;
+    DATA.meals=cloneRows_(DATA.supabaseMealsShadow);
+  }
+
+  function storeSheetsBackup_(result){
+    if(!DATA) return;
+    DATA.mealsSheetsBackup={
+      meals:cloneRows_((result&&result.meals)||[]),
+      capturedAt:String(result&&result.serverTime||new Date().toISOString())
+    };
+  }
+
+  function refreshSheetsBackup_(force){
+    if(!window.google||!google.script||!google.script.run) return;
+    if(sheetsBackupInFlight) return;
+    if(!force&&lastSheetsBackupAt&&Date.now()-lastSheetsBackupAt<SHEETS_BACKUP_TTL_MS) return;
+    sheetsBackupInFlight=true;
+    lastSheetsBackupAt=Date.now();
+    google.script.run
+      .withSuccessHandler(function(result){storeSheetsBackup_(result||{});sheetsBackupInFlight=false;})
+      .withFailureHandler(function(error){console.warn('Sheets Meals rollback snapshot could not be refreshed.',error);sheetsBackupInFlight=false;})
+      .getMealsBackup();
+  }
+
+  function recordPrimaryFailure_(error){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.meals='supabase-primary-fallback-sheets';
+    DATA.supabaseDomainDiagnostics.meals={
+      code:String(error&&error.code||'bridge_error'),
+      message:String(error&&error.message||'Supabase Meals primary read failed.')
+    };
+    if(currentView==='meals'&&typeof toast==='function'){
+      toast('Supabase Meals read was unavailable ('+String(error&&error.code||'bridge_error')+'). Using Sheets fallback.',true);
+    }
+  }
+
+  function requestSheetsFallback_(){
+    try{
+      if(typeof loadDeferredPortalData_==='function'&&(typeof portalDeferredLoadBusy_==='undefined'||!portalDeferredLoadBusy_)){
+        loadDeferredPortalData_();
+      }
+    }catch(error){}
+  }
+
+  function startPrimaryRead_(){
+    if(readInFlight) return;
+    if(lastReadAt&&Date.now()-lastReadAt<READ_TTL_MS) return;
+    readInFlight=true;
+    lastReadAt=Date.now();
+    request_(OP_READ,{})
+      .then(function(result){
+        if(!result||result.primary!==true){
+          const error=new Error('Supabase Meals are not configured as primary.');
+          error.code='primary_disabled';
+          throw error;
+        }
+        settleMeals_(result);
+        if(!readStatusAnnounced&&currentView==='meals'&&typeof toast==='function'){
+          readStatusAnnounced=true;
+          toast('Supabase Meals primary read passed — loaded from Supabase.');
+        }
+        if(currentView==='meals') render();
+        refreshSheetsBackup_(false);
+      })
+      .catch(function(error){
+        recordPrimaryFailure_(error);
+        requestSheetsFallback_();
+        if(currentView==='meals') render();
+      })
+      .then(function(){readInFlight=false;},function(){readInFlight=false;});
+  }
+
+  function loadingView_(){
+    return '<section class="view p2-planner-view"><div class="panel p2-planner-panel"><div class="p2-empty-card"><strong>Loading meals from Supabase…</strong><span>Checking the trip meal plan.</span></div></div></section>';
+  }
+
+  renderP2Meals_=function(){
+    const source=source_();
+    if(source==='supabase-primary'){
+      reapplyPrimarySnapshot_();
+      return inheritedRenderMeals.apply(this,arguments);
+    }
+    if(source==='supabase-primary-fallback-sheets'){
+      requestSheetsFallback_();
+      if(DATA&&DATA.deferredLoaded===true) return inheritedRenderMeals.apply(this,arguments);
+      return loadingView_();
+    }
+    startPrimaryRead_();
+    return loadingView_();
+  };
+
+  function recordBackupResult_(label,matches){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.mealsWrite=matches?'supabase-primary+sheets-backup-match':'supabase-primary+sheets-backup-mismatch';
+    if(matches){
+      delete DATA.supabaseDomainDiagnostics.mealsBackup;
+      if(typeof toast==='function') toast('Supabase Meal '+label+' passed — Sheets backup matches.');
+      return;
+    }
+    DATA.supabaseDomainDiagnostics.mealsBackup={code:'backup_mismatch',operation:label,message:'The Sheets rollback copy does not match the primary Supabase Meal mutation.'};
+    if(typeof toast==='function') toast('Supabase Meal '+label+' passed, but Sheets backup differs.',true);
+  }
+
+  function recordBackupFailure_(label,error){
+    if(!DATA) return;
+    DATA.supabaseDomainSources=DATA.supabaseDomainSources||{};
+    DATA.supabaseDomainDiagnostics=DATA.supabaseDomainDiagnostics||{};
+    DATA.supabaseDomainSources.mealsWrite='supabase-primary+sheets-backup-unavailable';
+    DATA.supabaseDomainDiagnostics.mealsBackup={code:String(error&&error.code||'sheets_backup_error'),operation:label,message:String(error&&error.message||'Sheets Meals backup failed.')};
+    if(typeof toast==='function') toast('Supabase Meal '+label+' passed. Sheets backup sync was unavailable.',true);
+  }
+
+  function backupSave_(meal){
+    if(typeof withOrganizerAuthorization_!=='function'||typeof organizerAuthorizationValues_!=='function'){
+      recordBackupFailure_('save',new Error('Organizer authorization is unavailable for the Sheets rollback copy.'));
+      return;
+    }
+    withOrganizerAuthorization_(function(){
+      const payload=organizerAuthorizationValues_(Object.assign({},meal,{requestId:String(meal['Meal ID']||'')}));
+      google.script.run
+        .withSuccessHandler(function(saved){
+          recordBackupResult_('save',sameMeal_(meal,saved));
+          refreshSheetsBackup_(true);
+        })
+        .withFailureHandler(function(error){recordBackupFailure_('save',error);})
+        .saveMealBackup(payload);
+    });
+  }
+
+  function verifySheetsDelete_(mealId,onSuccess,onFailure){
+    google.script.run
+      .withSuccessHandler(function(result){
+        const exists=((result&&result.meals)||[]).some(function(row){return String(row['Meal ID']||'')===String(mealId||'');});
+        if(exists){onFailure(new Error('Sheets backup still contains the removed Meal.'));return;}
+        storeSheetsBackup_(result||{});
+        onSuccess();
+      })
+      .withFailureHandler(onFailure)
+      .getMealsBackup();
+  }
+
+  function backupDelete_(mealId){
+    if(typeof withOrganizerAuthorization_!=='function'||typeof organizerAuthorizationValues_!=='function'){
+      recordBackupFailure_('removal',new Error('Organizer authorization is unavailable for the Sheets rollback copy.'));
+      return;
+    }
+    withOrganizerAuthorization_(function(){
+      google.script.run
+        .withSuccessHandler(function(){
+          verifySheetsDelete_(mealId,function(){recordBackupResult_('removal',true);},function(error){recordBackupFailure_('removal',error);});
+        })
+        .withFailureHandler(function(error){recordBackupFailure_('removal',error);})
+        .deleteMealBackup(organizerAuthorizationValues_({mealId:String(mealId||'')}));
+    });
+  }
+
+  function fallbackSave_(event){
+    event.preventDefault();
+    const meal=plannerObjectFromForm_('Meals');
+    const rows=(DATA&&DATA.meals)||[];
+    const existingId=String(meal['Meal ID']||'');
+    const previous=cloneRows_(rows);
+    if(!existingId) meal['Meal ID']=stableMealId_();
+    optimisticPlannerRecord_('Meals',meal);
+    closeModal();render();
+
+    if(typeof withOrganizerAuthorization_!=='function'||typeof organizerAuthorizationValues_!=='function'){
+      DATA.meals=previous;render();toast('Organizer authorization is unavailable for the Sheets fallback.',true);return;
+    }
+    withOrganizerAuthorization_(function(){
+      google.script.run
+        .withSuccessHandler(function(saved){replaceOptimisticPlannerRecord_('Meals',meal['Meal ID'],saved);render();})
+        .withFailureHandler(function(error){DATA.meals=previous;render();toast(error&&error.message?error.message:String(error),true);})
+        .saveMealBackup(organizerAuthorizationValues_(Object.assign({},meal,{requestId:String(meal['Meal ID']||'')})));
+    });
+  }
+
+  function primarySave_(event){
+    event.preventDefault();
+    const meal=plannerObjectFromForm_('Meals');
+    const rows=(DATA&&DATA.meals)||[];
+    const existingId=String(meal['Meal ID']||'');
+    const previous=cloneRows_(rows);
+    const existing=existingId?rows.find(function(row){return String(row['Meal ID']||'')===existingId;}):null;
+    if(!existingId) meal['Meal ID']=stableMealId_();
+    if(existing&&Number(existing.Version||0)>0) meal.Version=Number(existing.Version);
+
+    optimisticPlannerRecord_('Meals',meal);
+    closeModal();render();
+    if(typeof toast==='function') toast('Meal saved to Supabase. Updating the rollback copy in the background…');
+
+    request_(OP_UPSERT,{meal:meal},'primary')
+      .then(function(result){
+        settleMeals_(result);
+        const saved=(DATA.meals||[]).find(function(row){return String(row['Meal ID']||'')===String(meal['Meal ID']||'');})||meal;
+        if(currentView==='meals') render();
+        backupSave_(saved);
+      })
+      .catch(function(error){
+        DATA.meals=previous;
+        DATA.supabaseMealsShadow=cloneRows_(previous);
+        if(currentView==='meals') render();
+        toast(error&&error.message?error.message:String(error),true);
+      });
+  }
+
+  savePlannerForm=function(event,name){
+    if(String(name||'')!=='Meals') return inheritedSavePlannerForm.apply(this,arguments);
+    if(source_()==='supabase-primary-fallback-sheets') return fallbackSave_(event);
+    return primarySave_(event);
+  };
+
+  function fallbackDelete_(id){
+    const previous=cloneRows_((DATA&&DATA.meals)||[]);
+    DATA.meals=(DATA.meals||[]).filter(function(row){return String(row['Meal ID']||'')!==String(id||'');});
+    closeModal();render();
+
+    if(typeof withOrganizerAuthorization_!=='function'||typeof organizerAuthorizationValues_!=='function'){
+      DATA.meals=previous;render();toast('Organizer authorization is unavailable for the Sheets fallback.',true);return;
+    }
+    withOrganizerAuthorization_(function(){
+      google.script.run
+        .withSuccessHandler(function(){})
+        .withFailureHandler(function(error){DATA.meals=previous;render();toast(error&&error.message?error.message:String(error),true);})
+        .deleteMealBackup(organizerAuthorizationValues_({mealId:String(id||'')}));
+    });
+  }
+
+  function primaryDelete_(id){
+    const rows=(DATA&&DATA.meals)||[];
+    const meal=rows.find(function(row){return String(row['Meal ID']||'')===String(id||'');});
+    if(!meal){toast('Meal could not be found.',true);return;}
+    const previousMeals=cloneRows_(rows);
+    const previousComments=cloneRows_((DATA&&DATA.plannerComments)||[]);
+    const input=Object.assign({},meal);
+
+    DATA.meals=rows.filter(function(row){return String(row['Meal ID']||'')!==String(id||'');});
+    DATA.plannerComments=(DATA.plannerComments||[]).filter(function(row){
+      return !(String(row['Planner Type']||'')==='Meals'&&String(row['Item ID']||'')===String(id||''));
+    });
+    closeModal();render();
+    if(typeof toast==='function') toast('Removing Meal from Supabase…');
+
+    request_(OP_DELETE,{meal:input},'primary')
+      .then(function(result){
+        settleMeals_(result);
+        DATA.plannerComments=(DATA.plannerComments||[]).filter(function(row){
+          return !(String(row['Planner Type']||'')==='Meals'&&String(row['Item ID']||'')===String(id||''));
+        });
+        if(DATA.supabasePlannerCommentsShadow&&Array.isArray(DATA.supabasePlannerCommentsShadow.Meals)){
+          DATA.supabasePlannerCommentsShadow.Meals=DATA.supabasePlannerCommentsShadow.Meals.filter(function(row){return String(row['Item ID']||'')!==String(id||'');});
+        }
+        if(currentView==='meals') render();
+        backupDelete_(id);
+      })
+      .catch(function(error){
+        DATA.meals=previousMeals;
+        DATA.supabaseMealsShadow=cloneRows_(previousMeals);
+        DATA.plannerComments=previousComments;
+        if(currentView==='meals') render();
+        toast(error&&error.message?error.message:String(error),true);
+      });
+  }
+
+  deletePlannerItem_=function(name,id){
+    if(String(name||'')!=='Meals') return inheritedDeletePlannerItem.apply(this,arguments);
+    if(source_()==='supabase-primary-fallback-sheets') return fallbackDelete_(id);
+    return primaryDelete_(id);
+  };
+})();
+</script>
