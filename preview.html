@@ -6,12 +6,29 @@
   <meta name="theme-color" content="#121827">
   <title>Alpha2.25 Supabase Preview</title>
   <style>
-    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#0d1320}
-    #previewPortalFrame{display:block;width:100%;height:100%;border:0;background:#0d1320}
+    html,body{width:100%;height:100%;margin:0;background:#0d1320;color:#f7f5ef;font-family:Arial,sans-serif}
+    body{display:grid;place-items:center;padding:24px;box-sizing:border-box}
+    .loading{max-width:520px;text-align:center;line-height:1.5;color:#c7cfda}
   </style>
 </head>
 <body>
-  <iframe id="previewPortalFrame" title="Family Vacation Portal alpha2.25 preview" src="./index.html"></iframe>
-  <script type="module" src="./preview-auth-gate.js"></script>
+  <div class="loading">Loading the alpha2.25 preview…</div>
+  <script>
+    (async function(){
+      try{
+        const response=await fetch('./index.html',{cache:'no-store'});
+        if(!response.ok) throw new Error('Could not load preview shell ('+response.status+').');
+        let html=await response.text();
+        const gate='<script type="module" src="./preview-auth-gate.js?v=alpha2.25-top-level"><\\/script>';
+        if(!html.includes('</body>')) throw new Error('Preview shell is missing </body>.');
+        html=html.replace('</body>',gate+'\n</body>');
+        document.open();
+        document.write(html);
+        document.close();
+      }catch(error){
+        document.body.innerHTML='<div class="loading"><strong>Preview could not start.</strong><br>'+String(error&&error.message?error.message:error)+'</div>';
+      }
+    })();
+  </script>
 </body>
 </html>
