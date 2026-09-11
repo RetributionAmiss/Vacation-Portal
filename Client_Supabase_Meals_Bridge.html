@@ -270,7 +270,7 @@
       return;
     }
     withOrganizerAuthorization_(function(){
-      const payload=organizerAuthorizationValues_(Object.assign({},meal,{requestId:String(meal['Meal ID']||'')}));
+      const payload=organizerAuthorizationValues_(Object.assign({},meal,{requestId:requestId_()}));
       google.script.run
         .withSuccessHandler(function(saved){
           recordBackupResult_('save',sameMeal_(meal,saved));
@@ -325,7 +325,7 @@
       google.script.run
         .withSuccessHandler(function(saved){replaceOptimisticPlannerRecord_('Meals',meal['Meal ID'],saved);render();})
         .withFailureHandler(function(error){DATA.meals=previous;render();toast(error&&error.message?error.message:String(error),true);})
-        .saveMealBackup(organizerAuthorizationValues_(Object.assign({},meal,{requestId:String(meal['Meal ID']||'')})));
+        .saveMealBackup(organizerAuthorizationValues_(Object.assign({},meal,{requestId:requestId_()})));
     });
   }
 
