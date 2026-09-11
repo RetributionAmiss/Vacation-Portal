@@ -2,9 +2,15 @@ const PREVIEW_GATE_ID='vacationPreviewSupabaseAuthGate';
 const PREVIEW_STATUS_ID='vacationPreviewSupabaseAuthStatus';
 const PREVIEW_FRAME_ID='previewPortalFrame';
 let lastReady=false;
+let needsReloadAfterAuth=false;
+let reloadInProgress=false;
+
+function targetFrame_(){
+  return document.getElementById(PREVIEW_FRAME_ID);
+}
 
 function targetWindow_(){
-  const frame=document.getElementById(PREVIEW_FRAME_ID);
+  const frame=targetFrame_();
   return frame&&frame.contentWindow?frame.contentWindow:window;
 }
 
@@ -100,6 +106,29 @@ async function waitForSupabase_(timeoutMs=12000){
   return null;
 }
 
+function reloadForAuthenticatedStartup_(gate,status){
+  if(reloadInProgress) return;
+  const frame=targetFrame_();
+  if(!frame) return;
+  reloadInProgress=true;
+  needsReloadAfterAuth=false;
+  status.textContent='Supabase sign-in confirmed. Reloading the preview into primary mode…';
+  status.className='preview-auth-ok';
+  gate.hidden=false;
+  setTimeout(()=>{
+    frame.addEventListener('load',()=>{
+      reloadInProgress=false;
+      lastReady=false;
+      checkPreviewAuth_(false);
+    },{once:true});
+    try{
+      frame.contentWindow.location.reload();
+    }catch(error){
+      frame.src='./index.html?authenticatedPreview='+Date.now();
+    }
+  },500);
+}
+
 async function checkPreviewAuth_(interactive=false){
   const gate=ensurePreviewGate_();
   const status=document.getElementById(PREVIEW_STATUS_ID);
@@ -116,6 +145,7 @@ async function checkPreviewAuth_(interactive=false){
     const session=result&&result.data?result.data.session:null;
     if(!session||!session.user){
       lastReady=false;
+      needsReloadAfterAuth=true;
       status.textContent='Signed out. Sign in before testing Meals.';
       status.className='preview-auth-warn';
       if(!targetAuthOverlayOpen_()) gate.hidden=false;
@@ -133,6 +163,10 @@ async function checkPreviewAuth_(interactive=false){
       status.className='preview-auth-warn';
       if(!targetAuthOverlayOpen_()) gate.hidden=false;
       return false;
+    }
+    if(needsReloadAfterAuth){
+      reloadForAuthenticatedStartup_(gate,status);
+      return true;
     }
     status.textContent='Supabase session + active trip membership confirmed. Preview is ready for primary-path testing.';
     status.className='preview-auth-ok';
