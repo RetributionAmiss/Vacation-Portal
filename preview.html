@@ -19,7 +19,7 @@
         const response=await fetch('./index.html',{cache:'no-store'});
         if(!response.ok) throw new Error('Could not load preview shell ('+response.status+').');
         let html=await response.text();
-        const gate='<script type="module" src="./preview-auth-gate.js?v=alpha2.25-top-level"><\\/script>';
+        const gate='<scr'+'ipt type="module" src="./preview-auth-gate.js?v=alpha2.25-top-level"></scr'+'ipt>';
         if(!html.includes('</body>')) throw new Error('Preview shell is missing </body>.');
         html=html.replace('</body>',gate+'\n</body>');
         document.open();
