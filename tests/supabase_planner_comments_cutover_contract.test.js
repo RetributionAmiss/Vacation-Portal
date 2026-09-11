@@ -61,14 +61,15 @@ assert(
   host.includes("type !== 'Meals' && type !== 'Itinerary'") &&
   host.includes("type === 'Meals'") &&
   host.includes("{ table: 'meals', prefix: 'MEAL' }") &&
-  host.includes("{ table: 'itinerary_items', prefix: 'PLAN' }"),
-  'The host bridge must allow only Meals/Itinerary and resolve the matching Supabase parent table.'
+  host.includes("{ table: 'itinerary_items', prefix: 'PLAN' }") &&
+  host.includes('.from(spec.table)'),
+  'The host bridge must allow only Meals/Itinerary and select the parent table exclusively from that controlled mapping.'
 );
 assert(
   host.includes(".from('trip_members')") &&
   host.includes("activeClient.auth.getSession()") &&
   host.includes(".from('planner_comments')") &&
-  host.includes(".from('meals')") &&
+  host.includes("{ table: 'meals', prefix: 'MEAL' }") &&
   host.includes(".from('travelers')") &&
   !host.includes('access_token') &&
   !host.includes('refresh_token') &&
