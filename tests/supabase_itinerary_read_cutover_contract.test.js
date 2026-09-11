@@ -13,8 +13,8 @@ const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.24'"),
-  'Supabase-first Itinerary authority cleanup must bump the installed PWA cache key.'
+  config.includes("release: 'V4.4.0-alpha2.25'"),
+  'The planner-comments cutover must advance the installed PWA cache key without regressing Itinerary.'
 );
 assert(
   config.includes('itinerary:') &&
@@ -22,12 +22,12 @@ assert(
   config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
   config.includes('write: true'),
-  'Itinerary must remain Supabase-primary for reads and writes in alpha2.24.'
+  'Itinerary must remain Supabase-primary for reads and writes in alpha2.25.'
 );
 assert(
   config.includes('travelPlans:') && config.includes('packingItems:') &&
   config.includes('read: true') && config.includes('write: true'),
-  'The Itinerary cleanup must not regress completed Travel and Packing primary cutovers.'
+  'The planner-comments cutover must not regress completed Travel and Packing primary cutovers.'
 );
 assert(
   config.includes("script.src='./supabase-itinerary-bridge.js?v='"),
@@ -76,7 +76,7 @@ assert(
   clientBridge.includes('DATA.itinerarySheetsBackup=') &&
   clientBridge.includes('DATA.plannerComments=sheetsOtherComments.concat(currentItineraryComments)') &&
   clientBridge.includes("if(currentView==='meals') render();"),
-  'Sheets social data may refresh only as a background rollback snapshot while preserving Supabase Itinerary rows and Meals comments.'
+  'The Itinerary bridge must retain its nonblocking Sheets rollback snapshot without replacing Supabase Itinerary rows.'
 );
 assert(
   clientBridge.includes('DATA.itinerary=(result&&result.itinerary)||[]') &&
@@ -92,7 +92,7 @@ assert(
   clientBridge.includes('p2PlannerSocialState_.lastLoaded=Date.now()') &&
   clientBridge.indexOf("DATA.supabaseDomainSources.itinerary='supabase-primary'") <
     clientBridge.indexOf('refreshSheetsSocialBackup_(false);'),
-  'Supabase must settle as the visible authority before any Apps Script rollback refresh begins.'
+  'Supabase must settle as the visible Itinerary authority before any Apps Script rollback refresh begins.'
 );
 assert(
   clientBridge.includes("DATA.supabaseDomainSources.itinerary='supabase-primary-fallback-sheets'") &&
@@ -101,13 +101,15 @@ assert(
   clientBridge.includes('sheetsItineraryReady_(0,function(sheetError)') &&
   clientBridge.includes('legacyEnsure.apply(context,args||[])') &&
   clientBridge.includes('loadDeferredPortalData_();'),
-  'A failed primary read must explicitly promote the complete Sheets fallback path.'
+  'A failed primary Itinerary read must explicitly promote the complete Sheets fallback path.'
 );
 assert(
   clientBridge.includes("if(currentView==='meals')") &&
   clientBridge.includes('refreshSheetsSocialBackup_(false);') &&
-  !clientBridge.includes("if(currentView!=='itinerary'){\n      return legacyEnsure.apply(context,args);\n    }"),
-  'Opening Meals must refresh its Sheets-backed comments without replacing Supabase-authoritative Itinerary social rows.'
+  shell.includes("include('Client_Supabase_Planner_Comments_Bridge')") &&
+  shell.indexOf("include('Client_Supabase_Planner_Comments_Bridge')") >
+    shell.indexOf("include('Client_Supabase_Itinerary_Bridge')"),
+  'The legacy Meals rollback hook may remain in the Itinerary bridge, but the Supabase planner-comments authority layer must install later.'
 );
 assert(
   clientBridge.includes("sectionDiff_('activities'") &&
@@ -130,12 +132,12 @@ assert(
   'Sheets rollback loading must remain available even though it is no longer on the healthy primary startup path.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-24') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-25') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-bridge.js')") &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-comment-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The installed PWA must refresh all Itinerary bridges during alpha2.24 testing.'
+  'The installed PWA must keep every accepted Itinerary bridge network-first in alpha2.25.'
 );
 
 console.log('PASS Supabase-first Itinerary read authority contract');
