@@ -27,6 +27,8 @@ jobs:
         run: node --check supabase-groceries-bridge.js
       - name: Run Grocery primary cutover contract
         run: node tests/supabase_groceries_cutover_contract.test.js
+      - name: Run Grocery created_by identity regression
+        run: node tests/supabase_groceries_created_by_contract.test.js
       - name: Run accepted Meals primary cutover contract
         run: node tests/supabase_meals_cutover_contract.test.js
       - name: Run accepted Meals rollback idempotency contract
