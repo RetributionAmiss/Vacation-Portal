@@ -20,12 +20,12 @@ assert.doesNotThrow(
 );
 
 assert(
-  config.includes("release: 'V4.4.0-alpha2.26'") &&
+  config.includes("release: 'V4.4.0-alpha2.27'") &&
   config.includes("script.src='./supabase-itinerary-comment-bridge.js?v='"),
-  'alpha2.26 must keep loading the release-versioned Supabase Itinerary comment bridge.'
+  'alpha2.27 must keep loading the release-versioned Supabase Itinerary comment bridge.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-26') &&
+  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-27') &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-comment-bridge.js')"),
   'The installed PWA must keep the Itinerary comment bridge network-first.'
 );
@@ -92,7 +92,7 @@ assert(
   client.includes("textarea.scrollIntoView({block:'center'") &&
   client.includes('font-size:16px') &&
   client.includes('max-height:var(--p2-comment-vv-height'),
-  'The accepted mobile comment composer must remain intact during the Meals authority cutover.'
+  'The accepted mobile comment composer must remain intact during later planner cutovers.'
 );
 assert(
   client.includes('background:rgba(255,255,255,.025)') &&
