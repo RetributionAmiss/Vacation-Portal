@@ -27,6 +27,8 @@ jobs:
         run: node --check supabase-meals-bridge.js
       - name: Run Meals primary cutover contract
         run: node tests/supabase_meals_cutover_contract.test.js
+      - name: Run Meals rollback idempotency contract
+        run: node tests/supabase_meals_rollback_idempotency_contract.test.js
       - name: Run accepted planner-comments cutover contract
         run: node tests/supabase_planner_comments_cutover_contract.test.js
       - name: Run accepted Itinerary read regression contract
