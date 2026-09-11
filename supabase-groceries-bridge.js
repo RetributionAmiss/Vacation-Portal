@@ -73,7 +73,7 @@ async function currentMembership(activeClient) {
   const rows = Array.isArray(data) ? data : [];
   if (!rows.length) throw codedError('no_membership', 'No active trip membership is linked to this account.');
   if (rows.length > 1) throw codedError('multiple_memberships', 'Multiple active trips are not supported by Grocery List yet.');
-  return rows[0];
+  return Object.assign({}, rows[0], { auth_user_id: session.user.id });
 }
 function membershipResult(membership) {
   return {
@@ -185,7 +185,7 @@ async function upsertGrocery(activeClient, membership, input, strictPrimary) {
   if (strictPrimary && version > 0) throw versionConflict();
   const insertRow = Object.assign({}, row, {
     legacy_id: legacyId,
-    created_by: membership.traveler_id || null
+    created_by: membership.auth_user_id || null
   });
   const { error } = await activeClient.from('grocery_items').insert(insertRow);
   if (error) {
