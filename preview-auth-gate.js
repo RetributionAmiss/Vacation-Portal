@@ -1,18 +1,8 @@
 const PREVIEW_GATE_ID='vacationPreviewSupabaseAuthGate';
 const PREVIEW_STATUS_ID='vacationPreviewSupabaseAuthStatus';
-const PREVIEW_FRAME_ID='previewPortalFrame';
-let lastReady=false;
-let needsReloadAfterAuth=false;
-let reloadInProgress=false;
-
-function targetFrame_(){
-  return document.getElementById(PREVIEW_FRAME_ID);
-}
-
-function targetWindow_(){
-  const frame=targetFrame_();
-  return frame&&frame.contentWindow?frame.contentWindow:window;
-}
+const PORTAL_FRAME_ID='portalFrame';
+let portalReloadedForAuth=false;
+let authReady=false;
 
 function previewGateStyles_(){
   if(document.getElementById('vacationPreviewSupabaseAuthGateStyles')) return;
@@ -61,32 +51,24 @@ function ensurePreviewGate_(){
       </div>
     </section>`;
   document.body.appendChild(gate);
-  gate.querySelector('#previewOpenAccount').addEventListener('click',()=>openTargetAccount_());
+  gate.querySelector('#previewOpenAccount').addEventListener('click',openAccountForPreview_);
   gate.querySelector('#previewRecheckAuth').addEventListener('click',()=>checkPreviewAuth_(true));
   return gate;
 }
 
-function targetAuthOverlayOpen_(){
-  try{
-    const target=targetWindow_();
-    const overlay=target.document.getElementById('supabaseAuthOverlay');
-    return Boolean(overlay&&!overlay.hidden);
-  }catch(error){
-    return false;
-  }
+function authOverlayOpen_(){
+  const overlay=document.getElementById('supabaseAuthOverlay');
+  return Boolean(overlay&&!overlay.hidden);
 }
 
-function openTargetAccount_(){
+function openAccountForPreview_(){
   const gate=ensurePreviewGate_();
-  try{
-    const target=targetWindow_();
-    const account=target.document.getElementById('supabaseAccountButton');
-    if(account){
-      gate.hidden=true;
-      account.click();
-      return true;
-    }
-  }catch(error){}
+  const account=document.getElementById('supabaseAccountButton');
+  if(account){
+    gate.hidden=true;
+    account.click();
+    return true;
+  }
   const status=document.getElementById(PREVIEW_STATUS_ID);
   status.textContent='The account control is still loading. Try again in a moment.';
   status.className='preview-auth-warn';
@@ -97,88 +79,102 @@ function openTargetAccount_(){
 async function waitForSupabase_(timeoutMs=12000){
   const started=Date.now();
   while(Date.now()-started<timeoutMs){
-    try{
-      const target=targetWindow_();
-      if(target.VacationSupabase&&target.VacationSupabase.auth) return target.VacationSupabase;
-    }catch(error){}
+    if(window.VacationSupabase&&window.VacationSupabase.auth) return window.VacationSupabase;
     await new Promise(resolve=>setTimeout(resolve,150));
   }
   return null;
 }
 
-function reloadForAuthenticatedStartup_(gate,status){
-  if(reloadInProgress) return;
-  const frame=targetFrame_();
-  if(!frame) return;
-  reloadInProgress=true;
-  needsReloadAfterAuth=false;
-  status.textContent='Supabase sign-in confirmed. Reloading the preview into primary mode…';
+function reloadPortalFrameForAuth_(gate,status){
+  if(portalReloadedForAuth) return true;
+  const frame=document.getElementById(PORTAL_FRAME_ID);
+  if(!frame) return false;
+
+  portalReloadedForAuth=true;
+  status.textContent='Supabase session confirmed. Restarting the portal in primary mode…';
   status.className='preview-auth-ok';
   gate.hidden=false;
-  setTimeout(()=>{
-    frame.addEventListener('load',()=>{
-      reloadInProgress=false;
-      lastReady=false;
-      checkPreviewAuth_(false);
-    },{once:true});
-    try{
-      frame.contentWindow.location.reload();
-    }catch(error){
-      frame.src='./index.html?authenticatedPreview='+Date.now();
-    }
-  },500);
+
+  try{
+    const current=new URL(frame.src,window.location.href);
+    current.searchParams.set('previewAuthReady',Date.now().toString());
+    frame.src=current.toString();
+  }catch(error){
+    frame.src=frame.src;
+  }
+
+  frame.addEventListener('load',()=>{
+    status.textContent='Supabase session + active trip membership confirmed. Preview is ready for primary-path testing.';
+    status.className='preview-auth-ok';
+    authReady=true;
+    setTimeout(()=>{gate.hidden=true;},700);
+  },{once:true});
+  return true;
 }
 
 async function checkPreviewAuth_(interactive=false){
   const gate=ensurePreviewGate_();
   const status=document.getElementById(PREVIEW_STATUS_ID);
   const client=await waitForSupabase_();
+
   if(!client){
-    lastReady=false;
+    authReady=false;
     status.textContent='Supabase auth did not initialize. Do not run the checklist yet.';
     status.className='preview-auth-warn';
     gate.hidden=false;
     return false;
   }
+
   try{
     const result=await client.auth.getSession();
     const session=result&&result.data?result.data.session:null;
     if(!session||!session.user){
-      lastReady=false;
-      needsReloadAfterAuth=true;
+      authReady=false;
+      portalReloadedForAuth=false;
       status.textContent='Signed out. Sign in before testing Meals.';
       status.className='preview-auth-warn';
-      if(!targetAuthOverlayOpen_()) gate.hidden=false;
-      if(interactive) openTargetAccount_();
+      if(!authOverlayOpen_()) gate.hidden=false;
+      if(interactive) openAccountForPreview_();
       return false;
     }
+
     const membership=await client
       .from('trip_members')
       .select('trip_id,traveler_id,role,active')
       .eq('auth_user_id',session.user.id)
       .eq('active',true);
+
     if(membership.error||!(membership.data||[]).length){
-      lastReady=false;
+      authReady=false;
       status.textContent='Signed in, but no active trip membership resolved. Do not run the checklist yet.';
       status.className='preview-auth-warn';
-      if(!targetAuthOverlayOpen_()) gate.hidden=false;
+      if(!authOverlayOpen_()) gate.hidden=false;
       return false;
     }
-    if(needsReloadAfterAuth){
-      reloadForAuthenticatedStartup_(gate,status);
+
+    if(!portalReloadedForAuth){
+      if(!reloadPortalFrameForAuth_(gate,status)){
+        status.textContent='Portal frame is still loading. Waiting to start primary-mode testing…';
+        status.className='preview-auth-warn';
+        gate.hidden=false;
+      }
       return true;
     }
-    status.textContent='Supabase session + active trip membership confirmed. Preview is ready for primary-path testing.';
-    status.className='preview-auth-ok';
-    if(!lastReady) setTimeout(()=>{gate.hidden=true;},700);
-    else gate.hidden=true;
-    lastReady=true;
+
+    if(!authReady){
+      status.textContent='Supabase session confirmed. Waiting for the portal restart…';
+      status.className='preview-auth-ok';
+      gate.hidden=false;
+      return true;
+    }
+
+    gate.hidden=true;
     return true;
   }catch(error){
-    lastReady=false;
+    authReady=false;
     status.textContent='Supabase session check failed. Do not run the checklist yet.';
     status.className='preview-auth-warn';
-    if(!targetAuthOverlayOpen_()) gate.hidden=false;
+    if(!authOverlayOpen_()) gate.hidden=false;
     return false;
   }
 }
