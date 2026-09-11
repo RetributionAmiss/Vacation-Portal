@@ -13,8 +13,9 @@ window.VACATION_PORTAL_CONFIG = {
   supabasePublishableKey: 'sb_publishable_yjxTF_SnLstt0Duuv9-M5A_sPMARO-2',
 
   // Travel Plans, Packing, Itinerary, Meals, Grocery List, and planner comments
-  // use Supabase as primary read/write sources. Apps Script / Sheets remains a
-  // rollback copy and is updated only after a successful primary write.
+  // use Supabase as primary read/write sources. The finalized rental remains
+  // Sheets-authoritative in alpha2.28 while an authenticated Supabase shadow
+  // read verifies the parent record needed by the later Payments migration.
   supabaseDomains: {
     travelPlans: {
       shadowRead: false,
@@ -51,13 +52,19 @@ window.VACATION_PORTAL_CONFIG = {
       shadowWrite: false,
       read: true,
       write: true
+    },
+    rentals: {
+      shadowRead: true,
+      shadowWrite: false,
+      read: false,
+      write: false
     }
   },
 
   // The PWA shell sends this value to the Apps Script iframe URL. Bump it
   // whenever the deployed shell changes so browsers cannot keep showing stale
   // HTML/CSS/host behavior from a prior release.
-  release: 'V4.4.0-alpha2.27'
+  release: 'V4.4.0-alpha2.28'
 };
 
 (function loadVacationSupabaseAuth_(){
@@ -187,6 +194,19 @@ window.VACATION_PORTAL_CONFIG = {
     document.head.appendChild(script);
   }catch(error){
     console.warn('Supabase Grocery bridge could not be loaded.',error);
+  }
+})();
+
+(function loadVacationSupabaseRentalsShadowBridge_(){
+  try{
+    const script=document.createElement('script');
+    script.type='module';
+    script.src='./supabase-rentals-shadow-bridge.js?v='+encodeURIComponent(
+      String(window.VACATION_PORTAL_CONFIG.release||'')
+    );
+    document.head.appendChild(script);
+  }catch(error){
+    console.warn('Supabase finalized-rental shadow bridge could not be loaded.',error);
   }
 })();
 

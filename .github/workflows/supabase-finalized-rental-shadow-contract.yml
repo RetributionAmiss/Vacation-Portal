@@ -1,0 +1,51 @@
+name: Supabase Finalized Rental Shadow Contract
+
+on:
+  push:
+    branches:
+      - main
+      - feature/supabase-finalized-rental-shadow
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  finalized-rental-shadow-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate finalized-rental host bridge syntax
+        run: node --check supabase-rentals-shadow-bridge.js
+      - name: Run finalized-rental shadow contract
+        run: node tests/supabase_finalized_rental_shadow_contract.test.js
+      - name: Run finalized-rental legacy behavior contract
+        run: node tests/finalized_rental_mode_contract.test.js
+      - name: Run payment math and load regressions
+        run: |
+          node tests/payment_schedule_contract.test.js
+          node tests/payment_load_performance_contract.test.js
+          node tests/payment_installment_generation_contract.test.js
+          node tests/payment_remaining_balance_contract.test.js
+          node tests/privacy_pricing_equivalence_contract.test.js
+      - name: Run accepted Supabase domain regressions
+        run: |
+          node tests/supabase_groceries_cutover_contract.test.js
+          node tests/supabase_groceries_created_by_contract.test.js
+          node tests/supabase_meals_cutover_contract.test.js
+          node tests/supabase_meals_rollback_idempotency_contract.test.js
+          node tests/supabase_planner_comments_cutover_contract.test.js
+          node tests/supabase_itinerary_read_cutover_contract.test.js
+          node tests/supabase_itinerary_write_cutover_contract.test.js
+          node tests/supabase_itinerary_concurrency_contract.test.js
+          node tests/supabase_itinerary_comment_lifecycle_contract.test.js
+          node tests/supabase_packing_read_cutover_contract.test.js
+          node tests/supabase_travel_read_cutover_contract.test.js

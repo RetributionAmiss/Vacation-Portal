@@ -1,0 +1,133 @@
+<script>
+(function installFinalizedRentalSupabaseShadow_(){
+  const REQUEST_TYPE='vacation-portal-supabase-rentals-request';
+  const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
+  const OP_READ='finalizedRental.read';
+  const pending={};
+  let lastFingerprint='';
+  let requestSequence=0;
+
+  const COMPARE_FIELDS=[
+    'Cabin ID','Provider','Provider Property ID','Cabin Name','Nickname',
+    'Rental URL','Original Rental URL','Location','Sleeps','Bedrooms','Bathrooms',
+    'Total Rental Cost','Nightly Rate','Rating','Review Count','Image URL',
+    'Description','Cancellation Policy','Fees and Taxes','House Rules','Parking',
+    'Accessibility','Nearby Highlights','Import Stage','Import Confidence','Status','Active'
+  ];
+  const NUMBER_FIELDS={
+    'Sleeps':true,'Bedrooms':true,'Bathrooms':true,'Total Rental Cost':true,
+    'Nightly Rate':true,'Rating':true,'Review Count':true,'Import Confidence':true
+  };
+
+  function selectedFinalizedCabin_(){
+    if(!window.DATA||!DATA.trip) return null;
+    const trip=DATA.trip||{};
+    const selected=String(trip['Selected Cabin ID']||DATA.finalizedRentalId||'').trim();
+    const stage=String(trip['Portal Stage']||'').trim();
+    const closedFlag=String(trip['Final Voting Closed']||'No').trim().toLowerCase()==='yes';
+    const focused=Boolean(DATA.finalizedRentalOnly&&DATA.finalizedRentalId);
+    if(!selected||!(closedFlag||stage==='Voting Closed'||focused)) return null;
+    return (DATA.cabins||[]).find(function(cabin){
+      return String(cabin&&cabin['Cabin ID']||'').trim()===selected;
+    })||null;
+  }
+
+  function normalize_(field,value){
+    if(NUMBER_FIELDS[field]){
+      const number=Number(value||0);
+      return isFinite(number)?Math.round(number*100)/100:0;
+    }
+    return String(value===null||value===undefined?'':value).replace(/\r\n/g,'\n').trim();
+  }
+
+  function compare_(sheetRental,supabaseRental){
+    const mismatches=[];
+    COMPARE_FIELDS.forEach(function(field){
+      const sheetValue=normalize_(field,sheetRental&&sheetRental[field]);
+      const supabaseValue=normalize_(field,supabaseRental&&supabaseRental[field]);
+      if(sheetValue!==supabaseValue){
+        mismatches.push({field:field,sheet:sheetValue,supabase:supabaseValue});
+      }
+    });
+    return mismatches;
+  }
+
+  function requestShadow_(cabin){
+    const legacyId=String(cabin&&cabin['Cabin ID']||'').trim();
+    if(!legacyId) return;
+    const fingerprint=COMPARE_FIELDS.map(function(field){
+      return field+'='+String(normalize_(field,cabin[field]));
+    }).join('|');
+    if(fingerprint===lastFingerprint) return;
+    lastFingerprint=fingerprint;
+
+    const requestId='finalized-rental-shadow-'+Date.now().toString(36)+'-'+(++requestSequence).toString(36);
+    pending[requestId]={legacyId:legacyId,sheetRental:cabin};
+    try{
+      window.top.postMessage({
+        type:REQUEST_TYPE,
+        requestId:requestId,
+        operation:OP_READ,
+        legacyId:legacyId
+      },'*');
+    }catch(error){
+      delete pending[requestId];
+      DATA.supabaseFinalizedRentalShadow={
+        status:'unavailable',legacyId:legacyId,error:String(error&&error.message||error||'bridge_post_failed')
+      };
+    }
+  }
+
+  window.addEventListener('message',function(event){
+    const data=event&&event.data||{};
+    if(data.type!==RESPONSE_TYPE) return;
+
+    const requestId=String(data.requestId||'');
+    const owned=pending[requestId];
+    if(!owned) return;
+    delete pending[requestId];
+
+    // This shadow layer is diagnostics-only. It never mutates DATA.cabins,
+    // never changes the selected cabin, and never changes render authority.
+    if(!data.ok){
+      DATA.supabaseFinalizedRentalShadow={
+        status:'unavailable',
+        legacyId:owned.legacyId,
+        errorCode:String(data.error&&data.error.code||'shadow_read_failed'),
+        error:String(data.error&&data.error.message||'Supabase finalized-rental shadow read failed.')
+      };
+      console.warn('Supabase finalized-rental shadow unavailable.',DATA.supabaseFinalizedRentalShadow);
+      return;
+    }
+
+    const result=data.data||{};
+    const mismatches=compare_(owned.sheetRental,result.rental||{});
+    DATA.supabaseFinalizedRentalShadow={
+      status:mismatches.length?'mismatch':'match',
+      source:String(result.source||'supabase-shadow'),
+      primary:false,
+      legacyId:owned.legacyId,
+      mismatchCount:mismatches.length,
+      mismatches:mismatches,
+      checkedAt:new Date().toISOString()
+    };
+
+    if(mismatches.length){
+      console.warn('Supabase finalized-rental shadow mismatch.',DATA.supabaseFinalizedRentalShadow);
+    }else{
+      console.info('Supabase finalized-rental shadow matches Sheets for '+owned.legacyId+'.');
+    }
+  });
+
+  function check_(){
+    const cabin=selectedFinalizedCabin_();
+    if(cabin) requestShadow_(cabin);
+  }
+
+  // Stay outside the render/data authority chain. Polling a tiny in-memory
+  // fingerprint avoids wrapping render(), loadDeferredPortalData_(), or any
+  // accepted Supabase primary bridge.
+  setInterval(check_,1500);
+  setTimeout(check_,0);
+})();
+</script>
