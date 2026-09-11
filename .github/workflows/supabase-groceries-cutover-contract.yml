@@ -42,6 +42,6 @@ jobs:
       - name: Run accepted Itinerary concurrency contract
         run: node tests/supabase_itinerary_concurrency_contract.test.js
       - name: Run accepted Packing cutover contract
-        run: node tests/supabase_packing_cutover_contract.test.js
+        run: node tests/supabase_packing_read_cutover_contract.test.js
       - name: Run accepted Travel cutover contract
-        run: node tests/supabase_travel_cutover_contract.test.js
+        run: node tests/supabase_travel_read_cutover_contract.test.js
