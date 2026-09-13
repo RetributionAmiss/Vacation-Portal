@@ -6,6 +6,8 @@ on:
       - test/supabase-finalized-rental-alpha2-28-preview
     paths:
       - .github/workflows/apps-script-alpha2-28-finalized-rental-preview.yml
+      - Client_Supabase_Finalized_Rental_Shadow.html
+      - tests/supabase_finalized_rental_shadow_contract.test.js
   workflow_dispatch:
 
 permissions:
