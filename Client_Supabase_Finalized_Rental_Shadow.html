@@ -129,11 +129,15 @@
     const requestId=String(data.requestId||'');
     const owned=pending[requestId];
     if(!owned) return;
-    finishPending_(requestId,true);
 
     // This shadow layer is diagnostics-only. It never mutates DATA.cabins,
     // never changes the selected cabin, and never changes render authority.
+    // Error responses are not terminal: clear the in-flight fingerprint and
+    // retry later so an auth/module startup race cannot permanently suppress
+    // the shadow comparison for this cabin.
     if(!data.ok){
+      finishPending_(requestId,false);
+      retryNotBefore=Date.now()+RETRY_DELAY_MS;
       setUnavailable_(
         owned.legacyId,
         String(data.error&&data.error.code||'shadow_read_failed'),
@@ -142,6 +146,7 @@
       return;
     }
 
+    finishPending_(requestId,true);
     const result=data.data||{};
     const mismatches=compare_(owned.sheetRental,result.rental||{});
     DATA.supabaseFinalizedRentalShadow={
