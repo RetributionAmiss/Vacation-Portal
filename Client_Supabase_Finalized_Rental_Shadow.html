@@ -37,6 +37,12 @@
       const number=Number(value||0);
       return isFinite(number)?Math.round(number*100)/100:0;
     }
+    if(field==='Active'){
+      const active=String(value===null||value===undefined?'':value).trim().toLowerCase();
+      if(!active||active==='yes'||active==='true'||active==='1'||active==='on') return 'Yes';
+      if(active==='no'||active==='false'||active==='0'||active==='off') return 'No';
+      return active;
+    }
     return String(value===null||value===undefined?'':value).replace(/\r\n/g,'\n').trim();
   }
 
