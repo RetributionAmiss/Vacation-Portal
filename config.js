@@ -67,6 +67,11 @@ window.VACATION_PORTAL_CONFIG = {
   release: 'V4.4.0-alpha2.28'
 };
 
+window.VACATION_PORTAL_PREVIEW={
+  enabled:true,
+  name:'alpha2.28-finalized-rental-shadow'
+};
+
 (function loadVacationSupabaseAuth_(){
   try{
     const script=document.createElement('script');
@@ -207,6 +212,19 @@ window.VACATION_PORTAL_CONFIG = {
     document.head.appendChild(script);
   }catch(error){
     console.warn('Supabase finalized-rental shadow bridge could not be loaded.',error);
+  }
+})();
+
+(function loadFinalizedRentalPreviewGate_(){
+  try{
+    const script=document.createElement('script');
+    script.type='module';
+    script.src='./preview-auth-gate.js?v='+encodeURIComponent(
+      String(window.VACATION_PORTAL_CONFIG.release||'')+'-direct-shell'
+    );
+    document.head.appendChild(script);
+  }catch(error){
+    console.warn('Alpha2.28 preview gate could not be loaded.',error);
   }
 })();
 
