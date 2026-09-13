@@ -32,6 +32,9 @@ assert(client.includes("const owned=pending[requestId];")&&client.includes("if(!
 assert(client.includes("trip['Selected Cabin ID']")&&client.includes("stage==='Voting Closed'"),'Comparator must only target the finalized selected cabin.');
 assert(client.includes("if(field==='Active')")&&client.includes("if(!active||active==='yes'||active==='true'||active==='1'||active==='on') return 'Yes';"),'Blank Sheet Active values must retain the portal\'s existing default-active semantics during shadow comparison.');
 assert(client.includes("status:mismatches.length?'mismatch':'match'"),'Comparator must report explicit match/mismatch state.');
+assert(client.includes('const RESPONSE_TIMEOUT_MS=8000;')&&client.includes('const RETRY_DELAY_MS=1500;'),'Shadow request must have a bounded startup-race timeout and retry delay.');
+assert(client.includes("if(fingerprint===completedFingerprint||inFlightFingerprint||Date.now()<retryNotBefore) return;")&&client.includes("finishPending_(requestId,false)"),'A dropped startup request must clear its in-flight fingerprint so the same finalized rental can retry.');
+assert(client.includes("'shadow_bridge_timeout'")&&client.includes('The check will retry.'),'Timeout diagnostics must distinguish a lost bridge startup message from a completed comparison.');
 assert(!/DATA\.cabins\s*=/.test(client),'Shadow comparator must never replace DATA.cabins.');
 assert(!/\.push\s*\([^\n]*DATA\.cabins/.test(client),'Shadow comparator must not mutate the visible cabin collection.');
 assert(client.includes("primary:false"),'Client diagnostics must record that this is not primary authority.');
