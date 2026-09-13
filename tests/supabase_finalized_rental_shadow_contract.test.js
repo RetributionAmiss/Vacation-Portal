@@ -39,6 +39,10 @@ assert(!/DATA\.cabins\s*=/.test(client),'Shadow comparator must never replace DA
 assert(!/\.push\s*\([^\n]*DATA\.cabins/.test(client),'Shadow comparator must not mutate the visible cabin collection.');
 assert(client.includes("primary:false"),'Client diagnostics must record that this is not primary authority.');
 
+assert(client.includes("const BADGE_ID='supabase-finalized-rental-shadow-test-badge';"),'Shadow test badge must remain explicitly identifiable.');
+assert(client.includes("setBadge_('checking'")&&client.includes("setBadge_('match'")&&client.includes("setBadge_('mismatch'")&&client.includes("setBadge_('unavailable'"),'Shadow test badge must surface checking, match, mismatch, and unavailable states.');
+assert(client.includes("'position:fixed'")&&client.includes("'pointer-events:none'"),'Shadow test badge must remain non-interactive and outside rental render authority.');
+
 for(const forbidden of ['Price Cap','Cost %','Pay More','traveler_admin','traveler_private']){
   assert(!host.includes(forbidden),`Rental shadow DTO must not expose private/organizer field: ${forbidden}`);
 }
