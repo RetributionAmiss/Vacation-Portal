@@ -30,6 +30,7 @@ assert(host.includes("primary: false")&&host.includes("shadow: true"),'Shadow re
 
 assert(client.includes("const owned=pending[requestId];")&&client.includes("if(!owned) return;"),'Shared domain responses must be scoped by owned requestId before processing.');
 assert(client.includes("trip['Selected Cabin ID']")&&client.includes("stage==='Voting Closed'"),'Comparator must only target the finalized selected cabin.');
+assert(client.includes("if(field==='Active')")&&client.includes("if(!active||active==='yes'||active==='true'||active==='1'||active==='on') return 'Yes';"),'Blank Sheet Active values must retain the portal\'s existing default-active semantics during shadow comparison.');
 assert(client.includes("status:mismatches.length?'mismatch':'match'"),'Comparator must report explicit match/mismatch state.');
 assert(!/DATA\.cabins\s*=/.test(client),'Shadow comparator must never replace DATA.cabins.');
 assert(!/\.push\s*\([^\n]*DATA\.cabins/.test(client),'Shadow comparator must not mutate the visible cabin collection.');
