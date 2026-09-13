@@ -6,9 +6,11 @@ const shadowReadEnabled = domainConfig.shadowRead === true;
 const primaryReadEnabled = domainConfig.read === true;
 const supabaseUrl = String(config.supabaseUrl || '').trim();
 const publishableKey = String(config.supabasePublishableKey || '').trim();
+const previewEnabled = Boolean(window.VACATION_PORTAL_PREVIEW && window.VACATION_PORTAL_PREVIEW.enabled);
 
 const REQUEST_TYPE = 'vacation-portal-supabase-rentals-request';
 const RESPONSE_TYPE = 'vacation-portal-supabase-domain-response';
+const PREVIEW_DIAGNOSTIC_TYPE = 'vacation-portal-preview-finalized-rental-shadow-diagnostic';
 const OP_STATUS = 'finalizedRental.status';
 const OP_READ = 'finalizedRental.read';
 const AUTH_CLIENT_WAIT_MS = 3000;
@@ -32,6 +34,19 @@ function isTrustedAppsScriptOrigin(origin) {
 function isEligiblePortalRequest(event) {
   if (!event || !event.source || event.source === window) return false;
   return Boolean(childFrameForSource(event.source)) || isTrustedAppsScriptOrigin(event.origin);
+}
+function publishPreviewStage(stage, legacyId, status = 'checking', errorCode = '') {
+  if (!previewEnabled) return;
+  try {
+    window.postMessage({
+      type: PREVIEW_DIAGNOSTIC_TYPE,
+      status: String(status || 'checking'),
+      stage: String(stage || ''),
+      legacyId: String(legacyId || ''),
+      mismatchCount: 0,
+      errorCode: String(errorCode || '')
+    }, '*');
+  } catch (error) {}
 }
 function reply(target, targetOrigin, payload) {
   if (!target || typeof target.postMessage !== 'function') return;
@@ -142,26 +157,41 @@ async function handleRequest(data) {
   if (operation !== OP_READ) throw codedError('unsupported_operation', 'Unsupported finalized-rental shadow operation.');
   if (!shadowReadEnabled || primaryReadEnabled) throw codedError('feature_disabled', 'Finalized-rental shadow read is not enabled for this release.');
 
+  publishPreviewStage('host-auth', data && data.legacyId);
   const activeClient = await getSupabaseClient();
   const membership = await currentMembership(activeClient);
+  publishPreviewStage('host-membership-ok', data && data.legacyId);
   return readFinalizedRental(activeClient, membership, data && data.legacyId);
 }
 
 window.addEventListener('message', event => {
   const data = event && event.data || {};
-  if (data.type !== REQUEST_TYPE || !isEligiblePortalRequest(event)) return;
+  if (data.type !== REQUEST_TYPE) return;
+  const legacyId = String(data.legacyId || '');
+  if (!isEligiblePortalRequest(event)) {
+    publishPreviewStage('host-request-rejected', legacyId, 'unavailable', 'untrusted_request_source');
+    return;
+  }
   const requestId = String(data.requestId || '');
   if (!requestId) return;
 
+  publishPreviewStage('host-request-received', legacyId);
   Promise.resolve()
     .then(() => handleRequest(data))
-    .then(result => reply(event.source, event.origin, { requestId, ok: true, data: result }))
-    .catch(error => reply(event.source, event.origin, {
-      requestId,
-      ok: false,
-      error: {
-        code: String(error && error.code || error && error.name || 'finalized_rental_shadow_error'),
-        message: String(error && error.message || 'Supabase finalized-rental shadow read failed.')
-      }
-    }));
+    .then(result => {
+      publishPreviewStage('host-read-ok', legacyId);
+      reply(event.source, event.origin, { requestId, ok: true, data: result });
+    })
+    .catch(error => {
+      const code = String(error && error.code || error && error.name || 'finalized_rental_shadow_error');
+      publishPreviewStage('host-read-error', legacyId, 'unavailable', code);
+      reply(event.source, event.origin, {
+        requestId,
+        ok: false,
+        error: {
+          code,
+          message: String(error && error.message || 'Supabase finalized-rental shadow read failed.')
+        }
+      });
+    });
 });
