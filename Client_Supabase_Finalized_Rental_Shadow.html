@@ -4,8 +4,12 @@
   const RESPONSE_TYPE='vacation-portal-supabase-domain-response';
   const OP_READ='finalizedRental.read';
   const PREVIEW_DIAGNOSTIC_TYPE='vacation-portal-preview-finalized-rental-shadow-diagnostic';
+  const RESPONSE_TIMEOUT_MS=8000;
+  const RETRY_DELAY_MS=1500;
   const pending={};
-  let lastFingerprint='';
+  let completedFingerprint='';
+  let inFlightFingerprint='';
+  let retryNotBefore=0;
   let requestSequence=0;
 
   const COMPARE_FIELDS=[
@@ -73,17 +77,50 @@
     }catch(error){}
   }
 
+  function setUnavailable_(legacyId,errorCode,errorMessage){
+    DATA.supabaseFinalizedRentalShadow={
+      status:'unavailable',
+      legacyId:String(legacyId||''),
+      errorCode:String(errorCode||'shadow_read_failed'),
+      error:String(errorMessage||'Supabase finalized-rental shadow read failed.')
+    };
+    publishPreviewDiagnostic_(DATA.supabaseFinalizedRentalShadow);
+    console.warn('Supabase finalized-rental shadow unavailable.',DATA.supabaseFinalizedRentalShadow);
+  }
+
+  function finishPending_(requestId,markCompleted){
+    const owned=pending[requestId];
+    if(!owned) return null;
+    if(owned.timeoutId) clearTimeout(owned.timeoutId);
+    delete pending[requestId];
+    if(inFlightFingerprint===owned.fingerprint) inFlightFingerprint='';
+    if(markCompleted) completedFingerprint=owned.fingerprint;
+    return owned;
+  }
+
   function requestShadow_(cabin){
     const legacyId=String(cabin&&cabin['Cabin ID']||'').trim();
     if(!legacyId) return;
     const fingerprint=COMPARE_FIELDS.map(function(field){
       return field+'='+String(normalize_(field,cabin[field]));
     }).join('|');
-    if(fingerprint===lastFingerprint) return;
-    lastFingerprint=fingerprint;
+    if(fingerprint===completedFingerprint||inFlightFingerprint||Date.now()<retryNotBefore) return;
 
     const requestId='finalized-rental-shadow-'+Date.now().toString(36)+'-'+(++requestSequence).toString(36);
-    pending[requestId]={legacyId:legacyId,sheetRental:cabin};
+    inFlightFingerprint=fingerprint;
+    pending[requestId]={legacyId:legacyId,sheetRental:cabin,fingerprint:fingerprint,timeoutId:null};
+    publishPreviewDiagnostic_({status:'checking',legacyId:legacyId,mismatchCount:0});
+    pending[requestId].timeoutId=setTimeout(function(){
+      const owned=finishPending_(requestId,false);
+      if(!owned) return;
+      retryNotBefore=Date.now()+RETRY_DELAY_MS;
+      setUnavailable_(
+        owned.legacyId,
+        'shadow_bridge_timeout',
+        'Timed out waiting for the Supabase finalized-rental shadow bridge. The check will retry.'
+      );
+    },RESPONSE_TIMEOUT_MS);
+
     try{
       window.top.postMessage({
         type:REQUEST_TYPE,
@@ -92,11 +129,13 @@
         legacyId:legacyId
       },'*');
     }catch(error){
-      delete pending[requestId];
-      DATA.supabaseFinalizedRentalShadow={
-        status:'unavailable',legacyId:legacyId,error:String(error&&error.message||error||'bridge_post_failed')
-      };
-      publishPreviewDiagnostic_(DATA.supabaseFinalizedRentalShadow);
+      const owned=finishPending_(requestId,false);
+      retryNotBefore=Date.now()+RETRY_DELAY_MS;
+      setUnavailable_(
+        owned&&owned.legacyId||legacyId,
+        'bridge_post_failed',
+        String(error&&error.message||error||'bridge_post_failed')
+      );
     }
   }
 
@@ -107,19 +146,16 @@
     const requestId=String(data.requestId||'');
     const owned=pending[requestId];
     if(!owned) return;
-    delete pending[requestId];
+    finishPending_(requestId,true);
 
     // This shadow layer is diagnostics-only. It never mutates DATA.cabins,
     // never changes the selected cabin, and never changes render authority.
     if(!data.ok){
-      DATA.supabaseFinalizedRentalShadow={
-        status:'unavailable',
-        legacyId:owned.legacyId,
-        errorCode:String(data.error&&data.error.code||'shadow_read_failed'),
-        error:String(data.error&&data.error.message||'Supabase finalized-rental shadow read failed.')
-      };
-      publishPreviewDiagnostic_(DATA.supabaseFinalizedRentalShadow);
-      console.warn('Supabase finalized-rental shadow unavailable.',DATA.supabaseFinalizedRentalShadow);
+      setUnavailable_(
+        owned.legacyId,
+        String(data.error&&data.error.code||'shadow_read_failed'),
+        String(data.error&&data.error.message||'Supabase finalized-rental shadow read failed.')
+      );
       return;
     }
 
@@ -150,7 +186,8 @@
 
   // Stay outside the render/data authority chain. Polling a tiny in-memory
   // fingerprint avoids wrapping render(), loadDeferredPortalData_(), or any
-  // accepted Supabase primary bridge.
+  // accepted Supabase primary bridge. A lost startup message times out and
+  // retries so bridge/module load order cannot leave the shadow permanently pending.
   setInterval(check_,1500);
   setTimeout(check_,0);
 })();
