@@ -11,6 +11,7 @@
   let inFlightFingerprint='';
   let retryNotBefore=0;
   let requestSequence=0;
+  let lastEligibilityStage='';
 
   const COMPARE_FIELDS=[
     'Cabin ID','Provider','Provider Property ID','Cabin Name','Nickname',
@@ -24,17 +25,61 @@
     'Nightly Rate':true,'Rating':true,'Review Count':true,'Import Confidence':true
   };
 
+  function publishPreviewDiagnostic_(diagnostic){
+    // Preview-only branch relay. Deliberately sends no rental values or mismatch
+    // contents; it exists only so the isolated top-level harness can show the
+    // manual acceptance status without requiring browser DevTools.
+    try{
+      window.top.postMessage({
+        type:PREVIEW_DIAGNOSTIC_TYPE,
+        status:String(diagnostic&&diagnostic.status||'unavailable'),
+        stage:String(diagnostic&&diagnostic.stage||''),
+        legacyId:String(diagnostic&&diagnostic.legacyId||''),
+        mismatchCount:Number(diagnostic&&diagnostic.mismatchCount||0),
+        errorCode:String(diagnostic&&diagnostic.errorCode||'')
+      },'*');
+    }catch(error){}
+  }
+
+  function publishEligibilityStage_(stage,legacyId){
+    const key=String(stage||'')+'|'+String(legacyId||'');
+    if(key===lastEligibilityStage) return;
+    lastEligibilityStage=key;
+    publishPreviewDiagnostic_({
+      status:'waiting',
+      stage:String(stage||'sheet-data'),
+      legacyId:String(legacyId||''),
+      mismatchCount:0
+    });
+  }
+
   function selectedFinalizedCabin_(){
-    if(!window.DATA||!DATA.trip) return null;
+    if(!window.DATA||!DATA.trip){
+      publishEligibilityStage_('sheet-data');
+      return null;
+    }
     const trip=DATA.trip||{};
     const selected=String(trip['Selected Cabin ID']||DATA.finalizedRentalId||'').trim();
     const stage=String(trip['Portal Stage']||'').trim();
     const closedFlag=String(trip['Final Voting Closed']||'No').trim().toLowerCase()==='yes';
     const focused=Boolean(DATA.finalizedRentalOnly&&DATA.finalizedRentalId);
-    if(!selected||!(closedFlag||stage==='Voting Closed'||focused)) return null;
-    return (DATA.cabins||[]).find(function(cabin){
-      return String(cabin&&cabin['Cabin ID']||'').trim()===selected;
+    if(!selected){
+      publishEligibilityStage_('selected-cabin-id');
+      return null;
+    }
+    if(!(closedFlag||stage==='Voting Closed'||focused)){
+      publishEligibilityStage_('voting-closed',selected);
+      return null;
+    }
+    const cabin=(DATA.cabins||[]).find(function(row){
+      return String(row&&row['Cabin ID']||'').trim()===selected;
     })||null;
+    if(!cabin){
+      publishEligibilityStage_('selected-cabin-row',selected);
+      return null;
+    }
+    lastEligibilityStage='';
+    return cabin;
   }
 
   function normalize_(field,value){
@@ -63,23 +108,10 @@
     return mismatches;
   }
 
-  function publishPreviewDiagnostic_(diagnostic){
-    // Preview-only branch relay. Deliberately sends no rental values or mismatch
-    // contents; it exists only so the isolated top-level harness can show the
-    // manual acceptance status without requiring browser DevTools.
-    try{
-      window.top.postMessage({
-        type:PREVIEW_DIAGNOSTIC_TYPE,
-        status:String(diagnostic&&diagnostic.status||'unavailable'),
-        legacyId:String(diagnostic&&diagnostic.legacyId||''),
-        mismatchCount:Number(diagnostic&&diagnostic.mismatchCount||0)
-      },'*');
-    }catch(error){}
-  }
-
   function setUnavailable_(legacyId,errorCode,errorMessage){
     DATA.supabaseFinalizedRentalShadow={
       status:'unavailable',
+      stage:'client-error',
       legacyId:String(legacyId||''),
       errorCode:String(errorCode||'shadow_read_failed'),
       error:String(errorMessage||'Supabase finalized-rental shadow read failed.')
@@ -109,7 +141,7 @@
     const requestId='finalized-rental-shadow-'+Date.now().toString(36)+'-'+(++requestSequence).toString(36);
     inFlightFingerprint=fingerprint;
     pending[requestId]={legacyId:legacyId,sheetRental:cabin,fingerprint:fingerprint,timeoutId:null};
-    publishPreviewDiagnostic_({status:'checking',legacyId:legacyId,mismatchCount:0});
+    publishPreviewDiagnostic_({status:'checking',stage:'request-posted',legacyId:legacyId,mismatchCount:0});
     pending[requestId].timeoutId=setTimeout(function(){
       const owned=finishPending_(requestId,false);
       if(!owned) return;
@@ -146,11 +178,15 @@
     const requestId=String(data.requestId||'');
     const owned=pending[requestId];
     if(!owned) return;
-    finishPending_(requestId,true);
 
     // This shadow layer is diagnostics-only. It never mutates DATA.cabins,
     // never changes the selected cabin, and never changes render authority.
+    // Error responses are not terminal: clear the in-flight fingerprint and
+    // retry later so an auth/module startup race cannot permanently suppress
+    // the shadow comparison for this cabin.
     if(!data.ok){
+      finishPending_(requestId,false);
+      retryNotBefore=Date.now()+RETRY_DELAY_MS;
       setUnavailable_(
         owned.legacyId,
         String(data.error&&data.error.code||'shadow_read_failed'),
@@ -159,10 +195,13 @@
       return;
     }
 
+    finishPending_(requestId,true);
+    publishPreviewDiagnostic_({status:'checking',stage:'response-received',legacyId:owned.legacyId,mismatchCount:0});
     const result=data.data||{};
     const mismatches=compare_(owned.sheetRental,result.rental||{});
     DATA.supabaseFinalizedRentalShadow={
       status:mismatches.length?'mismatch':'match',
+      stage:'compare-complete',
       source:String(result.source||'supabase-shadow'),
       primary:false,
       legacyId:owned.legacyId,
