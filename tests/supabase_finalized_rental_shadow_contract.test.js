@@ -35,6 +35,11 @@ assert(client.includes("status:mismatches.length?'mismatch':'match'"),'Comparato
 assert(client.includes('const RESPONSE_TIMEOUT_MS=8000;')&&client.includes('const RETRY_DELAY_MS=1500;'),'Shadow request must have a bounded startup-race timeout and retry delay.');
 assert(client.includes("if(fingerprint===completedFingerprint||inFlightFingerprint||Date.now()<retryNotBefore) return;")&&client.includes("finishPending_(requestId,false)"),'A dropped startup request must clear its in-flight fingerprint so the same finalized rental can retry.');
 assert(client.includes("'shadow_bridge_timeout'")&&client.includes('The check will retry.'),'Timeout diagnostics must distinguish a lost bridge startup message from a completed comparison.');
+const errorBranch=client.indexOf('if(!data.ok){');
+const errorFinish=client.indexOf('finishPending_(requestId,false);',errorBranch);
+const successFinish=client.indexOf('finishPending_(requestId,true);',errorBranch);
+assert(errorBranch>=0&&errorFinish>errorBranch&&successFinish>errorFinish,'Error responses must clear the request without marking the rental fingerprint completed; only a successful response may complete it.');
+assert(client.includes('retryNotBefore=Date.now()+RETRY_DELAY_MS;'),'Transient shadow response failures must be eligible for a bounded retry.');
 assert(!/DATA\.cabins\s*=/.test(client),'Shadow comparator must never replace DATA.cabins.');
 assert(!/\.push\s*\([^\n]*DATA\.cabins/.test(client),'Shadow comparator must not mutate the visible cabin collection.');
 assert(client.includes("primary:false"),'Client diagnostics must record that this is not primary authority.');
