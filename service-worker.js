@@ -1,4 +1,4 @@
-const CACHE_NAME='family-vacation-pwa-v4-4-0-alpha2-28';
+const CACHE_NAME='family-vacation-pwa-v4-4-0-alpha2-28-preview-2';
 
 const APP_SHELL=[
   './',
@@ -80,9 +80,9 @@ self.addEventListener('fetch',event=>{
     return;
   }
 
-  // Keep the Supabase browser bridge/auth modules current while online. Their
-  // release query string changes on each migration slice, and this also avoids
-  // iOS installed-app cache lag during a guarded cutover test.
+  // Keep the Supabase browser bridge/auth modules and preview-only auth/status
+  // relay current while online. The preview badge lives in preview-auth-gate.js,
+  // so it must never be stranded behind a stale cache-first response.
   if(
     request.method==='GET' &&
     (
@@ -96,7 +96,8 @@ self.addEventListener('fetch',event=>{
       url.pathname.endsWith('/supabase-planner-comments-bridge.js') ||
       url.pathname.endsWith('/supabase-meals-bridge.js') ||
       url.pathname.endsWith('/supabase-groceries-bridge.js') ||
-      url.pathname.endsWith('/supabase-rentals-shadow-bridge.js')
+      url.pathname.endsWith('/supabase-rentals-shadow-bridge.js') ||
+      url.pathname.endsWith('/preview-auth-gate.js')
     )
   ){
     event.respondWith(networkFirst(request));
