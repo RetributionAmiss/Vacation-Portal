@@ -5,6 +5,7 @@ const PORTAL_FRAME_ID='portalFrame';
 const SHADOW_DIAGNOSTIC_TYPE='vacation-portal-preview-finalized-rental-shadow-diagnostic';
 let portalReloadedForAuth=false;
 let authReady=false;
+let authCheckInFlight=false;
 
 function previewGateStyles_(){
   if(document.getElementById('vacationPreviewSupabaseAuthGateStyles')) return;
@@ -33,13 +34,14 @@ function previewGateStyles_(){
     #${PREVIEW_GATE_ID} .preview-auth-warn{color:#f1d892}
     #${PREVIEW_SHADOW_BADGE_ID}{
       position:fixed;z-index:6999;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));
-      max-width:min(420px,calc(100vw - 24px));box-sizing:border-box;padding:10px 12px;border:1px solid #45506a;border-radius:12px;
+      max-width:min(520px,calc(100vw - 24px));box-sizing:border-box;padding:10px 12px;border:1px solid #45506a;border-radius:12px;
       color:#f1d892;background:rgba(18,24,39,.96);box-shadow:0 10px 32px rgba(0,0,0,.38);
       font:800 12px/1.35 Arial,sans-serif;letter-spacing:.01em;pointer-events:none
     }
     #${PREVIEW_SHADOW_BADGE_ID}[data-status="match"]{border-color:#4a9b6a;color:#9ee6bb}
     #${PREVIEW_SHADOW_BADGE_ID}[data-status="mismatch"],
     #${PREVIEW_SHADOW_BADGE_ID}[data-status="unavailable"]{border-color:#b86a62;color:#ffb7ae}
+    #${PREVIEW_SHADOW_BADGE_ID}[data-status="waiting"]{border-color:#65718a;color:#c7cfda}
   `;
   document.head.appendChild(style);
 }
@@ -56,11 +58,37 @@ function ensureShadowBadge_(){
   return badge;
 }
 
-function setShadowBadge_(status,legacyId,mismatchCount){
+function shadowStageLabel_(stage){
+  const labels={
+    'auth-client':'checking Supabase session',
+    'portal-reload':'restarting Apps Script iframe with authenticated session',
+    'sheet-data':'waiting for Sheet trip data',
+    'selected-cabin-id':'waiting for selected cabin ID',
+    'voting-closed':'waiting for finalized-voting state',
+    'selected-cabin-row':'waiting for selected cabin row in DATA.cabins',
+    'request-posted':'request posted to Supabase host bridge',
+    'host-request-received':'host bridge received request',
+    'host-request-rejected':'host bridge rejected request source',
+    'host-auth':'host bridge checking Supabase session',
+    'host-membership-ok':'active trip membership resolved',
+    'host-read-ok':'Supabase rental read succeeded; waiting for Sheet comparison',
+    'host-read-error':'Supabase rental read failed',
+    'response-received':'Apps Script comparator received Supabase response',
+    'client-error':'Apps Script comparator received an error',
+    'compare-complete':'comparison complete'
+  };
+  return labels[String(stage||'')]||String(stage||'shadow check in progress').replace(/-/g,' ');
+}
+
+function setShadowBadge_(status,legacyId,mismatchCount,stage,errorCode){
   const badge=ensureShadowBadge_();
   const state=String(status||'waiting').toLowerCase();
-  badge.dataset.status=state;
   const id=String(legacyId||'').trim();
+  const code=String(errorCode||'').trim();
+  const stageText=shadowStageLabel_(stage);
+  badge.dataset.status=state;
+  badge.dataset.stage=String(stage||'');
+
   if(state==='match'){
     badge.textContent='Alpha2.28 · Sheets visible authority · Supabase shadow MATCH'+(id?' · '+id:'');
     return;
@@ -70,10 +98,14 @@ function setShadowBadge_(status,legacyId,mismatchCount){
     return;
   }
   if(state==='unavailable'){
-    badge.textContent='Alpha2.28 · Sheets visible authority · Supabase shadow UNAVAILABLE'+(id?' · '+id:'');
+    badge.textContent='Alpha2.28 · Sheets visible authority · Supabase shadow UNAVAILABLE'+(id?' · '+id:'')+(stageText?' · '+stageText:'')+(code?' · '+code:'');
     return;
   }
-  badge.textContent='Alpha2.28 · Sheets visible authority · Shadow checking…';
+  if(state==='waiting'){
+    badge.textContent='Alpha2.28 · Sheets visible authority · Shadow WAITING · '+stageText+(id?' · '+id:'');
+    return;
+  }
+  badge.textContent='Alpha2.28 · Sheets visible authority · Shadow CHECKING · '+stageText+(id?' · '+id:'');
 }
 
 function ensurePreviewGate_(){
@@ -96,7 +128,7 @@ function ensurePreviewGate_(){
     </section>`;
   document.body.appendChild(gate);
   gate.querySelector('#previewOpenAccount').addEventListener('click',openAccountForPreview_);
-  gate.querySelector('#previewRecheckAuth').addEventListener('click',()=>checkPreviewAuth_(true));
+  gate.querySelector('#previewRecheckAuth').addEventListener('click',()=>runPreviewAuthCheck_(true));
   return gate;
 }
 
@@ -135,7 +167,7 @@ function reloadPortalFrameForAuth_(gate,status){
   if(!frame) return false;
 
   portalReloadedForAuth=true;
-  setShadowBadge_('checking');
+  setShadowBadge_('checking','','','portal-reload');
   status.textContent='Supabase session confirmed. Restarting the portal so the shadow read begins authenticated…';
   status.className='preview-auth-ok';
   gate.hidden=false;
@@ -160,11 +192,12 @@ function reloadPortalFrameForAuth_(gate,status){
 async function checkPreviewAuth_(interactive=false){
   const gate=ensurePreviewGate_();
   const status=document.getElementById(PREVIEW_STATUS_ID);
+  if(!authReady&&!portalReloadedForAuth) setShadowBadge_('checking','','','auth-client');
   const client=await waitForSupabase_();
 
   if(!client){
     authReady=false;
-    setShadowBadge_('checking');
+    setShadowBadge_('unavailable','','','auth-client','auth_client_unavailable');
     status.textContent='Supabase auth did not initialize. Do not run the checklist yet.';
     status.className='preview-auth-warn';
     gate.hidden=false;
@@ -179,6 +212,7 @@ async function checkPreviewAuth_(interactive=false){
       portalReloadedForAuth=false;
       const badge=ensureShadowBadge_();
       badge.dataset.status='waiting';
+      badge.dataset.stage='auth-client';
       badge.textContent='Alpha2.28 · Sheets visible authority · Sign in to run Supabase shadow check';
       status.textContent='Signed out. Sign in before testing the finalized-rental shadow.';
       status.className='preview-auth-warn';
@@ -195,7 +229,7 @@ async function checkPreviewAuth_(interactive=false){
 
     if(membership.error||!(membership.data||[]).length){
       authReady=false;
-      setShadowBadge_('unavailable');
+      setShadowBadge_('unavailable','','','auth-client','no_active_membership');
       status.textContent='Signed in, but no active trip membership resolved. Do not run the checklist yet.';
       status.className='preview-auth-warn';
       if(!authOverlayOpen_()) gate.hidden=false;
@@ -222,7 +256,7 @@ async function checkPreviewAuth_(interactive=false){
     return true;
   }catch(error){
     authReady=false;
-    setShadowBadge_('unavailable');
+    setShadowBadge_('unavailable','','','auth-client','auth_check_failed');
     status.textContent='Supabase session check failed. Do not run the checklist yet.';
     status.className='preview-auth-warn';
     if(!authOverlayOpen_()) gate.hidden=false;
@@ -230,16 +264,26 @@ async function checkPreviewAuth_(interactive=false){
   }
 }
 
+async function runPreviewAuthCheck_(interactive=false){
+  if(authCheckInFlight) return false;
+  authCheckInFlight=true;
+  try{
+    return await checkPreviewAuth_(interactive);
+  }finally{
+    authCheckInFlight=false;
+  }
+}
+
 window.addEventListener('message',event=>{
   const data=event&&event.data||{};
   if(data.type!==SHADOW_DIAGNOSTIC_TYPE) return;
-  setShadowBadge_(data.status,data.legacyId,data.mismatchCount);
+  setShadowBadge_(data.status,data.legacyId,data.mismatchCount,data.stage,data.errorCode);
 });
 
 function startPreviewAuthWatch_(){
   ensureShadowBadge_();
-  checkPreviewAuth_(false);
-  setInterval(()=>checkPreviewAuth_(false),1500);
+  runPreviewAuthCheck_(false);
+  setInterval(()=>runPreviewAuthCheck_(false),1500);
 }
 
 if(document.readyState==='loading'){
