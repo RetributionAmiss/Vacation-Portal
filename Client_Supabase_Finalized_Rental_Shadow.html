@@ -5,7 +5,6 @@
   const OP_READ='finalizedRental.read';
   const RESPONSE_TIMEOUT_MS=8000;
   const RETRY_DELAY_MS=1500;
-  const BADGE_ID='supabase-finalized-rental-shadow-test-badge';
   const pending={};
   let completedFingerprint='';
   let inFlightFingerprint='';
@@ -23,60 +22,6 @@
     'Sleeps':true,'Bedrooms':true,'Bathrooms':true,'Total Rental Cost':true,
     'Nightly Rate':true,'Rating':true,'Review Count':true,'Import Confidence':true
   };
-
-  function ensureBadge_(){
-    if(!document.body) return null;
-    let badge=document.getElementById(BADGE_ID);
-    if(badge) return badge;
-
-    badge=document.createElement('div');
-    badge.id=BADGE_ID;
-    badge.setAttribute('role','status');
-    badge.setAttribute('aria-live','polite');
-    badge.style.cssText=[
-      'position:fixed',
-      'right:12px',
-      'bottom:12px',
-      'z-index:2147483646',
-      'display:flex',
-      'align-items:center',
-      'gap:8px',
-      'padding:7px 10px',
-      'border-radius:999px',
-      'border:1px solid rgba(255,255,255,.22)',
-      'background:rgba(20,26,23,.94)',
-      'box-shadow:0 8px 26px rgba(0,0,0,.28)',
-      'color:#f7f3e8',
-      'font:700 10px/1.2 Arial,sans-serif',
-      'letter-spacing:.08em',
-      'text-transform:uppercase',
-      'pointer-events:none'
-    ].join(';');
-    badge.innerHTML='<span style="opacity:.72">Rental shadow</span><strong data-shadow-state>CHECKING</strong>';
-    document.body.appendChild(badge);
-    return badge;
-  }
-
-  function setBadge_(status,detail){
-    const badge=ensureBadge_();
-    if(!badge) return;
-    const state=badge.querySelector('[data-shadow-state]');
-    const normalized=String(status||'checking').toLowerCase();
-    const palette={
-      checking:{text:'CHECKING',color:'#f3cf78',border:'rgba(243,207,120,.55)'},
-      match:{text:'MATCH',color:'#8de0ae',border:'rgba(141,224,174,.55)'},
-      mismatch:{text:'MISMATCH',color:'#ff9a8f',border:'rgba(255,154,143,.6)'},
-      unavailable:{text:'UNAVAILABLE',color:'#ffbd7a',border:'rgba(255,189,122,.58)'}
-    };
-    const style=palette[normalized]||palette.checking;
-    badge.dataset.status=normalized;
-    badge.style.borderColor=style.border;
-    if(state){
-      state.textContent=style.text;
-      state.style.color=style.color;
-    }
-    badge.title=String(detail||'Finalized rental Supabase shadow test.');
-  }
 
   function selectedFinalizedCabin_(){
     if(!window.DATA||!DATA.trip) return null;
@@ -124,7 +69,6 @@
       errorCode:String(errorCode||'shadow_read_failed'),
       error:String(errorMessage||'Supabase finalized-rental shadow read failed.')
     };
-    setBadge_('unavailable',DATA.supabaseFinalizedRentalShadow.error);
     console.warn('Supabase finalized-rental shadow unavailable.',DATA.supabaseFinalizedRentalShadow);
   }
 
@@ -149,7 +93,6 @@
     const requestId='finalized-rental-shadow-'+Date.now().toString(36)+'-'+(++requestSequence).toString(36);
     inFlightFingerprint=fingerprint;
     pending[requestId]={legacyId:legacyId,sheetRental:cabin,fingerprint:fingerprint,timeoutId:null};
-    setBadge_('checking','Comparing Sheets with the Supabase finalized-rental shadow for '+legacyId+'.');
     pending[requestId].timeoutId=setTimeout(function(){
       const owned=finishPending_(requestId,false);
       if(!owned) return;
@@ -212,10 +155,8 @@
     };
 
     if(mismatches.length){
-      setBadge_('mismatch',mismatches.length+' finalized-rental field mismatch'+(mismatches.length===1?'':'es')+'.');
       console.warn('Supabase finalized-rental shadow mismatch.',DATA.supabaseFinalizedRentalShadow);
     }else{
-      setBadge_('match','Supabase finalized-rental shadow matches Sheets for '+owned.legacyId+'.');
       console.info('Supabase finalized-rental shadow matches Sheets for '+owned.legacyId+'.');
     }
   });
