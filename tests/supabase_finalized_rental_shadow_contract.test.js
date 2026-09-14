@@ -49,3 +49,37 @@ for(const forbidden of ['Price Cap','Cost %','Pay More','traveler_admin','travel
 }
 
 console.log('PASS finalized rental Supabase shadow contract');
+
+// Exercise browser-style lexical state instead of a window.DATA fixture.
+
+function runLexicalDataScenario(source){
+  const vm=require('vm');
+  const callbacks=[], sent=[], listeners={};
+  const context=vm.createContext({
+    console:{warn(){},info(){}},
+    setInterval(fn){callbacks.push(fn);return callbacks.length;},
+    setTimeout(){return 1;},clearTimeout(){},
+    addEventListener(type,fn){listeners[type]=fn;}
+  });
+  context.window=context;
+  context.top={postMessage(message){sent.push(message);}};
+  vm.runInContext('let DATA = null;',context);
+  vm.runInContext(source.replace(/<\/?script>/g,''),context);
+  callbacks[0]();
+  assert.strictEqual(sent.length,0,'Startup without data must not request a rental.');
+  vm.runInContext(`DATA={trip:{'Selected Cabin ID':'CABIN-TEST','Portal Stage':'Voting Closed'},cabins:[{'Cabin ID':'CABIN-TEST','Active':''}]};`,context);
+  assert.strictEqual(context.DATA,undefined,'Fixture must use lexical DATA, not window.DATA.');
+  const before=vm.runInContext('JSON.stringify(DATA.cabins)',context);
+  callbacks[0]();
+  if(!sent.length) return false;
+  assert.strictEqual(sent[0].operation,'finalizedRental.read');
+  listeners.message({data:{type:'vacation-portal-supabase-domain-response',requestId:sent[0].requestId,ok:true,data:{rental:{'Cabin ID':'CABIN-TEST',Active:'Yes'}}}});
+  assert.strictEqual(vm.runInContext('DATA.supabaseFinalizedRentalShadow.status',context),'match');
+  assert.strictEqual(vm.runInContext('JSON.stringify(DATA.cabins)',context),before,'Shadow check must preserve visible rentals.');
+  callbacks[0]();
+  assert.strictEqual(sent.length,1,'Completed comparison must not repeat.');
+  return true;
+}
+
+assert.strictEqual(runLexicalDataScenario(client),true,'Loaded lexical DATA must trigger a shadow read and reach MATCH.');
+console.log('PASS finalized rental lexical DATA runtime regression');
