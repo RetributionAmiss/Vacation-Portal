@@ -1,78 +1,70 @@
-# Payments/Budget migration: source preflight
+# Payments/Budget migration: authenticated shadow
 
-Status: preparation only, following merged PR #67. No primary reads/writes or deployment in this PR.
+PR #68 follows merged #67. Sheets remains the visible financial read/write authority. No primary financial cutover is included.
 
-## Verified baseline (2026-09-14)
+## Verified 2026-09-14
 
-Repository base: 88dc954421649e815b5219e22cee2195dab12b72, production @220.
+Production baseline: 88dc954421649e815b5219e22cee2195dab12b72, Apps Script @220.
 
-Read-only inspection of the current portal Sheet found:
-| Domain | Sheet records | Supabase records |
+| Domain | Sheet records | Supabase shadow records |
 |---|---:|---:|
-| Booking Plans | 1 | 0 |
-| Payment Shares | 16 | 0 |
-| Payment Schedule | 32 | 0 |
-| Payments | 1 | 0 |
-| Budget | 1 | 0 |
+| Booking Plans | 1 | 1 |
+| Payment Shares | 16 | 16 |
+| Payment Schedule | 32 | 32 |
+| Payments | 1 | 1 |
+| Budget | 1 | 1 |
 
-These are point-in-time counts, not a durable import snapshot. No source records, personal details, payment amounts, credentials, or financial exports are committed here. All five Supabase tables have RLS enabled. This is not proof of authenticated policy behavior; member/organizer tests remain required.
+One booking-traveler relationship was copied. No Budget traveler relationships were guessed. These are point-in-time counts; the seed is not continuous replication. Sheets was read twice and unchanged before copying. Cross-system reads are not an atomic snapshot.
 
-The finalized rental parent was established by #67. No financial child data has been seeded.
+The additive migration already recorded by the database as `20260914154350_payments_budget_shadow_source_fidelity` is tracked with that exact version. It preserves plan split basis, raw fractional calculated shares, payment confirmation fields and legacy Budget text. Each money table has a `source_record` containing only allowlisted Sheet columns. No source financial exports or credentials are committed.
 
-## Source fidelity findings
+## Seed and fidelity
 
-| Source field | Existing database representation | Required before seed |
-|---|---|---|
-| Booking Plans / Split Basis | No column | Preserve explicit Adult/Bedroom and established blank-as-Adult semantics |
-| Payment confirmation status/source/actor/time | No columns | Preserve the four confirmation fields supported by Payments_Confirmation.gs; current payment Sheet has not yet added them |
-| Budget / Paid By | Traveler UUID only | Preserve original free text and resolve identities without guessing |
-| Budget / Split Between | Traveler join table only | Preserve source string, delimiters, and intent before creating relationships |
-| Budget / Split Method and Date | No matching columns | Preserve these legacy columns found in the live Sheet, even though absent from Config.gs |
-| Payment Shares / Calculated Share | Integer cents | Preserve fractional source values alongside the reviewed cents conversion |
+`scripts/payments_budget_shadow_seed.cjs` generates SQL offline from a private JSON snapshot. It never connects to either service. Input uses original Sheet-header row objects in mandatory `plans`, `shares`, `schedule`, `payments` and `budget` arrays, plus `tripLegacyId`, `rentalIds`, `travelerIds` and an explicit IANA `timeZone`.
 
-Fourteen calculated shares have sub-cent precision. The strict source audit correctly rejects those fields. An explicit, non-mutating normalization proposal uses the exact adaptive-epsilon rounding in DataIntegrity.gs. It produces preservation evidence with the original value and proposed integer cents. It never recalculates Adjusted Share, changes another traveler's allocation, or modifies Sheets.
+The generator runs the strict preflight, resolves parents by trip-scoped legacy IDs, locks destination tables, rejects inventory changes and conflicting/extra destination records, inserts only absent records, and compares the typed fields before committing. It never updates existing financial rows, overwrites Sheets, or invents an authenticated creator. A rerun with a different source requires reconciliation; this script deliberately refuses to overwrite drift.
 
-After this proposal was applied **in memory**, all 51 records passed the scoped checks. The raw live Sheet still contains its original values. This is not a seeded or cut-over state.
+Fourteen calculated shares contain fractional cents. Only their calculated-cent representation uses the existing `DataIntegrity.gs` adaptive-epsilon rounding. The original numeric value and source record remain preserved. Adjusted shares and installment allocations are copied exactly, without rebalancing. Budget `Everyone` is retained as text; arbitrary payer/split names fail until a reviewed mapping exists.
 
-## Tool contract
+Sheet date serials use local calendar dates; timestamp serials use the explicit Sheet timezone, rounded to milliseconds to remove floating-point serial noise. Timestamp text requires an explicit offset. The raw source is retained. Budget has no source creation/update timestamps, so database defaults describe import time; its legacy Date field is preserved separately.
 
-`scripts/payments_budget_preflight.cjs` exports:
-- `audit(snapshot)`: stable/duplicate IDs, rental/traveler relationships, payment-to-schedule rental consistency, recipient types, and exact monetary precision/range checks.
-- `planCalculatedShareNormalization(snapshot)`: explicit dry-run proposal for the known fractional calculated-share field only. Preserve its `preservation` evidence before any later seed.
-- `moneyToCents(value)`: strict decimal parsing to BigInt cents; rejects blanks, negatives, currency-formatted values, nonfinite values, sub-cent amounts and bigint overflow.
+Execution evidence:
 
-Audit output always includes `readyForCutover:false`. Partial totals have `totalsComplete:false` for invalid fields. Valid source checks are not authorization or source/destination parity.
+- Database dry run completed and rolled back before the real copy.
+- All 51 typed records and source snapshots passed transactional comparison.
+- A complete second seed left all seven table digests unchanged, including IDs, timestamps and versions.
+- Host DTO plus iframe comparator, executed against a fresh destination read and serialized Sheet snapshot, returned MATCH: 1/16/32/1/1 records, zero differences.
+- Browser comparison covers IDs, relationships, money, split basis, payment/due dates, confirmation state and Budget text. Import timestamps/source snapshots are verified by the seed, not included in the browser DTO.
 
-Input envelope:
-```json
-{
-  "tripLegacyId": "TRIP-EXAMPLE",
-  "rentalIds": ["CABIN-EXAMPLE"],
-  "travelerIds": ["TRAV-EXAMPLE"],
-  "plans": [],
-  "shares": [],
-  "schedule": [],
-  "payments": [],
-  "budget": []
-}
+Keep private snapshots and generated SQL outside Git and CI artifacts. Example:
+
+```sh
+node scripts/payments_budget_shadow_seed.cjs < /private/money-snapshot.json > /private/shadow-seed.sql
 ```
 
-Each domain contains complete row objects keyed by original Sheet headers. All five arrays are mandatory; missing data must not be interpreted as an empty table. The rental/traveler inventories must belong to the same trip. Inventory provenance and completeness must be verified by the future exporter; this utility cannot authenticate a supplied JSON file.
+Source validation always reports `readyForCutover:false`.
 
-Example local PowerShell usage for an already prepared private snapshot:
-```powershell
-Get-Content -Raw ".\money-snapshot.json" | node .\scripts\payments_budget_preflight.cjs
-```
-Exit 0 means these source checks passed; 1 means validation issues; 2 means invalid input. Keep source snapshots and detailed output out of Git and CI artifacts.
+## Authenticated diagnostic path
 
-## Next implementation gates
+`supabase-payments-budget-shadow-bridge.js` uses the existing authenticated client, verifies the user, resolves one active membership, and scopes all domain reads to that trip. It explicitly selects columns and excludes `source_record`. Missing relationships, unsafe cents, pagination limits and multiple memberships fail closed. Only the diagnostic read operation is accepted; read/write promotion flags disable this shadow-only adapter.
 
-1. Add reviewed, additive source-shape support. Preserve Budget legacy fields and raw calculated shares. No destructive schema edits.
-2. Capture a fresh Sheet snapshot with trip binding and date/timezone fidelity; resolve Supabase rental/traveler UUIDs. Refuse ambiguous identity matches and orphan links.
-3. Idempotently seed parents, booking travelers, shares, schedules, ledger and Budget relationships in dependency order. Produce exact before/after counts and cents reconciliation; do not modify rollback Sheets.
-4. Add authenticated, trip-scoped shadow reads and comparisons. Empty destination data must report missing records, not MATCH. Never replace visible paymentData or DATA.budget.
-5. Isolated manual preview: amounts, installments, agency payments, reimbursements, confirmation lifecycle, shared-budget totals and refresh/navigation. Add non-organizer RLS coverage.
-6. Promote reads, then writes in separate accepted slices. Preserve optimistic concurrency, request idempotency, immutable payer ownership and recipient/organizer confirmation authorization.
-7. Production promotion requires separate explicit authorization.
+`Client_Supabase_Payments_Budget_Shadow.html` reads lexical `DATA` and `paymentState_` without changing either financial source. Cached payment snapshots wait for a server load. Missing/extra/duplicate records cannot become MATCH. Responses for changed source snapshots are discarded. Errors retry, and unchanged source data is rechecked every 30 seconds. `DATA.supabasePaymentsBudgetShadow` holds diagnostics only. The isolated preview badge exposes status/counts without amounts.
 
-No schema migration, seed, live shadow reader, or frontend change is included in this preparation PR. Source dates, snapshot atomicity, complete destination schema parity, row-level security behavior, and financial calculation parity remain explicit gates, not claimed passes.
+## Authorization verification
+
+RLS remains enabled on all seven financial tables; existing policies were not changed. SQL role tests verified:
+
+- Organizer membership reads all 51 records.
+- An authenticated nonmember reads zero financial records.
+- Anonymous access is denied by grants.
+- A traveler role reads all 51 records but direct updates to all five financial tables affect zero rows. The membership role change used for this test was transaction-local and rolled back; the original organizer role was verified afterward.
+
+These are database-role tests, not end-to-end login or future financial write-API tests. Existing project advisories unrelated to this change remain: [packing SECURITY DEFINER execution](https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable) and [leaked-password protection](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection). No financial RLS warning was returned.
+
+## Manual acceptance and later slices
+
+1. In the isolated preview, sign in, open Payments and Budget, and wait for Payments/Budget Shadow MATCH with 51 records.
+2. Compare saved shares, installment amounts/due dates, agency payments, reimbursements and shared-budget totals with production. Refresh and navigate away/back; the comparison must recover.
+3. Do not create real financial test transactions. This is a read-only migration comparison; the existing UI still writes to Sheets. Source edits after seeding can correctly produce MISMATCH.
+4. Accept the shadow slice before a separate primary-read PR. Financial writes follow afterward with request idempotency, optimistic concurrency, immutable payer ownership and recipient/organizer confirmation tests.
+5. Production promotion requires explicit approval after manual acceptance. PR #68 remains a draft until that gate passes.

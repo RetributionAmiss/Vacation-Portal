@@ -17,6 +17,12 @@ window.VACATION_PORTAL_CONFIG = {
   // Sheets-authoritative in alpha2.28 while an authenticated Supabase shadow
   // read verifies the parent record needed by the later Payments migration.
   supabaseDomains: {
+    paymentsBudget: {
+      shadowRead: true,
+      shadowWrite: false,
+      read: false,
+      write: false
+    },
     travelPlans: {
       shadowRead: false,
       shadowWrite: false,
@@ -248,4 +254,11 @@ window.VACATION_PORTAL_CONFIG = {
       });
     }
   });
+})();
+
+(function loadPaymentsBudgetShadowBridge_(){
+  const script=document.createElement('script');
+  script.type='module';
+  script.src='./supabase-payments-budget-shadow-bridge.js?v='+encodeURIComponent(window.VACATION_PORTAL_CONFIG.release);
+  document.head.appendChild(script);
 })();
