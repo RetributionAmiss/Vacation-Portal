@@ -12,9 +12,12 @@ const shell = fs.readFileSync(path.join(root, 'AppsScriptIndex.html'), 'utf8');
 const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf8');
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 
+const releaseMatch = config.match(/release:\s*'V4\.4\.0-alpha2\.(\d+)'/);
+assert(releaseMatch, 'A V4.4.0-alpha2.x release marker is required.');
+const releaseNumber = Number(releaseMatch[1]);
 assert(
-  config.includes("release: 'V4.4.0-alpha2.27'"),
-  'The Grocery cutover must advance the installed PWA cache key without regressing Itinerary.'
+  releaseNumber >= 27,
+  'alpha2.27 and later releases must preserve the installed PWA version without regressing Itinerary.'
 );
 assert(
   config.includes('itinerary:') &&
@@ -22,12 +25,12 @@ assert(
   config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
   config.includes('write: true'),
-  'Itinerary must remain Supabase-primary for reads and writes in alpha2.27.'
+  'Itinerary must remain Supabase-primary for reads and writes in alpha2.27 and later releases.'
 );
 assert(
   config.includes('travelPlans:') && config.includes('packingItems:') &&
   config.includes('read: true') && config.includes('write: true'),
-  'The Grocery cutover must not regress completed Travel and Packing primary cutovers.'
+  'Later cutovers must not regress completed Travel and Packing primary cutovers.'
 );
 assert(
   config.includes("script.src='./supabase-itinerary-bridge.js?v='"),
@@ -132,12 +135,12 @@ assert(
   'Sheets rollback loading must remain available even though it is no longer on the healthy primary startup path.'
 );
 assert(
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-27') &&
+  serviceWorker.includes(`family-vacation-pwa-v4-4-0-alpha2-${releaseNumber}`) &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-bridge.js')") &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-comment-bridge.js')") &&
   serviceWorker.includes('networkFirst(request)'),
-  'The installed PWA must keep every accepted Itinerary bridge network-first in alpha2.27.'
+  'The installed PWA must keep every accepted Itinerary bridge network-first in alpha2.27 and later releases.'
 );
 
 console.log('PASS Supabase-first Itinerary read authority contract');

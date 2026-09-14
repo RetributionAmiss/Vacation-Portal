@@ -14,13 +14,16 @@ const plannerCommon = fs.readFileSync(path.join(root, 'Planning_Common.gs'), 'ut
 const plannerSocial = fs.readFileSync(path.join(root, 'Planner_Social.gs'), 'utf8');
 const dataHelpers = fs.readFileSync(path.join(root, 'Data.gs'), 'utf8');
 
+const releaseMatch = config.match(/release:\s*'V4\.4\.0-alpha2\.(\d+)'/);
+assert(releaseMatch, 'A V4.4.0-alpha2.x release marker is required.');
+const releaseNumber = Number(releaseMatch[1]);
 assert(
-  config.includes("release: 'V4.4.0-alpha2.27'") &&
+  releaseNumber >= 27 &&
   config.includes('shadowRead: false') &&
   config.includes('shadowWrite: false') &&
   config.includes('read: true') &&
   config.includes('write: true'),
-  'Itinerary must remain Supabase-primary for reads and writes in alpha2.27.'
+  'Itinerary must remain Supabase-primary for reads and writes in alpha2.27 and later releases.'
 );
 assert(
   config.includes("script.src='./supabase-itinerary-write-bridge.js?v='"),
@@ -28,7 +31,7 @@ assert(
 );
 assert(
   serviceWorker.includes("url.pathname.endsWith('/supabase-itinerary-write-bridge.js')") &&
-  serviceWorker.includes('family-vacation-pwa-v4-4-0-alpha2-27'),
+  serviceWorker.includes(`family-vacation-pwa-v4-4-0-alpha2-${releaseNumber}`),
   'The installed PWA must keep fetching the current Itinerary write bridge network-first.'
 );
 assert(
