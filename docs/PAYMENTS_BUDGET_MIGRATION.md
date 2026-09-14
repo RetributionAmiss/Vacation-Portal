@@ -63,6 +63,10 @@ These are database-role tests, not end-to-end login or future financial write-AP
 
 ## Manual acceptance and later slices
 
+The isolated Apps Script preview deployed at **@221**, with production verified unchanged at **@220**, in [preview workflow 34897115235](https://github.com/RetributionAmiss/Vacation-Portal/actions/runs/34897115235). The app source is commit `304b66bbcd40da54ac69a041f5338d195908cb4a`; the subsequent launcher-only commit adds `start-preview.cmd`. Download branch `test/supabase-payments-budget-preview`, extract it, stop any old local server, and run that launcher. It opens `http://127.0.0.1:8001/preview.html` and serves JavaScript with the correct MIME type.
+
+All ten feature workflow runs passed at application commit `a02e24b6582354b6ab48adbb8a4c43be6107d3c7`. A follow-up index migration `20260914211110_payments_confirmation_actor_index` covers the newly added confirmation actor FK; the live index definition was verified. Manual browser acceptance remains outstanding.
+
 1. In the isolated preview, sign in, open Payments and Budget, and wait for Payments/Budget Shadow MATCH with 51 records.
 2. Compare saved shares, installment amounts/due dates, agency payments, reimbursements and shared-budget totals with production. Refresh and navigate away/back; the comparison must recover.
 3. Do not create real financial test transactions. This is a read-only migration comparison; the existing UI still writes to Sheets. Source edits after seeding can correctly produce MISMATCH.
