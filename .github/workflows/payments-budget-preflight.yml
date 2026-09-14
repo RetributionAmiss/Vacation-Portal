@@ -1,0 +1,24 @@
+name: Payments Budget Migration Preflight
+on:
+  push:
+    branches: [feature/supabase-payments-budget-preflight]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node tests/payments_budget_preflight.test.js
+      - run: node tests/payments_budget_shadow_seed.test.js
+      - run: node tests/payments_budget_shadow_runtime.test.js
+      - run: node tests/payment_schedule_contract.test.js
+      - run: node tests/payment_installment_generation_contract.test.js
+      - run: node tests/payment_remaining_balance_contract.test.js
+      - run: node tests/payment_load_performance_contract.test.js
+      - run: node tests/p1_payment_confirmation_room_contract.test.js

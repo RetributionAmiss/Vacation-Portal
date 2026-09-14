@@ -1,0 +1,99 @@
+<script>
+(function(){
+  const fields={
+    plans:['Booking Plan ID','Cabin ID','Booking Traveler IDs','Agency Name','Booking Total','Split Basis','Notes'],
+    shares:['Share ID','Cabin ID','Traveler ID','Split Basis','Source Total','Calculated Share','Adjusted Share','Notes'],
+    schedule:['Schedule ID','Cabin ID','Label','Due Date','Amount Due','Expected Payer Traveler ID','Recipient Type','Recipient Traveler ID','Recipient Name','Notes'],
+    payments:['Payment ID','Cabin ID','Schedule ID','Paid By Traveler ID','Paid To Type','Paid To Traveler ID','Paid To Name','Amount','Payment Date','Notes','Confirmation Status','Confirmation Source','Confirmed By Traveler ID','Confirmed At'],
+    budget:['Budget ID','Category','Description','Amount','Paid By','Split Method','Date','Split Between','Due Date','Status','Notes','Include in Rental Split']
+  };
+  const moneyFields=['Booking Total','Source Total','Adjusted Share','Amount Due','Amount'];
+  const REQUEST='vacation-portal-payments-budget-shadow-request';
+  const RESPONSE='vacation-portal-payments-budget-shadow-response';
+  let pending=null,lastFingerprint='',nextAttempt=0,sequence=0;
+  function normalize(field,value){
+    const text=String(value==null?'':value).trim();
+    if(moneyFields.includes(field)){
+      if(!/^\d+(?:\.\d{1,2})?$/.test(text))throw Error('invalid_sheet_money');
+      const cents=Number(text)*100;if(!Number.isSafeInteger(Math.round(cents)))throw Error('unsafe_money');return String(Math.round(cents));
+    }
+    if(field==='Calculated Share'){
+      if(!text||!Number.isFinite(Number(text)))throw Error('invalid_calculated_share');return String(Number(text));
+    }
+    if(field==='Booking Traveler IDs')return text.split(',').map(v=>v.trim()).filter(Boolean).sort().join(',');
+    if(field==='Split Basis')return text||'Adult';
+    if(field==='Include in Rental Split')return ['yes','true','1'].includes(text.toLowerCase())?'Yes':'No';
+    if(['Due Date','Payment Date','Date'].includes(field)&&text){
+      if(/^\d{4}-\d{2}-\d{2}$/.test(text))return text;
+      // Apps Script date-only serialization can include local midnight + offset.
+      if(/^\d{4}-\d{2}-\d{2}T/.test(text))return text.slice(0,10);
+      throw Error('unsupported_date_shape');
+    }
+    if(field==='Confirmed At'&&text){const time=Date.parse(text);if(!Number.isFinite(time))throw Error('invalid_confirmation_time');return new Date(time).toISOString();}
+    return text.replace(/\r\n/g,'\n');
+  }
+  function compare(source,destination){
+    const mismatches=[];
+    for(const domain of Object.keys(fields)){
+      if(!Array.isArray(source[domain])||!Array.isArray(destination[domain]))throw Error('incomplete_domains');
+      const idField=fields[domain][0],left=new Map(),right=new Map();
+      for(const [rows,map] of [[source[domain],left],[destination[domain],right]])for(const row of rows){
+        const id=String(row[idField]||'');if(!id||map.has(id))throw Error('missing_or_duplicate_id');map.set(id,row);
+      }
+      for(const [id,row] of left){
+        const other=right.get(id);if(!other){mismatches.push({domain,id,field:'missing_record'});continue;}
+        for(const field of fields[domain])if(normalize(field,row[field])!==normalize(field,other[field]))mismatches.push({domain,id,field});
+        if(domain==='shares'){
+          const scaled=Number(row['Calculated Share'])*100;
+          const cents=Math.round(scaled+Number.EPSILON*Math.max(1,Math.abs(scaled))*4);
+          if(String(cents)!==other['_Calculated Share Cents'])mismatches.push({domain,id,field:'Calculated Share cents'});
+        }
+      }
+      for(const id of right.keys())if(!left.has(id))mismatches.push({domain,id,field:'extra_record'});
+    }
+    return mismatches;
+  }
+  function snapshot(){
+    if(typeof DATA==='undefined'||!DATA||!Array.isArray(DATA.budget)||typeof paymentState_==='undefined'||!paymentState_.loaded||paymentState_.loading||paymentState_.fromSnapshot)return null;
+    const result={budget:DATA.budget};
+    for(const domain of ['plans','shares','schedule','payments']){
+      if(!Array.isArray(paymentState_[domain]))return null;result[domain]=paymentState_[domain];
+    }
+    return JSON.parse(JSON.stringify(result));
+  }
+  function status(value){
+    if(typeof DATA!=='undefined'&&DATA)DATA.supabasePaymentsBudgetShadow=value;
+    // Preview diagnostics contain counts and field names only, never amounts.
+    try{window.top.postMessage({type:'vacation-portal-payments-budget-shadow-diagnostic',status:value.status,counts:value.counts||null,mismatchCount:value.mismatchCount||0,errorCode:value.errorCode||''},'*');}catch(e){}
+  }
+  function check(){
+    const source=snapshot();if(!source){status({status:'waiting',errorCode:'waiting_for_sheet_payments_and_budget'});return;}
+    const fingerprint=JSON.stringify(source);
+    if(pending||Date.now()<nextAttempt||fingerprint===lastFingerprint)return;
+    const requestId='payments-budget-'+Date.now().toString(36)+'-'+(++sequence);
+    pending={requestId,source,fingerprint};
+    pending.timer=setTimeout(()=>{pending=null;nextAttempt=Date.now()+5000;status({status:'unavailable',errorCode:'shadow_timeout'});},10000);
+    status({status:'checking'});
+    window.top.postMessage({type:REQUEST,operation:'paymentsBudget.read',requestId},'*');
+  }
+  window.addEventListener('message',event=>{
+    const data=event.data||{};
+    if(event.source!==window.top||data.type!==RESPONSE||!pending||data.requestId!==pending.requestId)return;
+    const owned=pending;clearTimeout(owned.timer);pending=null;nextAttempt=Date.now()+5000;
+    if(!data.ok){status({status:'unavailable',errorCode:String(data.error&&data.error.code||'shadow_read_failed')});return;}
+    const current=snapshot();if(!current||JSON.stringify(current)!==owned.fingerprint){status({status:'waiting'});return;}
+    try{
+      if(!data.data||data.data.primary!==false||data.data.source!=='supabase-shadow')throw Error('invalid_shadow_response');
+      const mismatches=compare(owned.source,data.data.domains||{});
+      const counts=Object.fromEntries(Object.keys(fields).map(d=>[d,owned.source[d].length]));
+      // Never call an entirely empty/unloaded snapshot MATCH.
+      if(!Object.values(counts).some(n=>n>0))throw Error('empty_source_snapshot');
+      lastFingerprint=owned.fingerprint;
+      status({status:mismatches.length?'mismatch':'match',primary:false,counts,mismatchCount:mismatches.length,mismatches,checkedAt:new Date().toISOString()});
+    }catch(e){status({status:'unavailable',errorCode:e.message});}
+  });
+  setInterval(check,2000);
+  // Refresh the shadow periodically even when Sheet data is unchanged.
+  setInterval(()=>{lastFingerprint='';},30000);
+})();
+</script>
