@@ -24,7 +24,7 @@
   };
 
   function selectedFinalizedCabin_(){
-    if(!window.DATA||!DATA.trip) return null;
+    if(typeof DATA==='undefined'||!DATA||!DATA.trip) return null;
     const trip=DATA.trip||{};
     const selected=String(trip['Selected Cabin ID']||DATA.finalizedRentalId||'').trim();
     const stage=String(trip['Portal Stage']||'').trim();
