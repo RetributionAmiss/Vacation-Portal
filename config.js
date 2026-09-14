@@ -1,6 +1,6 @@
 window.VACATION_PORTAL_CONFIG = {
   // Internal Apps Script backend. Travelers should always use the GitHub Pages URL.
-  portalUrl: 'https://script.google.com/macros/s/AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA/exec',
+  portalUrl: 'https://script.google.com/macros/s/AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg/exec',
 
   appName: 'Family Vacation Portal',
   shortName: 'Family Trip',
@@ -18,6 +18,7 @@ window.VACATION_PORTAL_CONFIG = {
   // read verifies the parent record needed by the later Payments migration.
   supabaseDomains: {
     paymentsBudget: {
+      previewBadge: true,
       shadowRead: true,
       shadowWrite: false,
       read: false,
@@ -262,3 +263,5 @@ window.VACATION_PORTAL_CONFIG = {
   script.src='./supabase-payments-budget-shadow-bridge.js?v='+encodeURIComponent(window.VACATION_PORTAL_CONFIG.release);
   document.head.appendChild(script);
 })();
+
+(function(){const script=document.createElement('script');script.type='module';script.src='./preview-auth-gate.js?v=payments-budget-shadow';document.head.appendChild(script);})();
