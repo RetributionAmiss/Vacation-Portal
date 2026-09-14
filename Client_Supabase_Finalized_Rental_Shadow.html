@@ -54,7 +54,7 @@
   }
 
   function selectedFinalizedCabin_(){
-    if(!window.DATA||!DATA.trip){
+    if(typeof DATA==='undefined'||!DATA||!DATA.trip){
       publishEligibilityStage_('sheet-data');
       return null;
     }
