@@ -7,7 +7,7 @@ Budget participates in server-side rental pricing, so Budget cannot independentl
 ## Behavior
 
 - `budgetShadowWrite.enabled` defaults to false in the proposed production config. The isolated preview enables it and displays a separate Budget badge.
-- Every 15 seconds while Payments, Money or Budget is open, an authenticated organizer can synchronize persisted Budget data. The client reads the existing fresh Apps Script endpoint; it never sends optimistic UI rows or intercepts/retries a Sheet save.
+- Every 15 seconds while Payments, Money or Budget is open, an authenticated organizer can synchronize persisted Budget data. The client reads the dedicated Budget-only fresh Apps Script endpoint; it never sends optimistic UI rows or intercepts/retries a Sheet save.
 - The SQL transaction checks active organizer membership and the fixed accepted trip. It serializes changes to the small Budget/relationship/state tables, compares the destination snapshot captured before the write, rejects older source times, validates all rows, then inserts/updates/archives and verifies the complete result atomically.
 - Amounts use integer cents. Text values such as Everyone remain text; names are never guessed into traveler UUIDs. Existing typed Budget relationships block synchronization for manual reconciliation.
 - Missing rows are archived; unchanged rows keep their versions. Retry after a lost response reads the destination again, so it does not duplicate an expense.
@@ -35,3 +35,5 @@ Do not create dummy expenses or payments in the shared trip: Sheet saves are liv
 1. Accept this Budget shadow-write preview; explicitly enable production mirroring in the promotion change.
 2. Add financial write synchronization for payment records, confirmation lifecycle, installments, plans and shares, preserving each server authorization boundary and calculation contract.
 3. Move server pricing consumers and shared Budget write permissions to the new authority, then promote primary writes. Never fall back to old Sheet writes after an ambiguous primary commit.
+
+Preview freshness fix: Budget source reads now yield to financial reads and expose a shared busy flag while reading. The financial reader yields to that flag. The read badge distinguishes Sheet verification, Supabase verification, and Sheet fallback; failures remain visible during a 30-second backoff. Budget source failures are reported on its own badge. No freshness validation or save authorization was removed.

@@ -22,7 +22,7 @@
   function scriptRead(method){
     return new Promise(function(resolve,reject){
       let done=false;
-      const timer=setTimeout(function(){if(!done){done=true;reject(Error('sheet_verification_timeout'));}},15000);
+      const timer=setTimeout(function(){if(!done){done=true;reject(Error('sheet_verification_timeout'));}},30000);
       const ok=function(data){if(done)return;done=true;clearTimeout(timer);resolve(data);};
       const fail=function(){if(done)return;done=true;clearTimeout(timer);reject(Error('sheet_verification_failed'));};
       const runner=google.script.run.withSuccessHandler(ok).withFailureHandler(fail);
@@ -59,16 +59,17 @@
     for(const name of ['plans','shares','schedule','payments','budget'])if(!Array.isArray(data[name]))throw Error('incomplete_read_snapshot');
   }
   async function refresh(){
-    if(!enabled||!finalizedTrip()||busy||paymentState_.loading||savePending()||!signature()||Date.now()<nextAttempt)return;
+    if(!enabled||!finalizedTrip()||busy||window.__budgetShadowSourceBusy||paymentState_.loading||savePending()||!signature()||Date.now()<nextAttempt)return;
     const owner=DATA,startEpoch=epoch,startSignature=signature();
     const unchanged=()=>DATA===owner&&epoch===startEpoch&&signature()===startSignature&&!savePending();
-    busy=true;paymentState_.loading=true;report('checking');
+    busy=true;paymentState_.loading=true;report('checking','checking_source');
     try{
       let snapshot,source='supabase',reason='';
       try{
         const manifest=await scriptRead('manifest');
         if(!unchanged())throw Error('local_state_changed');
         if(!manifest||manifest.rentalId!==String(DATA.trip['Selected Cabin ID']||''))throw Error('displayed_rental_changed');
+        report('checking','checking_supabase');
         const result=await rpc('paymentsBudget.read',manifest);
         if(!result||result.primary!==true||result.source!=='supabase-primary-verified'||JSON.stringify(result.manifest)!==JSON.stringify(manifest))throw Error('invalid_verified_response');
         snapshot={...result.domains,serverTime:manifest.serverTime,finalizedRentalId:manifest.rentalId,finalizedRentalOnly:true};
@@ -76,6 +77,7 @@
       }catch(error){
         if(!unchanged())throw Error('local_state_changed');
         source='sheets';reason=error.message;
+        report('fallback',reason);
         snapshot=await scriptRead('fallback');
         validate(snapshot,String(DATA.trip['Selected Cabin ID']||''));
       }
@@ -94,9 +96,9 @@
       const afterContent=JSON.stringify([paymentState_.plans,paymentState_.shares,paymentState_.schedule,paymentState_.payments,DATA.budget]);
       if(beforeContent!==afterContent&&typeof render==='function'&&['dashboard','money','payments','budget'].includes(currentView))render();
     }catch(error){
-      nextAttempt=Date.now()+5000;
+      nextAttempt=Date.now()+30000;
       report(error.message==='local_state_changed'?'waiting':'unavailable',error.message);
-    }finally{busy=false;paymentState_.loading=false;}
+    }finally{busy=false;paymentState_.loading=false;nextAttempt=Math.max(nextAttempt,Date.now()+15000);}
   }
   loadPaymentData_=function(force){
     if(enabled!==true||!finalizedTrip())return previousLoad.apply(this,arguments);

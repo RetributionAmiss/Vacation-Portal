@@ -38,3 +38,12 @@ function getPaymentsBudgetReadManifest() {
 function getPaymentsBudgetFreshData() {
   return withPortalMutationLock_(function(){return paymentsBudgetFreshSnapshot_();});
 }
+
+// Budget replication needs only persisted Budget rows, not another full financial read.
+function getBudgetShadowSource() {
+  return withPortalMutationLock_(function(){
+    if(!getSpreadsheet_().getSheetByName('Budget'))throw new Error('BUDGET_SOURCE_MISSING');
+    const budget=readSheet_('Budget');
+    return {budget:budget,serverTime:new Date().toISOString()};
+  });
+}

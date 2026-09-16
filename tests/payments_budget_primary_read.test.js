@@ -60,5 +60,7 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  c=child();c.enable();await flush();p=c.start();c.calls[0].ok(manifest);await flush();req=c.sent.findLast(x=>x.operation==='paymentsBudget.read');c.response(req,candidate,true,{});assert.equal(c.state().status,'checking');for(const f of [...c.timers.values()])f();await flush();assert.equal(c.calls[1].method,'fallback');c.calls[1].ok(fixture());await p;assert.equal(c.state().status,'sheets');
  c=child();c.enable();await flush();vm.runInContext("DATA.trip['Portal Stage']='Voting Open'",c.ctx);await c.start();assert.equal(vm.runInContext('originalLoads',c.ctx),1);assert.equal(c.calls.length,0);
  c=child();c.response(c.sent[0],{enabled:false});await flush();await c.start();assert.equal(vm.runInContext('originalLoads',c.ctx),1);
+ c=child();c.enable();await flush();c.ctx.window.__budgetShadowSourceBusy=true;await c.start();assert.equal(c.calls.length,0,'Financial read yields while Budget source is reading');
+ c=child();c.enable();await flush();p=c.start();c.calls[0].no(Error('offline'));await flush();assert.equal(c.state().status,'fallback');c.calls[1].no(Error('offline'));await p;const count=c.calls.length;await c.start();assert.equal(c.calls.length,count,'Failure stays visible during backoff');
  console.log('PASS Payments/Budget primary reads: shared manifest, authenticated trip binding, fresh fallback, exact timestamps, concurrent saves and late-response protection.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
