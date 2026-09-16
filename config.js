@@ -17,6 +17,7 @@ window.VACATION_PORTAL_CONFIG = {
   // Sheets-authoritative in alpha2.28 while an authenticated Supabase shadow
   // read verifies the parent record needed by the later Payments migration.
   // Transitional reads verify a fresh Sheet manifest before using Supabase.
+  budgetShadowWrite: {enabled:false, sourceTripLegacyId:'TRIP-2027-TN'},
   paymentsBudgetRead: {read:true, sourceTripLegacyId:'TRIP-2027-TN'},
 
   supabaseDomains: {
@@ -270,5 +271,10 @@ window.VACATION_PORTAL_CONFIG = {
   const script=document.createElement('script');
   script.type='module';
   script.src='./supabase-payments-budget-read-bridge.js?v=payments-budget-read-v1';
+  document.head.appendChild(script);
+})();
+(function loadBudgetShadowWriteBridge_(){
+  const script=document.createElement('script');script.type='module';
+  script.src='./supabase-budget-shadow-write-bridge.js?v=budget-shadow-write-v1';
   document.head.appendChild(script);
 })();

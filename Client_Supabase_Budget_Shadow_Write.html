@@ -1,0 +1,47 @@
+<script>
+(function installBudgetShadowWrite_(){
+  const REQUEST='vacation-portal-budget-shadow-write-request',RESPONSE='vacation-portal-budget-shadow-write-response';
+  const pending=new Map();let sequence=0,busy=false,nextAttempt=0;
+  function rpc(operation,source){
+    return new Promise(function(resolve,reject){
+      const requestId='budget-shadow-'+Date.now().toString(36)+'-'+(++sequence);
+      const timer=setTimeout(function(){pending.delete(requestId);reject(Error('budget_shadow_timeout'));},15000);
+      pending.set(requestId,{resolve,reject,timer});
+      window.top.postMessage({type:REQUEST,requestId,operation,source},'*');
+    });
+  }
+  window.addEventListener('message',function(event){
+    const response=event.data||{},entry=pending.get(response.requestId);
+    if(event.source!==window.top||response.type!==RESPONSE||!entry)return;
+    clearTimeout(entry.timer);pending.delete(response.requestId);
+    if(response.ok)entry.resolve(response.data);else entry.reject(Error(String(response.error&&response.error.code||'budget_sync_unavailable')));
+  });
+  function source(){
+    return new Promise(function(resolve,reject){
+      let done=false;
+      const timer=setTimeout(function(){if(!done){done=true;reject(Error('budget_source_timeout'));}},15000);
+      google.script.run.withSuccessHandler(function(data){if(done)return;done=true;clearTimeout(timer);resolve(data);})
+        .withFailureHandler(function(){if(done)return;done=true;clearTimeout(timer);reject(Error('budget_source_unavailable'));})
+        .getPaymentsBudgetFreshData();
+    });
+  }
+  async function tick(){
+    if(busy||Date.now()<nextAttempt||typeof DATA==='undefined'||!DATA||!DATA.deferredLoaded)return;
+    if(typeof currentView==='undefined'||!['budget','money','payments'].includes(currentView))return;
+    if(typeof backgroundSaveState_!=='undefined'&&backgroundSaveState_.pending.size)return;
+    const owner=DATA;
+    busy=true;nextAttempt=Date.now()+15000;
+    try{
+      const status=await rpc('budgetShadow.status');
+      if(!status||!status.enabled||!status.canSync){nextAttempt=Date.now()+30000;return;}
+      const saved=await source();
+      if(DATA!==owner)return;
+      // Never send optimistic browser rows, never replace UI state, never retry a Sheet save.
+      const result=await rpc('budgetShadow.sync',{budget:saved.budget,serverTime:saved.serverTime});
+      if(DATA===owner)DATA.budgetShadowWrite=result;
+    }catch(error){if(DATA===owner)DATA.budgetShadowWrite={status:'unavailable',reason:error.message};}
+    finally{busy=false;}
+  }
+  setInterval(tick,2000);
+})();
+</script>
