@@ -62,6 +62,7 @@
       try{
         const manifest=await scriptRead('manifest');
         if(!unchanged())throw Error('local_state_changed');
+        if(!manifest||manifest.rentalId!==String(DATA.trip['Selected Cabin ID']||''))throw Error('displayed_rental_changed');
         const result=await rpc('paymentsBudget.read',manifest);
         if(!result||result.primary!==true||result.source!=='supabase-primary-verified'||JSON.stringify(result.manifest)!==JSON.stringify(manifest))throw Error('invalid_verified_response');
         snapshot={...result.domains,serverTime:manifest.serverTime,finalizedRentalId:manifest.rentalId,finalizedRentalOnly:true};
