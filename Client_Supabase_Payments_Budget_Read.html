@@ -1,0 +1,114 @@
+<script>
+(function installPaymentsBudgetPrimaryRead_(){
+  const REQUEST='vacation-portal-payments-budget-read-request';
+  const RESPONSE='vacation-portal-payments-budget-read-response';
+  const pending=new Map();
+  const previousLoad=loadPaymentData_,previousApply=applyPaymentData_;
+  let enabled=null,sequence=0,epoch=0,busy=false,applying=false,lastFresh=0,nextAttempt=0,statusBusy=false,appliedSignature='';
+  function rpc(operation,manifest){
+    return new Promise(function(resolve,reject){
+      const requestId='money-read-'+Date.now().toString(36)+'-'+(++sequence);
+      const timer=setTimeout(function(){pending.delete(requestId);reject(Error('read_bridge_timeout'));},12000);
+      pending.set(requestId,{resolve,reject,timer});
+      window.top.postMessage({type:REQUEST,requestId,operation,manifest},'*');
+    });
+  }
+  window.addEventListener('message',function(event){
+    const data=event.data||{},owned=pending.get(data.requestId);
+    if(event.source!==window.top||data.type!==RESPONSE||!owned)return;
+    clearTimeout(owned.timer);pending.delete(data.requestId);
+    if(data.ok)owned.resolve(data.data);else owned.reject(Error(String(data.error&&data.error.code||'read_unavailable')));
+  });
+  function scriptRead(method){
+    return new Promise(function(resolve,reject){
+      let done=false;
+      const timer=setTimeout(function(){if(!done){done=true;reject(Error('sheet_verification_timeout'));}},15000);
+      const ok=function(data){if(done)return;done=true;clearTimeout(timer);resolve(data);};
+      const fail=function(){if(done)return;done=true;clearTimeout(timer);reject(Error('sheet_verification_failed'));};
+      const runner=google.script.run.withSuccessHandler(ok).withFailureHandler(fail);
+      // Fixed allowlist; never dispatch caller-supplied server method names.
+      if(method==='manifest')runner.getPaymentsBudgetReadManifest();
+      else runner.getPaymentsBudgetFreshData();
+    });
+  }
+  function savePending(){
+    return (typeof backgroundSaveState_!=='undefined'&&backgroundSaveState_.pending.size>0)||
+      (typeof paymentOptimisticQueue_!=='undefined'&&(paymentOptimisticQueue_.running||paymentOptimisticQueue_.jobs.length>0));
+  }
+  function signature(){
+    if(typeof DATA==='undefined'||!DATA||!DATA.trip)return '';
+    return JSON.stringify({trip:DATA.trip,budget:DATA.budget,plans:paymentState_.plans,shares:paymentState_.shares,schedule:paymentState_.schedule,payments:paymentState_.payments,serverTime:paymentState_.serverTime});
+  }
+  function report(state,reason,counts){
+    if(typeof DATA==='undefined'||!DATA)return;
+    DATA.paymentsBudgetRead={status:state,reason:reason||'',counts:counts||null,checkedAt:new Date().toISOString()};
+    try{window.top.postMessage({type:'vacation-portal-payments-budget-read-diagnostic',...DATA.paymentsBudgetRead},'*');}catch(e){}
+  }
+  applyPaymentData_=function(){
+    if(!applying){epoch++;lastFresh=0;report('sheets','sheet_update_received');}
+    return previousApply.apply(this,arguments);
+  };
+  function validate(data,rentalId){
+    if(!data||data.finalizedRentalId!==rentalId||!Number.isFinite(Date.parse(data.serverTime||'')))throw Error('invalid_read_snapshot');
+    for(const name of ['plans','shares','schedule','payments','budget'])if(!Array.isArray(data[name]))throw Error('incomplete_read_snapshot');
+  }
+  async function refresh(){
+    if(!enabled||busy||paymentState_.loading||savePending()||!signature()||Date.now()<nextAttempt)return;
+    const owner=DATA,startEpoch=epoch,startSignature=signature();
+    const unchanged=()=>DATA===owner&&epoch===startEpoch&&signature()===startSignature&&!savePending();
+    busy=true;paymentState_.loading=true;report('checking');
+    try{
+      let snapshot,source='supabase',reason='';
+      try{
+        const manifest=await scriptRead('manifest');
+        if(!unchanged())throw Error('local_state_changed');
+        const result=await rpc('paymentsBudget.read',manifest);
+        if(!result||result.primary!==true||result.source!=='supabase-primary-verified'||JSON.stringify(result.manifest)!==JSON.stringify(manifest))throw Error('invalid_verified_response');
+        snapshot={...result.domains,serverTime:manifest.serverTime,finalizedRentalId:manifest.rentalId,finalizedRentalOnly:true};
+        validate(snapshot,manifest.rentalId);
+      }catch(error){
+        if(!unchanged())throw Error('local_state_changed');
+        source='sheets';reason=error.message;
+        snapshot=await scriptRead('fallback');
+        validate(snapshot,String(DATA.trip['Selected Cabin ID']||''));
+      }
+      if(!unchanged())throw Error('local_state_changed');
+      // Existing Sheet timestamps remain the concurrency tokens for Sheet saves.
+      const beforeContent=JSON.stringify([paymentState_.plans,paymentState_.shares,paymentState_.schedule,paymentState_.payments,DATA.budget]);
+      applying=true;
+      let applied;
+      try{applied=previousApply(snapshot);}finally{applying=false;}
+      if(applied===false)throw Error('newer_payment_response_exists');
+      DATA.budget=snapshot.budget;
+      lastFresh=Date.now();
+      appliedSignature=signature();
+      const counts=Object.fromEntries(['plans','shares','schedule','payments','budget'].map(k=>[k,snapshot[k].length]));
+      report(source==='supabase'?'primary':'sheets',reason,counts);
+      const afterContent=JSON.stringify([paymentState_.plans,paymentState_.shares,paymentState_.schedule,paymentState_.payments,DATA.budget]);
+      if(beforeContent!==afterContent&&typeof render==='function'&&['dashboard','money','payments','budget'].includes(currentView))render();
+    }catch(error){
+      nextAttempt=Date.now()+5000;
+      report(error.message==='local_state_changed'?'waiting':'unavailable',error.message);
+    }finally{busy=false;paymentState_.loading=false;}
+  }
+  loadPaymentData_=function(force){
+    if(enabled!==true)return previousLoad.apply(this,arguments);
+    if(!force&&Date.now()-lastFresh<15000)return;
+    return refresh();
+  };
+  async function discover(){
+    if(enabled!==null||statusBusy)return;
+    statusBusy=true;
+    try{const result=await rpc('paymentsBudget.status');enabled=result&&result.enabled===true;}catch(e){}finally{statusBusy=false;}
+  }
+  setInterval(function(){
+    discover();
+    if(enabled&&lastFresh&&appliedSignature!==signature()){
+      lastFresh=0;report('sheets','sheet_state_changed');
+    }
+    if(enabled&&typeof DATA!=='undefined'&&DATA&&DATA.deferredLoaded&&
+       typeof currentView!=='undefined'&&['dashboard','money','payments','budget'].includes(currentView)&&Date.now()-lastFresh>=15000)refresh();
+  },2000);
+  discover();
+})();
+</script>

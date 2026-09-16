@@ -96,7 +96,9 @@ self.addEventListener('fetch',event=>{
       url.pathname.endsWith('/supabase-planner-comments-bridge.js') ||
       url.pathname.endsWith('/supabase-meals-bridge.js') ||
       url.pathname.endsWith('/supabase-groceries-bridge.js') ||
-      url.pathname.endsWith('/supabase-rentals-shadow-bridge.js')
+      url.pathname.endsWith('/supabase-rentals-shadow-bridge.js') ||
+      url.pathname.endsWith('/supabase-payments-budget-read-bridge.js') ||
+      url.pathname.endsWith('/payments-budget-contract.js')
     )
   ){
     event.respondWith(networkFirst(request));

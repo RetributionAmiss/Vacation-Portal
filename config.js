@@ -16,6 +16,9 @@ window.VACATION_PORTAL_CONFIG = {
   // use Supabase as primary read/write sources. The finalized rental remains
   // Sheets-authoritative in alpha2.28 while an authenticated Supabase shadow
   // read verifies the parent record needed by the later Payments migration.
+  // Transitional reads verify a fresh Sheet manifest before using Supabase.
+  paymentsBudgetRead: {read:true, sourceTripLegacyId:'TRIP-2027-TN'},
+
   supabaseDomains: {
     paymentsBudget: {
       shadowRead: true,
@@ -260,5 +263,12 @@ window.VACATION_PORTAL_CONFIG = {
   const script=document.createElement('script');
   script.type='module';
   script.src='./supabase-payments-budget-shadow-bridge.js?v='+encodeURIComponent(window.VACATION_PORTAL_CONFIG.release);
+  document.head.appendChild(script);
+})();
+
+(function loadPaymentsBudgetPrimaryReadBridge_(){
+  const script=document.createElement('script');
+  script.type='module';
+  script.src='./supabase-payments-budget-read-bridge.js?v=payments-budget-read-v1';
   document.head.appendChild(script);
 })();
