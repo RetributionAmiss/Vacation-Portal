@@ -35,6 +35,12 @@
     return (typeof backgroundSaveState_!=='undefined'&&backgroundSaveState_.pending.size>0)||
       (typeof paymentOptimisticQueue_!=='undefined'&&(paymentOptimisticQueue_.running||paymentOptimisticQueue_.jobs.length>0));
   }
+  function finalizedTrip(){
+    if(typeof DATA==='undefined'||!DATA||!DATA.trip)return false;
+    const trip=DATA.trip;
+    return Boolean(String(trip['Selected Cabin ID']||'').trim()&&
+      (String(trip['Portal Stage']||'').trim()==='Voting Closed'||String(trip['Final Voting Closed']||'').trim().toLowerCase()==='yes'));
+  }
   function signature(){
     if(typeof DATA==='undefined'||!DATA||!DATA.trip)return '';
     return JSON.stringify({trip:DATA.trip,budget:DATA.budget,plans:paymentState_.plans,shares:paymentState_.shares,schedule:paymentState_.schedule,payments:paymentState_.payments,serverTime:paymentState_.serverTime});
@@ -53,7 +59,7 @@
     for(const name of ['plans','shares','schedule','payments','budget'])if(!Array.isArray(data[name]))throw Error('incomplete_read_snapshot');
   }
   async function refresh(){
-    if(!enabled||busy||paymentState_.loading||savePending()||!signature()||Date.now()<nextAttempt)return;
+    if(!enabled||!finalizedTrip()||busy||paymentState_.loading||savePending()||!signature()||Date.now()<nextAttempt)return;
     const owner=DATA,startEpoch=epoch,startSignature=signature();
     const unchanged=()=>DATA===owner&&epoch===startEpoch&&signature()===startSignature&&!savePending();
     busy=true;paymentState_.loading=true;report('checking');
@@ -93,7 +99,7 @@
     }finally{busy=false;paymentState_.loading=false;}
   }
   loadPaymentData_=function(force){
-    if(enabled!==true)return previousLoad.apply(this,arguments);
+    if(enabled!==true||!finalizedTrip())return previousLoad.apply(this,arguments);
     if(!force&&Date.now()-lastFresh<15000)return;
     return refresh();
   };
