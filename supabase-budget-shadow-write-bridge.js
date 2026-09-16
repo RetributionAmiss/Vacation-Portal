@@ -63,13 +63,21 @@ function budgetBadge(status,count){
   if(budgetWriteFlags.previewBadge!==true)return;
   let badge=document.getElementById('budget-shadow-write-badge');
   if(!badge){badge=document.createElement('div');badge.id='budget-shadow-write-badge';badge.setAttribute('role','status');badge.style.cssText='position:fixed;bottom:64px;right:8px;z-index:2147483647;max-width:480px;background:#121827;color:#f7f5ef;border:1px solid #8795ad;border-radius:12px;padding:12px;font:700 13px/1.4 Arial;pointer-events:none';document.body.appendChild(badge);}
-  const labels={match:'SHADOW WRITE · MATCH',syncing:'SYNCING SHEET SAVES',unavailable:'SHADOW SYNC UNAVAILABLE',member:'ORGANIZER SYNC REQUIRED'};
+  const labels={waiting:'WAITING FOR BUDGET VIEW',source:'READING SAVED BUDGET',match:'SHADOW WRITE · MATCH',syncing:'SYNCING SHEET SAVES',unavailable:'SHADOW SYNC UNAVAILABLE',member:'ORGANIZER SYNC REQUIRED'};
   badge.textContent='Budget · '+(labels[status]||'WAITING');
   if(Number.isSafeInteger(count))badge.textContent+=' · '+count+(count===1?' record':' records');
   badge.style.borderColor=status==='match'?'#68c792':'#e1ac60';
 }
 window.addEventListener('message',event=>{
   const request=event.data||{};
+  if(request.type==='vacation-portal-budget-shadow-write-diagnostic'&&budgetEligible(event)){
+    budgetBadge(request.status);
+    if(budgetWriteFlags.previewBadge===true){
+      const badge=document.getElementById('budget-shadow-write-badge');
+      if(badge&&request.status==='unavailable'&&request.reason)badge.textContent+=' · '+String(request.reason).slice(0,80);
+    }
+    return;
+  }
   if(request.type!==BUDGET_REQUEST||!budgetEligible(event)||typeof request.requestId!=='string'||request.requestId.length>100)return;
   const reply=payload=>event.source.postMessage({type:BUDGET_RESPONSE,requestId:request.requestId,...payload},event.origin);
   if(budgetActive.has(event.source)){reply({ok:false,error:{code:'sync_busy'}});return;}
@@ -83,3 +91,5 @@ window.addEventListener('message',event=>{
     budgetBadge('unavailable');reply({ok:false,error:{code:String(error.code||'budget_sync_unavailable')}});
   }).finally(()=>{if(budgetActive.get(event.source)===task)budgetActive.delete(event.source);});
 });
+
+budgetBadge('waiting');

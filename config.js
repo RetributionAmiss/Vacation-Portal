@@ -270,10 +270,10 @@ window.VACATION_PORTAL_CONFIG = {
 (function loadPaymentsBudgetPrimaryReadBridge_(){
   const script=document.createElement('script');
   script.type='module';
-  script.src='./supabase-payments-budget-read-bridge.js?v=payments-budget-read-v1';
+  script.src='./supabase-payments-budget-read-bridge.js?v=payments-budget-read-v2';
   document.head.appendChild(script);
 })();
 
-(function(){const script=document.createElement('script');script.type='module';script.src='./preview-auth-gate.js?v=payments-budget-read-v1';document.head.appendChild(script);})();
+(function(){const script=document.createElement('script');script.type='module';script.src='./preview-auth-gate.js?v=payments-budget-read-v2';document.head.appendChild(script);})();
 
-(function loadBudgetShadowWriteBridge_(){const script=document.createElement('script');script.type='module';script.src='./supabase-budget-shadow-write-bridge.js?v=budget-shadow-write-v1';document.head.appendChild(script);})();
+(function loadBudgetShadowWriteBridge_(){const script=document.createElement('script');script.type='module';script.src='./supabase-budget-shadow-write-bridge.js?v=budget-shadow-write-v2';document.head.appendChild(script);})();

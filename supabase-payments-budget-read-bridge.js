@@ -119,10 +119,11 @@ if(flags.previewBadge===true){
   if(data.type!=='vacation-portal-payments-budget-read-diagnostic'||!eligible(event))return;
   let badge=document.getElementById('payments-budget-read-badge');
   if(!badge){badge=document.createElement('div');badge.id='payments-budget-read-badge';badge.setAttribute('role','status');badge.style.cssText='position:fixed;bottom:8px;right:8px;z-index:2147483647;max-width:480px;background:#121827;color:#f7f5ef;border:1px solid #8795ad;border-radius:12px;padding:12px;font:700 13px/1.4 Arial;pointer-events:none';document.body.appendChild(badge);}
-  const labels={primary:'SUPABASE READ · VERIFIED',sheets:'SHEETS FALLBACK',checking:'CHECKING FRESHNESS',waiting:'WAITING FOR SAVE',unavailable:'READ UNAVAILABLE'};
+  const labels={primary:'SUPABASE READ · VERIFIED',sheets:'SHEETS FALLBACK',checking:data.reason==='checking_supabase'?'CHECKING SUPABASE':'CHECKING SHEET FRESHNESS',fallback:'LOADING SHEET FALLBACK',waiting:'WAITING FOR SAVE',unavailable:'READ UNAVAILABLE'};
   badge.textContent='Payments/Budget · '+(labels[data.status]||'WAITING');
   if(data.counts)badge.textContent+=' · '+Object.values(data.counts).reduce((n,v)=>n+(Number.isSafeInteger(v)?v:0),0)+' records';
   if(data.status==='sheets')badge.textContent+=' · latest Sheet values';
+  if(['unavailable','fallback'].includes(data.status)&&data.reason)badge.textContent+=' · '+String(data.reason).slice(0,80);
   badge.style.borderColor=data.status==='primary'?'#68c792':data.status==='unavailable'?'#e1ac60':'#8795ad';
  });
 }

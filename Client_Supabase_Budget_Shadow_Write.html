@@ -22,25 +22,32 @@
       const timer=setTimeout(function(){if(!done){done=true;reject(Error('budget_source_timeout'));}},15000);
       google.script.run.withSuccessHandler(function(data){if(done)return;done=true;clearTimeout(timer);resolve(data);})
         .withFailureHandler(function(){if(done)return;done=true;clearTimeout(timer);reject(Error('budget_source_unavailable'));})
-        .getPaymentsBudgetFreshData();
+        .getBudgetShadowSource();
     });
+  }
+  function report(status,reason){
+    window.top.postMessage({type:'vacation-portal-budget-shadow-write-diagnostic',status,reason:reason||''},'*');
   }
   async function tick(){
     if(busy||Date.now()<nextAttempt||typeof DATA==='undefined'||!DATA||!DATA.deferredLoaded)return;
     if(typeof currentView==='undefined'||!['budget','money','payments'].includes(currentView))return;
     if(typeof backgroundSaveState_!=='undefined'&&backgroundSaveState_.pending.size)return;
+    if(typeof paymentState_!=='undefined'&&paymentState_.loading)return;
     const owner=DATA;
     busy=true;nextAttempt=Date.now()+15000;
     try{
       const status=await rpc('budgetShadow.status');
       if(!status||!status.enabled||!status.canSync){nextAttempt=Date.now()+30000;return;}
-      const saved=await source();
+      if(typeof paymentState_!=='undefined'&&paymentState_.loading)return;
+      report('source');
+      let saved;window.__budgetShadowSourceBusy=true;
+      try{saved=await source();}finally{window.__budgetShadowSourceBusy=false;}
       if(DATA!==owner)return;
       // Never send optimistic browser rows, never replace UI state, never retry a Sheet save.
       const result=await rpc('budgetShadow.sync',{budget:saved.budget,serverTime:saved.serverTime});
       if(DATA===owner)DATA.budgetShadowWrite=result;
-    }catch(error){if(DATA===owner)DATA.budgetShadowWrite={status:'unavailable',reason:error.message};}
-    finally{busy=false;}
+    }catch(error){nextAttempt=Date.now()+30000;report('unavailable',error.message);if(DATA===owner)DATA.budgetShadowWrite={status:'unavailable',reason:error.message};}
+    finally{busy=false;nextAttempt=Math.max(nextAttempt,Date.now()+15000);}
   }
   setInterval(tick,2000);
 })();
