@@ -6,7 +6,7 @@ Budget participates in server-side rental pricing, so Budget cannot independentl
 
 ## Behavior
 
-- `budgetShadowWrite.enabled` defaults to false in the proposed production config. The isolated preview enables it and displays a separate Budget badge.
+- `budgetShadowWrite.enabled` is enabled for production after Justin accepted preview @228 (Budget shadow MATCH and all 51 financial records VERIFIED). The diagnostic badge remains preview-only.
 - Every 15 seconds while Payments, Money or Budget is open, an authenticated organizer can synchronize persisted Budget data. The client reads the dedicated Budget-only fresh Apps Script endpoint; it never sends optimistic UI rows or intercepts/retries a Sheet save.
 - The SQL transaction checks active organizer membership and the fixed accepted trip. It serializes changes to the small Budget/relationship/state tables, compares the destination snapshot captured before the write, rejects older source times, validates all rows, then inserts/updates/archives and verifies the complete result atomically.
 - Amounts use integer cents. Text values such as Everyone remain text; names are never guessed into traveler UUIDs. Existing typed Budget relationships block synchronization for manual reconciliation.
@@ -32,7 +32,7 @@ Do not create dummy expenses or payments in the shared trip: Sheet saves are liv
 
 ## Subsequent stages
 
-1. Accept this Budget shadow-write preview; explicitly enable production mirroring in the promotion change.
+1. Preview @228 accepted; production promotion enables Budget mirroring.
 2. Add financial write synchronization for payment records, confirmation lifecycle, installments, plans and shares, preserving each server authorization boundary and calculation contract.
 3. Move server pricing consumers and shared Budget write permissions to the new authority, then promote primary writes. Never fall back to old Sheet writes after an ambiguous primary commit.
 
