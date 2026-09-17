@@ -1,6 +1,6 @@
 window.VACATION_PORTAL_CONFIG = {
   // Internal Apps Script backend. Travelers should always use the GitHub Pages URL.
-  portalUrl: 'https://script.google.com/macros/s/AKfycbzfo6ZXGGxQFApb6h0XTUmTKdeCLtSvTjoGXR1mKIuv1laEjZnREhHyJ01wguFfRxWOpA/exec',
+  portalUrl: 'https://script.google.com/macros/s/AKfycby_FG5Bdl9Vt8stKlx-ywfr8QlhXDB4xaKv7upBw-dKRP_C9nLs1FEeOfNOvoQbgmgWRg/exec',
 
   appName: 'Family Vacation Portal',
   shortName: 'Family Trip',
@@ -17,9 +17,9 @@ window.VACATION_PORTAL_CONFIG = {
   // Sheets-authoritative in alpha2.28 while an authenticated Supabase shadow
   // read verifies the parent record needed by the later Payments migration.
   // Transitional reads verify a fresh Sheet manifest before using Supabase.
-  paymentShadowWrite: {enabled:false, sourceTripLegacyId:'TRIP-2027-TN'},
-  budgetShadowWrite: {enabled:true, sourceTripLegacyId:'TRIP-2027-TN'},
-  paymentsBudgetRead: {read:true, sourceTripLegacyId:'TRIP-2027-TN'},
+  paymentShadowWrite: {enabled:true, previewBadge:true, sourceTripLegacyId:'TRIP-2027-TN'},
+  budgetShadowWrite: {enabled:true, previewBadge:true, sourceTripLegacyId:'TRIP-2027-TN'},
+  paymentsBudgetRead: {read:true, previewBadge:true, sourceTripLegacyId:'TRIP-2027-TN'},
 
   supabaseDomains: {
     paymentsBudget: {
@@ -274,10 +274,9 @@ window.VACATION_PORTAL_CONFIG = {
   script.src='./supabase-payments-budget-read-bridge.js?v=payments-budget-read-v3';
   document.head.appendChild(script);
 })();
-(function loadBudgetShadowWriteBridge_(){
-  const script=document.createElement('script');script.type='module';
-  script.src='./supabase-budget-shadow-write-bridge.js?v=budget-shadow-write-v2';
-  document.head.appendChild(script);
-})();
+
+(function(){const script=document.createElement('script');script.type='module';script.src='./preview-auth-gate.js?v=payments-budget-read-v3';document.head.appendChild(script);})();
+
+(function loadBudgetShadowWriteBridge_(){const script=document.createElement('script');script.type='module';script.src='./supabase-budget-shadow-write-bridge.js?v=budget-shadow-write-v2';document.head.appendChild(script);})();
 
 (function loadPaymentShadowWriteBridge_(){const script=document.createElement('script');script.type='module';script.src='./supabase-payment-shadow-write-bridge.js?v=payment-shadow-write-v1';document.head.appendChild(script);})();
