@@ -47,3 +47,14 @@ function getBudgetShadowSource() {
     return {budget:budget,serverTime:new Date().toISOString()};
   });
 }
+
+// Read only saved payment records for the finalized rental; never browser drafts.
+function getPaymentShadowSource(){
+  return withPortalMutationLock_(function(){
+    const rentalId=finalizedRentalFocusId_();
+    if(!rentalId)throw new Error('FINALIZED_RENTAL_REQUIRED');
+    if(!getSpreadsheet_().getSheetByName('Payments'))throw new Error('PAYMENT_SOURCE_MISSING');
+    const payments=readSheet_('Payments').filter(function(row){return row['Cabin ID']===rentalId;});
+    return {payments:payments,finalizedRentalId:rentalId,serverTime:new Date().toISOString()};
+  });
+}

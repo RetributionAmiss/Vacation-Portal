@@ -46,6 +46,7 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  h=host({budget_items:[{...database.budget_items[0],amount_cents:5100}]});await assert.rejects(h.read(),/source_changed_since_seed/);
  h=host({trip_members:[]});await assert.rejects(h.read(),/single_membership_required/);
  h=host({trips:[{legacy_id:'TRIP-OTHER'}]});await assert.rejects(h.read(),/source_trip_mismatch/);
+ h=host({payments:[{id:'payment',legacy_id:'PAY-TEST',rental_id:'rental',paid_by_traveler_id:'person',paid_to_type:'Agency',paid_to_name:'Agency',amount_cents:100,created_at:later,updated_at:later,source_created_at:iso,source_updated_at:iso}]});const mirrored=await vm.runInContext('readCandidate()',h.context);assert.equal(mirrored.domains.payments[0]['Updated At'],iso,'Payment mirror must retain Sheet concurrency token');assert.equal(mirrored.domains.payments[0]['Created At'],iso);
  let c=child();assert.equal(c.ctx.window.DATA,undefined);c.enable();await flush();let p=c.start();c.calls[0].ok(manifest);await flush();
  let req=c.sent.findLast(x=>x.operation==='paymentsBudget.read');c.response(req,candidate);await p;assert.equal(c.state().status,'primary');assert.equal(c.calls.length,1);
  assert.equal(vm.runInContext("paymentState_.plans[0]['Updated At']",c.ctx),iso,'Preserve Sheet concurrency timestamps.');

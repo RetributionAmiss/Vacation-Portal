@@ -1,11 +1,11 @@
 <script>
-(function installBudgetShadowWrite_(){
-  const REQUEST='vacation-portal-budget-shadow-write-request',RESPONSE='vacation-portal-budget-shadow-write-response';
+(function installPaymentShadowWrite_(){
+  const REQUEST='vacation-portal-payment-shadow-write-request',RESPONSE='vacation-portal-payment-shadow-write-response';
   const pending=new Map();let sequence=0,busy=false,nextAttempt=0;
   function rpc(operation,source){
     return new Promise(function(resolve,reject){
-      const requestId='budget-shadow-'+Date.now().toString(36)+'-'+(++sequence);
-      const timer=setTimeout(function(){pending.delete(requestId);reject(Error('budget_shadow_timeout'));},15000);
+      const requestId='payment-shadow-'+Date.now().toString(36)+'-'+(++sequence);
+      const timer=setTimeout(function(){pending.delete(requestId);reject(Error('payment_shadow_timeout'));},15000);
       pending.set(requestId,{resolve,reject,timer});
       window.top.postMessage({type:REQUEST,requestId,operation,source},'*');
     });
@@ -14,30 +14,31 @@
     const response=event.data||{},entry=pending.get(response.requestId);
     if(event.source!==window.top||response.type!==RESPONSE||!entry)return;
     clearTimeout(entry.timer);pending.delete(response.requestId);
-    if(response.ok)entry.resolve(response.data);else entry.reject(Error(String(response.error&&response.error.code||'budget_sync_unavailable')));
+    if(response.ok)entry.resolve(response.data);else entry.reject(Error(String(response.error&&response.error.code||'payment_sync_unavailable')));
   });
   function source(){
     return new Promise(function(resolve,reject){
       let done=false;
-      const timer=setTimeout(function(){if(!done){done=true;reject(Error('budget_source_timeout'));}},15000);
+      const timer=setTimeout(function(){if(!done){done=true;reject(Error('payment_source_timeout'));}},15000);
       google.script.run.withSuccessHandler(function(data){if(done)return;done=true;clearTimeout(timer);resolve(data);})
-        .withFailureHandler(function(){if(done)return;done=true;clearTimeout(timer);reject(Error('budget_source_unavailable'));})
-        .getBudgetShadowSource();
+        .withFailureHandler(function(){if(done)return;done=true;clearTimeout(timer);reject(Error('payment_source_unavailable'));})
+        .getPaymentShadowSource();
     });
   }
   function report(status,reason){
-    window.top.postMessage({type:'vacation-portal-budget-shadow-write-diagnostic',status,reason:reason||''},'*');
+    window.top.postMessage({type:'vacation-portal-payment-shadow-write-diagnostic',status,reason:reason||''},'*');
   }
   async function tick(){
     if(busy||Date.now()<nextAttempt||typeof DATA==='undefined'||!DATA||!DATA.deferredLoaded)return;
-    if(typeof currentView==='undefined'||!['budget','money','payments'].includes(currentView))return;
+    if(typeof currentView==='undefined'||!['money','payments'].includes(currentView))return;
     if(typeof backgroundSaveState_!=='undefined'&&backgroundSaveState_.pending.size)return;
     if(window.__budgetShadowSourceBusy)return;
     if(typeof paymentState_!=='undefined'&&paymentState_.loading)return;
+    if(typeof paymentOptimisticQueue_!=='undefined'&&(paymentOptimisticQueue_.running||paymentOptimisticQueue_.jobs.length))return;
     const owner=DATA;let yielded=false;
     busy=true;nextAttempt=Date.now()+15000;
     try{
-      const status=await rpc('budgetShadow.status');
+      const status=await rpc('paymentShadow.status');
       if(!status||!status.enabled||!status.canSync){nextAttempt=Date.now()+30000;return;}
       if(window.__budgetShadowSourceBusy||(typeof paymentState_!=='undefined'&&paymentState_.loading)){yielded=true;nextAttempt=Date.now()+2000;return;}
       report('source');
@@ -45,9 +46,9 @@
       try{saved=await source();}finally{window.__budgetShadowSourceBusy=false;}
       if(DATA!==owner)return;
       // Never send optimistic browser rows, never replace UI state, never retry a Sheet save.
-      const result=await rpc('budgetShadow.sync',{budget:saved.budget,serverTime:saved.serverTime});
-      if(DATA===owner)DATA.budgetShadowWrite=result;
-    }catch(error){nextAttempt=Date.now()+30000;report('unavailable',error.message);if(DATA===owner)DATA.budgetShadowWrite={status:'unavailable',reason:error.message};}
+      const result=await rpc('paymentShadow.sync',{payments:saved.payments,finalizedRentalId:saved.finalizedRentalId,serverTime:saved.serverTime});
+      if(DATA===owner)DATA.paymentShadowWrite=result;
+    }catch(error){nextAttempt=Date.now()+30000;report('unavailable',error.message);if(DATA===owner)DATA.paymentShadowWrite={status:'unavailable',reason:error.message};}
     finally{busy=false;nextAttempt=Math.max(nextAttempt,Date.now()+(yielded?2000:15000));}
   }
   setInterval(tick,2000);
