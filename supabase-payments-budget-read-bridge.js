@@ -38,7 +38,7 @@ async function readCandidate(){
  if(!Array.isArray(trips)||trips.length!==1||trips[0].legacy_id!==flags.sourceTripLegacyId)fail('source_trip_mismatch');
  const data={};
  await Promise.all(['rentals','travelers',...Object.keys(MAP)].map(async table=>{
-  const columns=MAP[table]?['id','legacy_id',...Object.values(MAP[table]),...Object.values(LINKS[table]).map(l=>l[0]),...(table==='payment_shares'?['calculated_share_cents','booking_plan_id']:[]),...(table==='budget_items'?[]:['created_at','updated_at'])]:['id','legacy_id'];
+  const columns=MAP[table]?['id','legacy_id',...Object.values(MAP[table]),...Object.values(LINKS[table]).map(l=>l[0]),...(table==='payment_shares'?['calculated_share_cents','booking_plan_id']:[]),...(table==='budget_items'?[]:['created_at','updated_at']),...(table==='payments'?['source_created_at','source_updated_at']:[])]:['id','legacy_id'];
   data[table]=await rows(client,table,[...new Set(columns)].join(','),tripId);
  }));
  const resolve=(table,id)=>{
@@ -54,7 +54,7 @@ async function readCandidate(){
  for(const [domain,table] of Object.entries({plans:'booking_plans',shares:'payment_shares',schedule:'payment_schedules',payments:'payments',budget:'budget_items'})){
   output[domain]=data[table].map(row=>{
    const dto={};
-   if(table!=='budget_items'){dto['Created At']=row.created_at;dto['Updated At']=row.updated_at;}
+   if(table!=='budget_items'){dto['Created At']=row.source_created_at||row.created_at;dto['Updated At']=row.source_updated_at||row.updated_at;}
    for(const [header,col] of Object.entries(MAP[table])){
     let v=row[col];
     if(col.endsWith('_cents'))v=money(v);
