@@ -6,7 +6,7 @@ Baseline: PR #70, production Apps Script @229. Budget shadow synchronization is 
 
 This stage mirrors the finalized rental's saved **Payments** rows: create, edit, amount/date/notes, payer and recipient links, installment links, confirmation status/source/actor/time, and deletion. Sheets remains the write authority. Existing saveBookingPayment, deleteBookingPayment and confirmation authorization/UI paths are untouched. Booking plans, shares and payment schedules are not synchronized by this stage; an unseeded/new installment makes payment mirroring fail with PAYMENT_INSTALLMENT_MISSING until its dependency is synchronized. No guessed relationships or partial payment copies are allowed.
 
-The production paymentShadowWrite flag is off until preview acceptance. Budget synchronization remains enabled. An authenticated organizer with Money or Payments open can synchronize every ~15 seconds. Traveler Sheet saves are copied when an eligible organizer next opens that view. With no organizer online, synchronization pauses; the current verified read falls back to fresh Sheets on mismatches.
+Justin confirmed isolated preview @230 passed on 2026-09-18. The production paymentShadowWrite flag is enabled for promotion through PR #71. Budget synchronization remains enabled. An authenticated organizer with Money or Payments open can synchronize every ~15 seconds. Traveler Sheet saves are copied when an eligible organizer next opens that view. With no organizer online, synchronization pauses; the current verified read falls back to fresh Sheets on mismatches.
 
 ## Guarantees and limits
 
