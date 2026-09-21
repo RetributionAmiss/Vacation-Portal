@@ -39,6 +39,35 @@ function getPaymentsBudgetFreshData() {
   return withPortalMutationLock_(function(){return paymentsBudgetFreshSnapshot_();});
 }
 
+// A narrowly scoped source for the three remaining payment dependencies.
+// This is a read-only snapshot of persisted Sheets rows, not a primary writer.
+// It must be taken under the same lock as booking-plan/share/installment saves.
+function getFinancialDependencyShadowSource() {
+  return withPortalMutationLock_(function(){
+    const rentalId=finalizedRentalFocusId_();
+    if(!rentalId)throw new Error('FINALIZED_RENTAL_REQUIRED');
+    const ss=getSpreadsheet_();
+    ['Booking Plans','Payment Shares','Payment Schedule'].forEach(function(name){
+      if(!ss.getSheetByName(name))throw new Error('FINANCIAL_DEPENDENCY_SOURCE_MISSING');
+    });
+    const saved=filterPaymentDataForFinalRental_(buildPaymentData_(),rentalId);
+    const result={finalizedRentalId:rentalId};
+    ['plans','shares','schedule'].forEach(function(domain){
+      if(!Array.isArray(saved[domain]))throw new Error('FINANCIAL_DEPENDENCY_SOURCE_INCOMPLETE');
+      const fields=PaymentsBudgetContract.fields[domain];
+      saved[domain].forEach(function(row){
+        if(!row||Object.keys(row).some(function(key){return fields.indexOf(key)<0;})){
+          throw new Error('UNSUPPORTED_FINANCIAL_DEPENDENCY_COLUMN');
+        }
+        if(row['Cabin ID']!==rentalId)throw new Error('FINANCIAL_DEPENDENCY_WRONG_RENTAL');
+      });
+      result[domain]=saved[domain];
+    });
+    result.serverTime=new Date().toISOString();
+    return result;
+  });
+}
+
 // Budget replication needs only persisted Budget rows, not another full financial read.
 function getBudgetShadowSource() {
   return withPortalMutationLock_(function(){
