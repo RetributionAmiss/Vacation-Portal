@@ -27,7 +27,7 @@ function fixture({rental='CABIN-A',missing='',extra=false,wrong=false}={}){
 let f=fixture();let result=vm.runInContext('getFinancialDependencyShadowSource()',f.ctx);
 assert.equal(result.finalizedRentalId,'CABIN-A');
 assert.equal(result.plans.length,1);assert.equal(result.shares.length,1);assert.equal(result.schedule.length,1);
-assert(!('payments' in result)&&!('budget' in result)&&!('Secret' in JSON.stringify(result)));
+assert(!('payments' in result)&&!('budget' in result)&&!JSON.stringify(result).includes('must not leak'));
 assert(Number.isFinite(Date.parse(result.serverTime)));assert.deepEqual(f.stats(),{locks:1,reads:1,writes:0});
 for(const [options,code] of [
  [{rental:''},'FINALIZED_RENTAL_REQUIRED'],
